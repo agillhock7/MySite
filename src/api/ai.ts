@@ -8,9 +8,24 @@ export interface IntentProfile {
   primaryTopics: string[];
 }
 
+export interface GapSuggestion {
+  topic: string;
+  priority: 'high' | 'medium' | 'low';
+  reason: string;
+  suggestedAction: string;
+}
+
 export interface BlueprintGenerationResult {
   blueprint: Blueprint;
   source: 'backend' | 'stub';
+  contentOverrides: Record<string, unknown>;
+  gapSuggestions: GapSuggestion[];
+  wordpress: {
+    baseUrl: string;
+    available: boolean;
+    fetchedAt: string;
+    errors: string[];
+  } | null;
 }
 
 const BACKEND_BLUEPRINT_ENDPOINT = '/api/ai/blueprint.php';
@@ -48,7 +63,6 @@ export async function generateBlueprintFromIntent(
   const timestamp = new Date().toISOString();
   const topicLabel = intentProfile.primaryTopics[0] ?? 'Core Focus';
 
-  // Deterministic stub for MVP: returns JSON blueprint only, no executable code.
   return {
     version: 1,
     theme: {
@@ -112,24 +126,77 @@ export async function generateBlueprintFromIntent(
   };
 }
 
-function normalizeBackendPayload(payload: unknown): unknown {
-  if (!payload || typeof payload !== 'object') {
-    return payload;
+interface BackendBlueprintResponse {
+  blueprint: unknown;
+  contentOverrides?: unknown;
+  gapSuggestions?: unknown;
+  wordpress?: unknown;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
   }
 
-  const asRecord = payload as Record<string, unknown>;
-  if (asRecord.blueprint && typeof asRecord.blueprint === 'object') {
-    return asRecord.blueprint;
+  return value as Record<string, unknown>;
+}
+
+function normalizeGapSuggestions(value: unknown): GapSuggestion[] {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  return payload;
+  return value
+    .map((item) => {
+      const record = asObject(item);
+      if (!record) {
+        return null;
+      }
+
+      const topic = typeof record.topic === 'string' ? record.topic : '';
+      const priorityRaw = typeof record.priority === 'string' ? record.priority : 'medium';
+      const reason = typeof record.reason === 'string' ? record.reason : '';
+      const suggestedAction =
+        typeof record.suggestedAction === 'string' ? record.suggestedAction : '';
+
+      const priority: GapSuggestion['priority'] =
+        priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
+
+      if (!topic) {
+        return null;
+      }
+
+      return {
+        topic,
+        priority,
+        reason,
+        suggestedAction
+      };
+    })
+    .filter((item): item is GapSuggestion => item !== null);
+}
+
+function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['wordpress'] {
+  const record = asObject(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : '',
+    available: Boolean(record.available),
+    fetchedAt: typeof record.fetchedAt === 'string' ? record.fetchedAt : '',
+    errors: Array.isArray(record.errors)
+      ? record.errors.filter((item): item is string => typeof item === 'string')
+      : []
+  };
 }
 
 async function requestBlueprintFromBackend(
   intentProfile: IntentProfile
-): Promise<Blueprint | null> {
+): Promise<BlueprintGenerationResult | null> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
 
   try {
     const response = await fetch(BACKEND_BLUEPRINT_ENDPOINT, {
@@ -146,10 +213,28 @@ async function requestBlueprintFromBackend(
     }
 
     const payload = (await response.json()) as unknown;
-    const normalized = normalizeBackendPayload(payload);
-    const valid = validateBlueprint(normalized);
+    const rawResponse = asObject(payload);
+    const normalizedPayload: BackendBlueprintResponse = rawResponse
+      ? {
+          blueprint: rawResponse.blueprint ?? rawResponse,
+          contentOverrides: rawResponse.contentOverrides,
+          gapSuggestions: rawResponse.gapSuggestions,
+          wordpress: rawResponse.wordpress
+        }
+      : { blueprint: payload };
 
-    return valid;
+    const validBlueprint = validateBlueprint(normalizedPayload.blueprint);
+    if (!validBlueprint) {
+      return null;
+    }
+
+    return {
+      blueprint: validBlueprint,
+      source: 'backend',
+      contentOverrides: asObject(normalizedPayload.contentOverrides) ?? {},
+      gapSuggestions: normalizeGapSuggestions(normalizedPayload.gapSuggestions),
+      wordpress: normalizeWordpressContext(normalizedPayload.wordpress)
+    };
   } catch {
     return null;
   } finally {
@@ -160,13 +245,16 @@ async function requestBlueprintFromBackend(
 export async function generateBlueprintWithFallback(
   intentProfile: IntentProfile
 ): Promise<BlueprintGenerationResult> {
-  const backendBlueprint = await requestBlueprintFromBackend(intentProfile);
-  if (backendBlueprint) {
-    return { blueprint: backendBlueprint, source: 'backend' };
+  const backendResult = await requestBlueprintFromBackend(intentProfile);
+  if (backendResult) {
+    return backendResult;
   }
 
   return {
     blueprint: await generateBlueprintFromIntent(intentProfile),
-    source: 'stub'
+    source: 'stub',
+    contentOverrides: {},
+    gapSuggestions: [],
+    wordpress: null
   };
 }

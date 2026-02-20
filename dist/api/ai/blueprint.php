@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 header('Content-Type: application/json; charset=utf-8');
 
+require_once __DIR__ . '/../lib/config.php';
+require_once __DIR__ . '/../lib/wordpress.php';
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
@@ -13,144 +16,6 @@ function send_json(int $status, array $payload): void
     http_response_code($status);
     echo json_encode($payload, JSON_UNESCAPED_SLASHES);
     exit;
-}
-
-function merge_config(array $base, array $override): array
-{
-    foreach ($override as $key => $value) {
-        if (isset($base[$key]) && is_array($base[$key]) && is_array($value)) {
-            $base[$key] = merge_config($base[$key], $value);
-            continue;
-        }
-
-        $base[$key] = $value;
-    }
-
-    return $base;
-}
-
-function default_server_config(): array
-{
-    return [
-        'app' => [
-            'name' => 'MySite',
-            'environment' => 'production'
-        ],
-        'openai' => [
-            'enabled' => true,
-            'api_key' => '',
-            'api_key_file' => '',
-            'model' => 'gpt-4o-mini',
-            'api_url' => 'https://api.openai.com/v1/chat/completions',
-            'timeout_seconds' => 30
-        ],
-        'database' => [
-            'driver' => '',
-            'host' => '',
-            'port' => '',
-            'name' => '',
-            'user' => '',
-            'password' => ''
-        ]
-    ];
-}
-
-function sanitize_host_name(string $host): string
-{
-    $clean = strtolower(trim($host));
-    $clean = preg_replace('/[^a-z0-9.\-]/', '', $clean) ?? '';
-    return trim($clean, '.-');
-}
-
-function load_server_config(): array
-{
-    $config = default_server_config();
-
-    $home = rtrim((string) ($_SERVER['HOME'] ?? ''), '/');
-    $host = sanitize_host_name((string) ($_SERVER['HTTP_HOST'] ?? ''));
-    $appRoot = dirname(__DIR__, 2);
-
-    $paths = [];
-
-    $paths[] = $appRoot . '/config.php';
-
-    $explicitPath = getenv('MYSITE_CONFIG_FILE');
-    if (is_string($explicitPath) && trim($explicitPath) !== '') {
-        $paths[] = trim($explicitPath);
-    }
-
-    if ($home !== '') {
-        $paths[] = $home . '/.config/mysite/config.php';
-
-        if ($host !== '') {
-            $paths[] = $home . '/.config/mysite/' . $host . '.php';
-        }
-    }
-
-    foreach ($paths as $path) {
-        if (!is_readable($path)) {
-            continue;
-        }
-
-        $loaded = require $path;
-        if (is_array($loaded)) {
-            $config = merge_config($config, $loaded);
-        }
-    }
-
-    $envApiKey = getenv('OPENAI_API_KEY');
-    if (is_string($envApiKey) && trim($envApiKey) !== '') {
-        $config['openai']['api_key'] = trim($envApiKey);
-    }
-
-    $envModel = getenv('OPENAI_MODEL');
-    if (is_string($envModel) && trim($envModel) !== '') {
-        $config['openai']['model'] = trim($envModel);
-    }
-
-    return $config;
-}
-
-function load_secret_file(string $path): string
-{
-    if ($path === '' || !is_readable($path)) {
-        return '';
-    }
-
-    return trim((string) file_get_contents($path));
-}
-
-function resolve_openai_api_key(array $config): string
-{
-    $directKey = trim((string) ($config['openai']['api_key'] ?? ''));
-    if ($directKey !== '') {
-        return $directKey;
-    }
-
-    $keyFile = trim((string) ($config['openai']['api_key_file'] ?? ''));
-    if ($keyFile !== '') {
-        $fromConfiguredFile = load_secret_file($keyFile);
-        if ($fromConfiguredFile !== '') {
-            return $fromConfiguredFile;
-        }
-    }
-
-    $home = rtrim((string) ($_SERVER['HOME'] ?? ''), '/');
-    if ($home !== '') {
-        $legacyCandidates = [
-            $home . '/.secrets/mysite_openai_api_key',
-            $home . '/.secrets/openai_api_key'
-        ];
-
-        foreach ($legacyCandidates as $path) {
-            $value = load_secret_file($path);
-            if ($value !== '') {
-                return $value;
-            }
-        }
-    }
-
-    return '';
 }
 
 function normalize_intent(array $decoded): array
@@ -307,7 +172,7 @@ if (!is_array($decodedBody)) {
     send_json(400, ['error' => 'Invalid JSON request body']);
 }
 
-$config = load_server_config();
+$config = mysite_load_server_config();
 $intent = normalize_intent($decodedBody);
 $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
 
@@ -316,13 +181,18 @@ if (!$enabled) {
     send_json(503, ['error' => 'AI generation is disabled by server config']);
 }
 
-$apiKey = resolve_openai_api_key($config);
+$apiKey = mysite_resolve_openai_api_key($config);
 if ($apiKey === '') {
     send_json(503, [
         'error' => 'OpenAI API key is not configured',
-        'hint' => 'Create ~/.config/mysite/config.php and set openai.api_key or openai.api_key_file'
+        'hint' => 'Set in config.php or ~/.config/mysite/<host>.php'
     ]);
 }
+
+$wpSnapshot = mysite_wp_fetch_snapshot($config);
+$gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
+$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions);
+$wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions);
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {
@@ -346,10 +216,12 @@ $systemPrompt = <<<PROMPT
 You generate UI Blueprint JSON only.
 Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
+Prioritize discoverability of existing WordPress content and add guidance to fill content gaps.
 PROMPT;
 
 $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
-    "\nUse contentKey values from this set only: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
+    "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
+    "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
 
 $payload = [
     'model' => $model,
@@ -409,4 +281,14 @@ if ($blueprint === null) {
     send_json(502, ['error' => 'OpenAI output was not valid JSON']);
 }
 
-send_json(200, $blueprint);
+send_json(200, [
+    'blueprint' => $blueprint,
+    'contentOverrides' => $contentOverrides,
+    'gapSuggestions' => $gapSuggestions,
+    'wordpress' => [
+        'baseUrl' => (string) ($wpSnapshot['baseUrl'] ?? ''),
+        'available' => (bool) ($wpSnapshot['available'] ?? false),
+        'fetchedAt' => (string) ($wpSnapshot['fetchedAt'] ?? gmdate('c')),
+        'errors' => $wpSnapshot['errors'] ?? []
+    ]
+]);

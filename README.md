@@ -1,6 +1,6 @@
 # MySite MVP
 
-Vue 3 + Vite + TypeScript app with terminal onboarding and schema-driven personalized UI rendering.
+Vue 3 + Vite + TypeScript app with terminal onboarding, AI blueprint generation, and read-only WordPress content integration.
 
 ## Local development
 
@@ -15,35 +15,21 @@ Build production assets:
 npm run build
 ```
 
-## AI backend + environment config
+## Environment config
 
-Server endpoint: `public/api/ai/blueprint.php` (deployed as `dist/api/ai/blueprint.php`).
+Backend config load order:
 
-The browser never uses your OpenAI API key.
-
-### Config-first setup (recommended)
-
-This backend reads config from files outside web root, so each environment can be configured without changing code.
-
-Load order:
-
-1. `config.php` in app root (easy mode)
+1. `config.php` in deployed app root
 2. `MYSITE_CONFIG_FILE` (if set)
 3. `~/.config/mysite/config.php`
-4. `~/.config/mysite/<host>.php` (host-specific override)
+4. `~/.config/mysite/<host>.php`
 
 Template files in repo:
 
 - `example.config.php`
 - `config/server-config.example.php`
 
-Quick path for cPanel (recommended): copy `example.config.php` to `config.php` in your deployed app root and fill it in.
-
-Alternative host-specific path:
-
-- `/home/alexande/.config/mysite/my.alexanderjgill.com.php`
-
-Example content:
+### Example config
 
 ```php
 <?php
@@ -53,6 +39,15 @@ return [
     'api_key' => 'YOUR_OPENAI_API_KEY',
     'model' => 'gpt-4o-mini',
     'timeout_seconds' => 30
+  ],
+  'wordpress' => [
+    'enabled' => true,
+    'base_url' => 'https://alexanderjgill.com',
+    'timeout_seconds' => 12,
+    'max_posts' => 6,
+    'max_pages' => 6,
+    'max_categories' => 12,
+    'max_tags' => 12
   ],
   'database' => [
     'driver' => 'mysql',
@@ -65,23 +60,44 @@ return [
 ];
 ```
 
-Notes:
+## API behavior
 
-- `database` keys are ready for upcoming backend work.
-- Legacy fallbacks still work (`OPENAI_API_KEY` env var or `~/.secrets/mysite_openai_api_key`).
+### `POST /api/ai/blueprint.php`
 
-### Endpoint behavior
+Input:
 
-- `POST /api/ai/blueprint.php`
-- input: `{ "intentProfile": { ... } }`
-- output: blueprint JSON only
-- if backend/key/API fails, frontend falls back to deterministic local generator
+```json
+{ "intentProfile": { "goal": "...", "vibe": "minimal", "density": "medium", "primaryTopics": ["..."] } }
+```
+
+Output:
+
+- `blueprint`: schema-aligned UI blueprint JSON
+- `contentOverrides`: WordPress-derived module content keyed by content library keys
+- `gapSuggestions`: heuristic missing-content recommendations
+- `wordpress`: metadata about WP fetch status
+
+### `GET /api/content/wp.php`
+
+Returns the latest WordPress-derived `contentOverrides` + `gapSuggestions` for runtime refresh.
+
+## WordPress safety
+
+Integration is read-only by design.
+
+- Uses only `GET` calls to public WP REST endpoints (`/wp-json/wp/v2/...`)
+- Does not call WP admin endpoints
+- Does not create, update, or delete WordPress content
+- Existing WordPress frontend remains untouched
 
 ## cPanel deploy
 
 Deploy uses prebuilt `dist` only (no server-side npm build).
 
-- `.cpanel.yml` copies `dist/` into `/home/alexande/my.alexanderjgill.com/`
+`.cpanel.yml` copies:
+
+- `dist/` -> `/home/alexande/my.alexanderjgill.com/`
+- `example.config.php` -> `/home/alexande/my.alexanderjgill.com/example.config.php`
 
 Deployment flow:
 

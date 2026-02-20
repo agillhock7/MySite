@@ -2,6 +2,8 @@
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
+import { fetchWordpressContentBundle } from '@/api/wp';
+import { setRuntimeContentOverrides } from '@/content/library';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 const router = useRouter();
@@ -26,6 +28,14 @@ const navItems = computed(() => {
   return shortcuts.slice(0, 5);
 });
 
+const wordpressStatus = computed(() => {
+  if (!blueprint.value) {
+    return '';
+  }
+
+  return 'WordPress source: alexanderjgill.com';
+});
+
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
   await router.replace('/onboarding');
@@ -38,6 +48,12 @@ onMounted(async () => {
 
   if (!personalization.blueprint) {
     await router.replace('/onboarding');
+    return;
+  }
+
+  const wpBundle = await fetchWordpressContentBundle();
+  if (wpBundle && Object.keys(wpBundle.contentOverrides).length > 0) {
+    setRuntimeContentOverrides(wpBundle.contentOverrides);
   }
 });
 </script>
@@ -48,6 +64,7 @@ onMounted(async () => {
       <div>
         <p class="eyebrow">UI Blueprint</p>
         <h1>{{ blueprint.layout.nav === 'none' ? 'Minimal Workspace' : 'Personalized Workspace' }}</h1>
+        <p class="source-note">{{ wordpressStatus }}</p>
       </div>
       <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
     </header>
@@ -113,6 +130,12 @@ onMounted(async () => {
 h1 {
   margin: 0.2rem 0 0;
   font-size: clamp(1.3rem, 4.2vw, 2rem);
+}
+
+.source-note {
+  margin: 0.3rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
 }
 
 .reset-btn {

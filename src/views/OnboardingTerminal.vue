@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { generateBlueprintWithFallback, type IntentProfile } from '@/api/ai';
 import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
+import { setRuntimeContentOverrides } from '@/content/library';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 interface TranscriptEntry {
@@ -224,8 +225,22 @@ async function handleSubmit(): Promise<void> {
   const generationResult = await generateBlueprintWithFallback(intentDraft.value);
   thinking.value = false;
 
+  if (Object.keys(generationResult.contentOverrides).length > 0) {
+    setRuntimeContentOverrides(generationResult.contentOverrides);
+  }
+
   if (generationResult.source === 'backend') {
-    await assistantReply('AI blueprint generated from backend successfully.');
+    const hasWordpress = generationResult.wordpress?.available ?? false;
+    await assistantReply(
+      hasWordpress
+        ? 'AI blueprint generated from backend + live WordPress content.'
+        : 'AI blueprint generated from backend. WordPress data was limited.'
+    );
+
+    if (generationResult.gapSuggestions.length > 0) {
+      const topGap = generationResult.gapSuggestions[0];
+      await assistantReply(`Suggested content gap to fill next: ${topGap.topic}.`);
+    }
   } else {
     await assistantReply('Backend AI unavailable. Used deterministic local blueprint generator.');
   }

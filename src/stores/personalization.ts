@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { clearBlueprint, loadBlueprint, saveBlueprint } from '@/blueprint/engine';
 import type { Blueprint } from '@/blueprint/schema';
+import { clearRuntimeContentOverrides } from '@/content/library';
 
 interface PersonalizationState {
   blueprint: Blueprint | null;
@@ -26,6 +27,7 @@ export const usePersonalizationStore = defineStore('personalization', {
     resetPersonalization(): void {
       this.blueprint = null;
       clearBlueprint();
+      clearRuntimeContentOverrides();
     }
   }
 });

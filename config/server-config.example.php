@@ -20,6 +20,15 @@ return [
         'api_url' => 'https://api.openai.com/v1/chat/completions',
         'timeout_seconds' => 30
     ],
+    'wordpress' => [
+        'enabled' => true,
+        'base_url' => 'https://alexanderjgill.com',
+        'timeout_seconds' => 12,
+        'max_posts' => 6,
+        'max_pages' => 6,
+        'max_categories' => 12,
+        'max_tags' => 12
+    ],
     'database' => [
         'driver' => 'mysql',
         'host' => 'localhost',

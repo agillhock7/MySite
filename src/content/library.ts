@@ -24,6 +24,8 @@ export interface FaqItem {
   answer: string;
 }
 
+const RUNTIME_CONTENT_STORAGE_KEY = 'terminal-runtime-content-v1';
+
 export const contentLibrary: Record<string, unknown> = {
   heroWelcome: {
     title: 'Build your workspace faster',
@@ -65,19 +67,96 @@ export const contentLibrary: Record<string, unknown> = {
       },
       {
         question: 'Does onboarding run real AI?',
-        answer: 'For MVP, it uses a deterministic local stub that returns schema-safe JSON.'
+        answer: 'When backend is configured it uses real AI, otherwise deterministic local fallback is used.'
       }
     ]
   } as { items: FaqItem[] }
 };
 
+let runtimeContentOverrides: Record<string, unknown> = {};
+
+function canUseStorage(): boolean {
+  return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+}
+
+function loadRuntimeContentFromStorage(): Record<string, unknown> {
+  if (!canUseStorage()) {
+    return {};
+  }
+
+  try {
+    const raw = localStorage.getItem(RUNTIME_CONTENT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function persistRuntimeContent(overrides: Record<string, unknown>): void {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  try {
+    if (Object.keys(overrides).length === 0) {
+      localStorage.removeItem(RUNTIME_CONTENT_STORAGE_KEY);
+      return;
+    }
+
+    localStorage.setItem(RUNTIME_CONTENT_STORAGE_KEY, JSON.stringify(overrides));
+  } catch {
+    // Ignore localStorage quota or access errors; static fallback still works.
+  }
+}
+
+runtimeContentOverrides = loadRuntimeContentFromStorage();
+
+export function setRuntimeContentOverrides(overrides: Record<string, unknown>): void {
+  runtimeContentOverrides = {
+    ...runtimeContentOverrides,
+    ...overrides
+  };
+
+  persistRuntimeContent(runtimeContentOverrides);
+}
+
+export function replaceRuntimeContentOverrides(overrides: Record<string, unknown>): void {
+  runtimeContentOverrides = { ...overrides };
+  persistRuntimeContent(runtimeContentOverrides);
+}
+
+export function clearRuntimeContentOverrides(): void {
+  runtimeContentOverrides = {};
+  persistRuntimeContent(runtimeContentOverrides);
+}
+
 export function hasContentKey(contentKey: string | undefined): boolean {
-  return Boolean(contentKey && Object.prototype.hasOwnProperty.call(contentLibrary, contentKey));
+  if (!contentKey) {
+    return false;
+  }
+
+  return (
+    Object.prototype.hasOwnProperty.call(runtimeContentOverrides, contentKey) ||
+    Object.prototype.hasOwnProperty.call(contentLibrary, contentKey)
+  );
 }
 
 export function getContentByKey(contentKey: string | undefined): unknown {
   if (!contentKey || !hasContentKey(contentKey)) {
     return null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(runtimeContentOverrides, contentKey)) {
+    return runtimeContentOverrides[contentKey];
   }
 
   return contentLibrary[contentKey];
