@@ -475,7 +475,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         ],
         [
             'question' => 'How is this personalized per visitor?',
-            'answer' => 'The onboarding intent determines which conversion path is prioritized first.'
+            'answer' => 'Visitor-specific onboarding signals and a per-visitor design seed drive layout, styling, and conversion emphasis.'
         ],
         [
             'question' => 'What should be added next?',

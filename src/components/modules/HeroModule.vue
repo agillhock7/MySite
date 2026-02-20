@@ -37,6 +37,24 @@ const subtitle = computed(() => {
   return heroContent.value.subtitle;
 });
 
+const variant = computed(() => {
+  const fromModule = props.moduleProps.variant;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  return 'default';
+});
+
+const ctaLabel = computed(() => {
+  const fromModule = props.moduleProps.ctaLabel;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  return heroContent.value.ctaLabel;
+});
+
 const ctaUrl = computed(() => {
   const fromModule = props.moduleProps.ctaUrl;
   if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
@@ -54,7 +72,7 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 </script>
 
 <template>
-  <section class="hero-module">
+  <section class="hero-module" :class="`variant-${variant}`">
     <p class="eyebrow">{{ kicker }}</p>
     <h2>{{ title }}</h2>
     <p class="subtitle">{{ subtitle }}</p>
@@ -66,9 +84,9 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
         :target="isExternalCta ? '_blank' : '_self'"
         :rel="isExternalCta ? 'noopener noreferrer' : undefined"
       >
-        {{ heroContent.ctaLabel }}
+        {{ ctaLabel }}
       </a>
-      <button v-else type="button" class="primary-btn">{{ heroContent.ctaLabel }}</button>
+      <button v-else type="button" class="primary-btn">{{ ctaLabel }}</button>
       <span class="shortcut-hint" v-if="shortcuts.length > 0">
         {{ shortcuts[0]?.label }}: {{ shortcuts[0]?.action }}
       </span>
@@ -82,6 +100,23 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
   border-radius: var(--radius);
   border: 1px solid var(--border);
   padding: 1.25rem;
+}
+
+.variant-spotlight {
+  background:
+    radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 38%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, white), var(--surface));
+}
+
+.variant-split {
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--accent) 20%, transparent) 0%,
+      color-mix(in srgb, var(--accent) 6%, transparent) 38%,
+      var(--surface) 38%,
+      var(--surface) 100%
+    );
 }
 
 .eyebrow {

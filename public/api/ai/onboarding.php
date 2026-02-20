@@ -74,6 +74,21 @@ function normalize_intent_profile($value): array
     return $intent;
 }
 
+function normalize_visitor_id(array $decoded): string
+{
+    $raw = trim((string) ($decoded['visitorId'] ?? ''));
+    if ($raw === '') {
+        return 'visitor-anonymous';
+    }
+
+    $sanitized = preg_replace('/[^a-zA-Z0-9._:-]/', '', $raw) ?? '';
+    if ($sanitized === '') {
+        return 'visitor-anonymous';
+    }
+
+    return substr($sanitized, 0, 80);
+}
+
 function normalize_transcript($value): array
 {
     if (!is_array($value)) {
@@ -189,6 +204,8 @@ if ($apiKey === '') {
 
 $transcript = normalize_transcript($decodedBody['transcript'] ?? []);
 $currentIntent = normalize_intent_profile($decodedBody['currentIntent'] ?? []);
+$visitorId = normalize_visitor_id($decodedBody);
+$visitorSeed = substr(sha1($visitorId), 0, 10);
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {
@@ -224,9 +241,11 @@ Rules:
 - If user already provided enough detail, set isComplete=true.
 - Keep assistantMessage under 40 words.
 - Never output code, markdown, or explanations outside the JSON object.
+Use the visitor seed to vary your voice subtly so chats feel unique per visitor.
 PROMPT;
 
 $userPrompt = "Current intent draft:\n" . json_encode($currentIntent, JSON_UNESCAPED_SLASHES) .
+    "\nVisitor seed:\n" . $visitorSeed .
     "\nRecent transcript:\n" . json_encode($transcript, JSON_UNESCAPED_SLASHES);
 
 $payload = [

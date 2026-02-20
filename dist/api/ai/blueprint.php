@@ -75,6 +75,33 @@ function normalize_intent(array $decoded): array
     ];
 }
 
+function normalize_visitor_id(array $decoded): string
+{
+    $raw = trim((string) ($decoded['visitorId'] ?? ''));
+    if ($raw === '') {
+        return 'visitor-anonymous';
+    }
+
+    $sanitized = preg_replace('/[^a-zA-Z0-9._:-]/', '', $raw) ?? '';
+    if ($sanitized === '') {
+        return 'visitor-anonymous';
+    }
+
+    return substr($sanitized, 0, 80);
+}
+
+function seeded_value(string $visitorId, string $salt, int $max): int
+{
+    if ($max <= 1) {
+        return 0;
+    }
+
+    $hash = sha1($visitorId . ':' . $salt);
+    $segment = substr($hash, 0, 8);
+    $numeric = hexdec($segment);
+    return (int) ($numeric % $max);
+}
+
 function blueprint_schema(): array
 {
     return [
@@ -162,19 +189,28 @@ function extract_json_object(string $input): ?array
     return is_array($decoded) ? $decoded : null;
 }
 
-function infer_theme_from_intent(array $intent): array
+function infer_theme_from_intent(array $intent, string $visitorId): array
 {
     $vibe = (string) ($intent['vibe'] ?? 'minimal');
-    $mode = ($vibe === 'visual' || $vibe === 'playful') ? 'light' : 'dark';
+    $mode = ($vibe === 'visual') ? 'light' : 'dark';
+    if ($vibe === 'playful' && seeded_value($visitorId, 'mode-playful', 3) > 0) {
+        $mode = 'light';
+    }
+    if ($vibe === 'dense' && seeded_value($visitorId, 'mode-dense', 2) > 0) {
+        $mode = 'light';
+    }
+    if ($vibe === 'minimal' && seeded_value($visitorId, 'mode-minimal', 4) === 0) {
+        $mode = 'light';
+    }
 
     $accentMap = [
-        'minimal' => '#22c55e',
-        'visual' => '#0ea5e9',
-        'dense' => '#f97316',
-        'playful' => '#ec4899'
+        'minimal' => ['#22c55e', '#14b8a6', '#10b981', '#65a30d'],
+        'visual' => ['#0ea5e9', '#2563eb', '#0891b2', '#06b6d4'],
+        'dense' => ['#f97316', '#ea580c', '#d97706', '#c2410c'],
+        'playful' => ['#ec4899', '#db2777', '#f43f5e', '#7c3aed']
     ];
-
-    $accent = $accentMap[$vibe] ?? '#22c55e';
+    $palette = $accentMap[$vibe] ?? $accentMap['minimal'];
+    $accent = $palette[seeded_value($visitorId, 'accent-' . $vibe, count($palette))];
 
     return [
         'mode' => $mode,
@@ -182,7 +218,7 @@ function infer_theme_from_intent(array $intent): array
     ];
 }
 
-function infer_layout_from_intent(array $intent): array
+function infer_layout_from_intent(array $intent, string $visitorId): array
 {
     $density = (string) ($intent['density'] ?? 'medium');
     if (!in_array($density, ['low', 'medium', 'high'], true)) {
@@ -191,10 +227,13 @@ function infer_layout_from_intent(array $intent): array
 
     $nav = 'top';
     if ($density === 'high') {
-        $nav = 'side';
+        $nav = seeded_value($visitorId, 'nav-high', 3) === 0 ? 'top' : 'side';
+    }
+    if ($density === 'medium') {
+        $nav = seeded_value($visitorId, 'nav-medium', 2) === 0 ? 'top' : 'side';
     }
     if ($density === 'low') {
-        $nav = 'none';
+        $nav = seeded_value($visitorId, 'nav-low', 4) === 0 ? 'top' : 'none';
     }
 
     return [
@@ -333,10 +372,117 @@ function normalize_shortcuts(array $candidateShortcuts, array $intent, array $sn
     return $normalized;
 }
 
-function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot): array
+function reorder_modules_for_visitor(array $modules, string $visitorId): array
 {
-    $theme = infer_theme_from_intent($intent);
-    $layout = infer_layout_from_intent($intent);
+    if (count($modules) <= 2) {
+        return $modules;
+    }
+
+    $hero = [];
+    $faq = [];
+    $middle = [];
+
+    foreach ($modules as $module) {
+        $type = (string) ($module['type'] ?? '');
+        if ($type === 'Hero') {
+            $hero[] = $module;
+            continue;
+        }
+        if ($type === 'FAQ') {
+            $faq[] = $module;
+            continue;
+        }
+
+        $middle[] = $module;
+    }
+
+    usort($middle, static function (array $left, array $right) use ($visitorId): int {
+        $leftId = (string) ($left['id'] ?? 'module-left');
+        $rightId = (string) ($right['id'] ?? 'module-right');
+        $leftWeight = seeded_value($visitorId, 'module-weight:' . $leftId, 1000);
+        $rightWeight = seeded_value($visitorId, 'module-weight:' . $rightId, 1000);
+        return $leftWeight <=> $rightWeight;
+    });
+
+    return array_merge($hero, $middle, $faq);
+}
+
+function personalize_module_props(array $modules, array $intent, array $snapshot, string $visitorId): array
+{
+    $goal = trim((string) ($intent['goal'] ?? ''));
+    $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
+    $firstTopic = isset($topics[0]) ? trim((string) $topics[0]) : 'hosting';
+    $secondTopic = isset($topics[1]) ? trim((string) $topics[1]) : 'onboarding';
+    $conversion = mysite_wp_conversion_profile($intent);
+
+    $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
+    $heroVariants = ['default', 'spotlight', 'split'];
+    $gridVariants = ['default', 'magazine'];
+    $listVariants = ['default', 'timeline'];
+    $gridColumns = [2, 2, 3];
+
+    foreach ($modules as $index => $module) {
+        $type = (string) ($module['type'] ?? '');
+        $props = $module['props'] ?? [];
+        if (!is_array($props)) {
+            $props = [];
+        }
+
+        if ($type === 'Hero') {
+            $props['variant'] = $heroVariants[seeded_value($visitorId, 'hero-variant', count($heroVariants))];
+            if (trim((string) ($props['kicker'] ?? '')) === '') {
+                $props['kicker'] = $heroKickers[seeded_value($visitorId, 'hero-kicker', count($heroKickers))];
+            }
+            if (trim((string) ($props['title'] ?? '')) === '') {
+                $props['title'] = $goal !== '' ? $goal : 'Adaptive experience for alexanderjgill.com';
+            }
+            if (trim((string) ($props['subtitle'] ?? '')) === '') {
+                $props['subtitle'] = 'This shell prioritizes ' . strtolower((string) ($conversion['primaryActionLabel'] ?? 'the next conversion action')) . '.';
+            }
+            if (trim((string) ($props['ctaUrl'] ?? '')) === '') {
+                $props['ctaUrl'] = (string) ($conversion['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io');
+            }
+        }
+
+        if ($type === 'ContentGrid') {
+            if (trim((string) ($props['title'] ?? '')) === '') {
+                $props['title'] = 'Proof around ' . $firstTopic;
+            }
+            if (trim((string) ($props['intro'] ?? '')) === '') {
+                $props['intro'] = 'Live WordPress highlights selected for this visitor journey.';
+            }
+            $props['variant'] = $gridVariants[seeded_value($visitorId, 'grid-variant:' . $index, count($gridVariants))];
+            $props['columns'] = $gridColumns[seeded_value($visitorId, 'grid-columns:' . $index, count($gridColumns))];
+        }
+
+        if ($type === 'ContentList') {
+            if (trim((string) ($props['title'] ?? '')) === '') {
+                $props['title'] = 'Decision path for ' . $secondTopic;
+            }
+            if (trim((string) ($props['intro'] ?? '')) === '') {
+                $props['intro'] = 'Action sequence generated from onboarding + content signals.';
+            }
+            $props['variant'] = $listVariants[seeded_value($visitorId, 'list-variant:' . $index, count($listVariants))];
+        }
+
+        if ($type === 'QuickActions' && trim((string) ($props['title'] ?? '')) === '') {
+            $props['title'] = 'Primary Conversion Paths';
+        }
+
+        if ($type === 'FAQ' && trim((string) ($props['title'] ?? '')) === '') {
+            $props['title'] = 'Trust + Implementation Notes';
+        }
+
+        $modules[$index]['props'] = $props;
+    }
+
+    return $modules;
+}
+
+function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot, string $visitorId): array
+{
+    $theme = infer_theme_from_intent($intent, $visitorId);
+    $layout = infer_layout_from_intent($intent, $visitorId);
     $now = gmdate('c');
 
     if (is_array($candidate['theme'] ?? null)) {
@@ -370,7 +516,12 @@ function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot
         'version' => 1,
         'theme' => $theme,
         'layout' => $layout,
-        'modules' => normalize_modules($candidateModules),
+        'modules' => personalize_module_props(
+            reorder_modules_for_visitor(normalize_modules($candidateModules), $visitorId),
+            $intent,
+            $snapshot,
+            $visitorId
+        ),
         'shortcuts' => normalize_shortcuts($candidateShortcuts, $intent, $snapshot),
         'createdAt' => (string) ($candidate['createdAt'] ?? $now),
         'updatedAt' => $now
@@ -389,6 +540,7 @@ if (!is_array($decodedBody)) {
 
 $config = mysite_load_server_config();
 $intent = normalize_intent($decodedBody);
+$visitorId = normalize_visitor_id($decodedBody);
 $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
 
 $enabled = (bool) ($openAiConfig['enabled'] ?? true);
@@ -438,9 +590,12 @@ Primary conversion priorities are:
 2) Onboard into a Pro Suite hosting account via Dark Horse Virtue HiOps.
 Design module ordering and shortcut labels around visitor intent and these conversion paths.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
+Each visitor has a design seed. Use it to make the layout feel unique, not generic.
 PROMPT;
 
+$visitorSeed = substr(sha1($visitorId), 0, 12);
 $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
+    "\nVisitor design seed:\n" . $visitorSeed .
     "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
     "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
     "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
@@ -503,7 +658,7 @@ if ($blueprint === null) {
     send_json(502, ['error' => 'OpenAI output was not valid JSON']);
 }
 
-$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot);
+$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot, $visitorId);
 
 send_json(200, [
     'blueprint' => $blueprint,

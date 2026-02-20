@@ -12,6 +12,26 @@ const personalization = usePersonalizationStore();
 
 const blueprint = computed(() => personalization.blueprint);
 
+function hashText(input: string): number {
+  let hash = 2166136261;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+const visualSeed = computed(() => {
+  if (!blueprint.value) {
+    return 0;
+  }
+
+  const moduleIds = blueprint.value.modules.map((module) => module.id).join('|');
+  return hashText(`${blueprint.value.theme.accent}:${blueprint.value.layout.nav}:${moduleIds}`);
+});
+
 const modeClass = computed(() => {
   if (blueprint.value?.theme.mode === 'dark') {
     return 'mode-dark';
@@ -20,9 +40,23 @@ const modeClass = computed(() => {
   return 'mode-light';
 });
 
-const shellStyle = computed(() => ({
-  '--accent': blueprint.value?.theme.accent ?? '#0ea5e9'
-}));
+const toneClass = computed(() => `tone-${visualSeed.value % 4}`);
+
+const designSignature = computed(() => {
+  const signature = visualSeed.value.toString(36).toUpperCase();
+  return signature.padStart(6, '0').slice(0, 6);
+});
+
+const shellStyle = computed(() => {
+  const radius = 12 + (visualSeed.value % 10);
+  const panelBlur = 4 + (visualSeed.value % 7);
+
+  return {
+    '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
+    '--radius': `${radius}px`,
+    '--panel-blur': `${panelBlur}px`
+  };
+});
 
 const navItems = computed(() => {
   const shortcuts = blueprint.value?.shortcuts ?? [];
@@ -37,12 +71,28 @@ const orderedModules = computed(() => {
   }));
 });
 
+const shellTitle = computed(() => {
+  if (!blueprint.value) {
+    return 'Adaptive Site Experience';
+  }
+
+  if (blueprint.value.layout.nav === 'none') {
+    return 'Focused Conversion Journey';
+  }
+
+  if (blueprint.value.layout.nav === 'side') {
+    return 'Guided Multi-Section Experience';
+  }
+
+  return 'Adaptive Site Experience';
+});
+
 const wordpressStatus = computed(() => {
   if (!blueprint.value) {
     return '';
   }
 
-  return 'Adaptive visitor journey sourced from alexanderjgill.com';
+  return 'Personalized using alexanderjgill.com as source-of-truth content.';
 });
 
 function isUrlAction(action: string): boolean {
@@ -51,7 +101,7 @@ function isUrlAction(action: string): boolean {
 
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
-  await router.replace('/onboarding');
+  await router.replace('/onboarding?force=1&reset=1');
 }
 
 onMounted(async () => {
@@ -72,11 +122,11 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main v-if="blueprint" class="shell" :class="modeClass" :style="shellStyle">
+  <main v-if="blueprint" class="shell" :class="[modeClass, toneClass]" :style="shellStyle">
     <header class="shell-header">
       <div>
-        <p class="eyebrow">Adaptive Theme Layer · {{ BUILD_TAG }}</p>
-        <h1>{{ blueprint.layout.nav === 'none' ? 'Focused Visitor Journey' : 'Adaptive Site Experience' }}</h1>
+        <p class="eyebrow">Visitor Signature {{ designSignature }} · {{ BUILD_TAG }}</p>
+        <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
       </div>
       <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
@@ -117,8 +167,8 @@ onMounted(async () => {
   min-height: 100vh;
   padding: 1rem;
   background:
-    radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 32%),
-    radial-gradient(circle at 85% 2%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
+    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--accent) 25%, transparent), transparent 38%),
+    radial-gradient(circle at 85% 2%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 33%),
     var(--bg);
 }
 
@@ -132,27 +182,48 @@ onMounted(async () => {
 }
 
 .mode-dark {
-  --bg: #0b1020;
-  --surface: #11182d;
-  --surface-muted: #19213b;
+  --bg: #090f1f;
+  --surface: #101729;
+  --surface-muted: #17223c;
   --text-primary: #e5e7eb;
-  --text-secondary: #9ca3af;
-  --border: #2d3748;
+  --text-secondary: #94a3b8;
+  --border: #27344f;
+}
+
+.tone-0 {
+  background-image:
+    radial-gradient(circle at 10% 8%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 35%),
+    radial-gradient(circle at 90% 4%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 31%);
+}
+
+.tone-1 {
+  background-image:
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 30%),
+    radial-gradient(circle at 78% 0%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 32%);
+}
+
+.tone-2 {
+  background-image:
+    radial-gradient(circle at 25% 0%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 28%),
+    radial-gradient(circle at 95% 18%, color-mix(in srgb, var(--accent) 17%, transparent), transparent 30%);
+}
+
+.tone-3 {
+  background-image:
+    linear-gradient(120deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 35%),
+    radial-gradient(circle at 82% 5%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 33%);
 }
 
 .shell-header {
   display: flex;
-  gap: 0.85rem;
+  gap: 1rem;
   justify-content: space-between;
   align-items: flex-start;
   padding: 1rem;
-  border-radius: 14px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--accent) 16%, transparent),
-    color-mix(in srgb, var(--surface) 90%, transparent)
-  );
+  border-radius: calc(var(--radius) + 2px);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  backdrop-filter: blur(var(--panel-blur));
 }
 
 .eyebrow {
@@ -164,7 +235,7 @@ onMounted(async () => {
 }
 
 h1 {
-  margin: 0.2rem 0 0;
+  margin: 0.25rem 0 0;
   font-size: clamp(1.3rem, 4.2vw, 2rem);
 }
 
@@ -198,7 +269,7 @@ h1 {
 .nav-item {
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
   color: var(--text-primary);
   padding: 0.5rem 0.8rem;
   text-decoration: none;
@@ -211,11 +282,11 @@ h1 {
 }
 
 .module-stack.density-low {
-  gap: 1rem;
+  gap: 1.05rem;
 }
 
 .module-stack.density-high {
-  gap: 0.6rem;
+  gap: 0.62rem;
 }
 
 .module-slot {
@@ -224,12 +295,7 @@ h1 {
 
 .slot-type-Hero :deep(.hero-module) {
   padding: 1.35rem;
-  border-radius: 18px;
-}
-
-.slot-2,
-.slot-3 {
-  align-self: start;
+  border-radius: calc(var(--radius) + 4px);
 }
 
 @media (min-width: 960px) {

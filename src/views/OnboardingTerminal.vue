@@ -12,6 +12,7 @@ import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
+import { getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 interface TranscriptEntry {
@@ -28,6 +29,7 @@ const input = ref('');
 const thinking = ref(false);
 const transcriptRef = ref<HTMLElement | null>(null);
 const chatModeLabel = ref('Live AI chat pending');
+const visitorId = getOrCreateVisitorId();
 
 const intentDraft = ref<IntentProfile>(defaultIntentProfile());
 const turnsTaken = ref(0);
@@ -69,7 +71,8 @@ async function seedConversation(): Promise<void> {
   thinking.value = true;
   const turn = await generateOnboardingTurnWithFallback({
     transcript: [],
-    currentIntent: intentDraft.value
+    currentIntent: intentDraft.value,
+    visitorId
   });
   thinking.value = false;
 
@@ -123,7 +126,9 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
   await assistantReply('Great, generating your personalized experience now...', 80);
 
   thinking.value = true;
-  const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent));
+  const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent), {
+    visitorId
+  });
   thinking.value = false;
 
   if (Object.keys(generationResult.contentOverrides).length > 0) {
@@ -201,7 +206,8 @@ async function handleSubmit(): Promise<void> {
   thinking.value = true;
   const turn = await generateOnboardingTurnWithFallback({
     transcript: toTranscriptLines(transcript.value),
-    currentIntent: intentDraft.value
+    currentIntent: intentDraft.value,
+    visitorId
   });
   thinking.value = false;
 

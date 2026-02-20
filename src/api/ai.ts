@@ -1,4 +1,4 @@
-import type { Blueprint } from '@/blueprint/schema';
+import type { Blueprint, BlueprintModule } from '@/blueprint/schema';
 import { validateBlueprint } from '@/blueprint/engine';
 
 export interface IntentProfile {
@@ -102,31 +102,295 @@ function parseTopics(raw: string): string[] {
     .slice(0, 4);
 }
 
-function pickAccent(vibe: IntentProfile['vibe']): string {
-  const map: Record<IntentProfile['vibe'], string> = {
-    minimal: '#22c55e',
-    visual: '#0ea5e9',
-    dense: '#f97316',
-    playful: '#ec4899'
-  };
+function hashText(input: string): number {
+  let hash = 2166136261;
 
-  return map[vibe];
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
 }
 
-function inferNav(density: IntentProfile['density']): 'side' | 'top' | 'none' {
+function seededIndex(seed: string, salt: string, length: number): number {
+  if (length <= 0) {
+    return 0;
+  }
+
+  return hashText(`${seed}:${salt}`) % length;
+}
+
+function seededPick<T>(seed: string, salt: string, options: T[]): T {
+  return options[seededIndex(seed, salt, options.length)];
+}
+
+function seedFromIntent(intentProfile: IntentProfile, visitorId: string): string {
+  const topics = intentProfile.primaryTopics.join('|').toLowerCase();
+  return `${visitorId}::${intentProfile.goal.toLowerCase()}::${intentProfile.vibe}::${intentProfile.density}::${topics}`;
+}
+
+function inferJourneyProfile(intentProfile: IntentProfile): {
+  primaryLabel: string;
+  primaryUrl: string;
+  secondaryLabel: string;
+  secondaryUrl: string;
+  narrative: string;
+} {
+  const source = `${intentProfile.goal} ${intentProfile.primaryTopics.join(' ')}`.toLowerCase();
+
+  if (/host|hosting|infrastructure|server|plan/.test(source)) {
+    return {
+      primaryLabel: 'Start Hosting Plan',
+      primaryUrl: 'https://alexanderjgill.com',
+      secondaryLabel: 'Open Pro Suite Onboarding',
+      secondaryUrl: 'https://hiops.darkhorsevirtue.io',
+      narrative: 'Focus this journey on decision support and trust for hosting buyers.'
+    };
+  }
+
+  if (/work|portfolio|case|project|build/.test(source)) {
+    return {
+      primaryLabel: 'Explore Work',
+      primaryUrl: 'https://alexanderjgill.com/work/',
+      secondaryLabel: 'Start Pro Suite Onboarding',
+      secondaryUrl: 'https://hiops.darkhorsevirtue.io',
+      narrative: 'Use proof-first storytelling with strong transitions into conversion moments.'
+    };
+  }
+
+  if (/read|learn|article|insight|blog/.test(source)) {
+    return {
+      primaryLabel: 'Read Insights',
+      primaryUrl: 'https://alexanderjgill.com/read/',
+      secondaryLabel: 'Start Hosting Plan',
+      secondaryUrl: 'https://alexanderjgill.com',
+      narrative: 'Prioritize educational flow and then escalate to conversion prompts.'
+    };
+  }
+
+  return {
+    primaryLabel: 'Start Pro Suite Onboarding',
+    primaryUrl: 'https://hiops.darkhorsevirtue.io',
+    secondaryLabel: 'Start Hosting Plan',
+    secondaryUrl: 'https://alexanderjgill.com',
+    narrative: 'Lead with concierge onboarding and provide a second path into hosting plans.'
+  };
+}
+
+function seededAccent(intentProfile: IntentProfile, seed: string): string {
+  const palettes: Record<IntentProfile['vibe'], string[]> = {
+    minimal: ['#22c55e', '#14b8a6', '#10b981', '#65a30d'],
+    visual: ['#2563eb', '#0891b2', '#0ea5e9', '#06b6d4'],
+    dense: ['#ea580c', '#c2410c', '#f97316', '#d97706'],
+    playful: ['#db2777', '#7c3aed', '#ec4899', '#f43f5e']
+  };
+
+  return seededPick(seed, `${intentProfile.vibe}:accent`, palettes[intentProfile.vibe]);
+}
+
+function seededMode(intentProfile: IntentProfile, seed: string): 'dark' | 'light' {
+  if (intentProfile.vibe === 'visual') {
+    return 'light';
+  }
+
+  if (intentProfile.vibe === 'dense') {
+    return seededIndex(seed, 'dense-mode', 2) === 0 ? 'dark' : 'light';
+  }
+
+  if (intentProfile.vibe === 'playful') {
+    return seededIndex(seed, 'playful-mode', 3) === 0 ? 'dark' : 'light';
+  }
+
+  return seededIndex(seed, 'minimal-mode', 4) === 0 ? 'light' : 'dark';
+}
+
+function seededNav(density: IntentProfile['density'], seed: string): 'side' | 'top' | 'none' {
   if (density === 'high') {
-    return 'side';
+    return seededIndex(seed, 'high-nav', 3) === 0 ? 'top' : 'side';
   }
 
   if (density === 'low') {
-    return 'none';
+    return seededIndex(seed, 'low-nav', 4) === 0 ? 'top' : 'none';
   }
 
-  return 'top';
+  return seededIndex(seed, 'medium-nav', 2) === 0 ? 'top' : 'side';
 }
 
-function inferMode(vibe: IntentProfile['vibe']): 'dark' | 'light' {
-  return vibe === 'visual' || vibe === 'playful' ? 'light' : 'dark';
+function buildSeededModules(intentProfile: IntentProfile, seed: string): BlueprintModule[] {
+  const journey = inferJourneyProfile(intentProfile);
+  const firstTopic = intentProfile.primaryTopics[0] ?? 'hosting';
+  const secondTopic = intentProfile.primaryTopics[1] ?? 'onboarding';
+
+  const heroKicker = seededPick(seed, 'hero-kicker', [
+    'Visitor Blueprint',
+    'Adaptive Journey',
+    'AI Interface DNA',
+    'Conversion Narrative'
+  ]);
+  const heroVariant = seededPick(seed, 'hero-variant', ['default', 'spotlight', 'split']);
+
+  const gridVariant = seededPick(seed, 'grid-variant', ['default', 'magazine']);
+  const listVariant = seededPick(seed, 'list-variant', ['default', 'timeline']);
+  const gridColumns = seededPick(seed, 'grid-columns', [2, 2, 3]);
+
+  const moduleTemplates: BlueprintModule[][] = [
+    [
+      {
+        id: 'hero-entry',
+        type: 'Hero',
+        props: {
+          kicker: heroKicker,
+          title: intentProfile.goal || 'Adaptive visitor experience for alexanderjgill.com',
+          subtitle: journey.narrative,
+          ctaUrl: journey.primaryUrl,
+          variant: heroVariant
+        },
+        contentKey: 'heroWelcome'
+      },
+      {
+        id: 'actions-primary',
+        type: 'QuickActions',
+        props: {
+          title: 'Choose Your Next Step'
+        },
+        contentKey: 'quickStartActions'
+      },
+      {
+        id: 'grid-proof',
+        type: 'ContentGrid',
+        props: {
+          title: `Proof around ${firstTopic}`,
+          intro: `Live highlights aligned to ${intentProfile.goal || 'your stated outcome'}.`,
+          variant: gridVariant,
+          columns: gridColumns
+        },
+        contentKey: 'featuredGrid'
+      },
+      {
+        id: 'list-decision',
+        type: 'ContentList',
+        props: {
+          title: `Decision path for ${secondTopic}`,
+          intro: 'Structured next actions based on onboarding intent.',
+          variant: listVariant
+        },
+        contentKey: 'nextStepsList'
+      },
+      {
+        id: 'faq-confidence',
+        type: 'FAQ',
+        props: {
+          title: 'Trust + Implementation FAQs'
+        },
+        contentKey: 'faqGeneral'
+      }
+    ],
+    [
+      {
+        id: 'hero-concierge',
+        type: 'Hero',
+        props: {
+          kicker: heroKicker,
+          title: `Built for ${firstTopic} outcomes`,
+          subtitle: `This flow prioritizes ${journey.primaryLabel.toLowerCase()} and adapts content hierarchy automatically.`,
+          ctaUrl: journey.primaryUrl,
+          variant: heroVariant
+        },
+        contentKey: 'heroWelcome'
+      },
+      {
+        id: 'grid-story',
+        type: 'ContentGrid',
+        props: {
+          title: 'Story + Signals from WordPress',
+          intro: 'Recent content is used as dynamic source material for this visitor shell.',
+          variant: gridVariant,
+          columns: gridColumns
+        },
+        contentKey: 'featuredGrid'
+      },
+      {
+        id: 'actions-paths',
+        type: 'QuickActions',
+        props: {
+          title: 'Primary Conversion Paths'
+        },
+        contentKey: 'quickStartActions'
+      },
+      {
+        id: 'list-roadmap',
+        type: 'ContentList',
+        props: {
+          title: 'Roadmap to Action',
+          intro: 'Move from context to action in fewer steps.',
+          variant: listVariant
+        },
+        contentKey: 'nextStepsList'
+      },
+      {
+        id: 'faq-objections',
+        type: 'FAQ',
+        props: {
+          title: 'Objection Handling'
+        },
+        contentKey: 'faqGeneral'
+      }
+    ],
+    [
+      {
+        id: 'hero-prime',
+        type: 'Hero',
+        props: {
+          kicker: heroKicker,
+          title: `${journey.primaryLabel} with confidence`,
+          subtitle: `This UX plan blends ${firstTopic} with ${secondTopic} signals.`,
+          ctaUrl: journey.primaryUrl,
+          variant: heroVariant
+        },
+        contentKey: 'heroWelcome'
+      },
+      {
+        id: 'list-priorities',
+        type: 'ContentList',
+        props: {
+          title: 'Visitor Priorities',
+          intro: 'Top priorities inferred from the onboarding conversation.',
+          variant: listVariant
+        },
+        contentKey: 'nextStepsList'
+      },
+      {
+        id: 'grid-context',
+        type: 'ContentGrid',
+        props: {
+          title: 'Live Context Library',
+          intro: 'Source material from alexanderjgill.com used for this shell.',
+          variant: gridVariant,
+          columns: gridColumns
+        },
+        contentKey: 'featuredGrid'
+      },
+      {
+        id: 'actions-commit',
+        type: 'QuickActions',
+        props: {
+          title: 'Commit to Next Step'
+        },
+        contentKey: 'quickStartActions'
+      },
+      {
+        id: 'faq-runtime',
+        type: 'FAQ',
+        props: {
+          title: 'Runtime Personalization Notes'
+        },
+        contentKey: 'faqGeneral'
+      }
+    ]
+  ];
+
+  return moduleTemplates[seededIndex(seed, 'module-template', moduleTemplates.length)];
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -221,71 +485,31 @@ function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['w
 }
 
 export async function generateBlueprintFromIntent(
-  intentProfile: IntentProfile
+  intentProfile: IntentProfile,
+  options?: { visitorId?: string }
 ): Promise<Blueprint> {
+  const visitorId = options?.visitorId ?? 'visitor-local';
+  const seed = seedFromIntent(intentProfile, visitorId);
   const timestamp = new Date().toISOString();
-  const topicLabel = intentProfile.primaryTopics[0] ?? 'Hosting + Pro Suite';
-  const goal = intentProfile.goal.trim() || 'Start a hosting plan or Pro Suite onboarding';
+  const journey = inferJourneyProfile(intentProfile);
 
   return {
     version: 1,
     theme: {
-      mode: inferMode(intentProfile.vibe),
-      accent: pickAccent(intentProfile.vibe)
+      mode: seededMode(intentProfile, seed),
+      accent: seededAccent(intentProfile, seed)
     },
     layout: {
-      nav: inferNav(intentProfile.density),
+      nav: seededNav(intentProfile.density, seed),
       density: intentProfile.density
     },
-    modules: [
-      {
-        id: 'hero-journey',
-        type: 'Hero',
-        props: {
-          title: goal,
-          subtitle: `Journey focus: ${topicLabel}`,
-          ctaUrl: 'https://hiops.darkhorsevirtue.io'
-        },
-        contentKey: 'heroWelcome'
-      },
-      {
-        id: 'actions-conversion',
-        type: 'QuickActions',
-        props: {
-          title: 'Start Here'
-        },
-        contentKey: 'quickStartActions'
-      },
-      {
-        id: 'grid-featured',
-        type: 'ContentGrid',
-        props: {
-          title: 'Live Highlights from alexanderjgill.com'
-        },
-        contentKey: 'featuredGrid'
-      },
-      {
-        id: 'list-plan',
-        type: 'ContentList',
-        props: {
-          title: 'Recommended Next Steps'
-        },
-        contentKey: 'nextStepsList'
-      },
-      {
-        id: 'faq-primary-trust',
-        type: 'FAQ',
-        props: {
-          title: 'How This Personalization Works'
-        },
-        contentKey: 'faqGeneral'
-      }
-    ],
+    modules: buildSeededModules(intentProfile, seed),
     shortcuts: [
-      { label: 'Start Pro Suite Onboarding', action: 'https://hiops.darkhorsevirtue.io' },
-      { label: 'Start Hosting Plan', action: 'https://alexanderjgill.com' },
-      { label: 'Explore Work', action: 'https://alexanderjgill.com/work/' },
-      { label: 'Read Insights', action: 'https://alexanderjgill.com/read/' }
+      { label: journey.primaryLabel, action: journey.primaryUrl },
+      { label: journey.secondaryLabel, action: journey.secondaryUrl },
+      { label: 'Explore Main Site', action: 'https://alexanderjgill.com' },
+      { label: 'Read Insights', action: 'https://alexanderjgill.com/read/' },
+      { label: 'Open Work Archive', action: 'https://alexanderjgill.com/work/' }
     ],
     createdAt: timestamp,
     updatedAt: timestamp
@@ -316,17 +540,82 @@ function userLooksConfused(text: string): boolean {
     normalized.includes("don't get it") ||
     normalized.includes('dont get it') ||
     normalized.includes('not sure') ||
+    normalized.includes('confused') ||
     normalized === 'what?' ||
     normalized === 'what'
   );
 }
 
+function inferGoalFromMessage(message: string): string {
+  const clean = message.trim();
+  if (clean.length < 12) {
+    return '';
+  }
+
+  return clean;
+}
+
+function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: string, seed: string): string {
+  const missingGoal = nextIntent.goal.trim().length === 0;
+  const missingTopics = nextIntent.primaryTopics.length < 2;
+  const askedVibe = /minimal|visual|dense|playful/i.test(lastUserMessage);
+  const askedDensity = /\blow\b|\bmedium\b|\bhigh\b/i.test(lastUserMessage);
+
+  if (userLooksConfused(lastUserMessage)) {
+    return seededPick(seed, 'confusion', [
+      'No problem. Should this feel simple and direct, or rich with detail?',
+      'All good. Are we optimizing for hosting signups, Pro Suite onboarding, or both first?',
+      'Clear. Tell me the one action visitors should take first, and I will shape the flow.'
+    ]);
+  }
+
+  if (missingGoal) {
+    return seededPick(seed, 'ask-goal', [
+      'What outcome should this first-time visitor experience drive?',
+      'In one line, what should visitors accomplish before leaving the page?',
+      'What is the main conversion action you want this experience to trigger?'
+    ]);
+  }
+
+  if (!askedVibe) {
+    return seededPick(seed, 'ask-vibe', [
+      'What visual tone fits best: minimal, visual, dense, or playful?',
+      'Pick the vibe that should guide the interface: minimal, visual, dense, or playful.',
+      'Should this feel minimal, visual, dense, or playful overall?'
+    ]);
+  }
+
+  if (!askedDensity) {
+    return seededPick(seed, 'ask-density', [
+      'How detailed should the page feel: low, medium, or high density?',
+      'Should I keep it lightweight, balanced, or information-rich?',
+      'Choose information density: low, medium, or high.'
+    ]);
+  }
+
+  if (missingTopics) {
+    return seededPick(seed, 'ask-topics', [
+      'Name 2-4 topics this visitor should see first.',
+      'List the top topics to highlight first (2-4 is perfect).',
+      'What 2-4 content themes should anchor this experience?'
+    ]);
+  }
+
+  return seededPick(seed, 'ready', [
+    'Perfect. I have enough signal to generate your unique experience.',
+    'Great, this is enough to build your personalized interface blueprint.',
+    'Excellent. I can now generate a custom shell around this visitor profile.'
+  ]);
+}
+
 function localOnboardingFallback(
   transcript: OnboardingTranscriptLine[],
-  currentIntent: IntentProfile
+  currentIntent: IntentProfile,
+  visitorId?: string
 ): OnboardingTurnResult {
   const lastUser = [...transcript].reverse().find((entry) => entry.role === 'user');
   const latestMessage = lastUser?.text ?? '';
+  const seed = `${visitorId ?? 'visitor-local'}:${transcript.length}`;
 
   const nextIntent: IntentProfile = {
     ...currentIntent,
@@ -336,8 +625,9 @@ function localOnboardingFallback(
     primaryTopics: [...currentIntent.primaryTopics]
   };
 
-  if (latestMessage.trim().length > 10 && nextIntent.goal.trim().length === 0) {
-    nextIntent.goal = latestMessage.trim();
+  const inferredGoal = inferGoalFromMessage(latestMessage);
+  if (inferredGoal && nextIntent.goal.trim().length === 0) {
+    nextIntent.goal = inferredGoal;
   }
 
   if (/minimal|visual|dense|playful/i.test(latestMessage)) {
@@ -350,30 +640,19 @@ function localOnboardingFallback(
 
   const extractedTopics = parseTopics(latestMessage);
   if (nextIntent.primaryTopics.length < 2 && extractedTopics.length > 0) {
-    nextIntent.primaryTopics = extractedTopics;
+    nextIntent.primaryTopics = Array.from(new Set([...nextIntent.primaryTopics, ...extractedTopics])).slice(
+      0,
+      4
+    );
   }
 
-  let assistantMessage = 'Tell me what you want this visitor experience to accomplish first.';
-
-  if (!lastUser) {
-    assistantMessage =
-      'I can tailor this experience fast. What should this visitor journey help you achieve first?';
-  } else if (userLooksConfused(latestMessage)) {
-    assistantMessage =
-      'No problem. In one sentence, what do you want visitors to do first: start hosting, begin Pro Suite onboarding, or explore your work?';
-  } else if (nextIntent.goal.trim().length === 0) {
-    assistantMessage = 'What main outcome do you want for this visitor journey?';
-  } else if (!/minimal|visual|dense|playful/i.test(latestMessage) && currentIntent.vibe === nextIntent.vibe) {
-    assistantMessage = 'What vibe fits best: minimal, visual, dense, or playful?';
-  } else if (!/\blow\b|\bmedium\b|\bhigh\b/i.test(latestMessage) && currentIntent.density === nextIntent.density) {
-    assistantMessage =
-      'How detailed should it feel: low (simple), medium (balanced), or high (information-rich)?';
-  } else if (nextIntent.primaryTopics.length < 2) {
-    assistantMessage =
-      'Give me 2-4 topics to highlight (for example: hosting, Pro Suite onboarding, case studies, contact).';
-  } else {
-    assistantMessage = 'Perfect. I have enough context to generate your personalized experience.';
-  }
+  const assistantMessage = lastUser
+    ? composeFollowUpPrompt(nextIntent, latestMessage, seed)
+    : seededPick(seed, 'opening', [
+        'Describe the visitor journey you want to create for this session.',
+        'Tell me what this visitor should accomplish first, and I will design around it.',
+        'What should this personalized experience prioritize first for the visitor?'
+      ]);
 
   const complete = isIntentComplete(nextIntent);
 
@@ -381,14 +660,15 @@ function localOnboardingFallback(
     assistantMessage,
     intentProfile: nextIntent,
     isComplete: complete,
-    confidence: complete ? 0.82 : 0.56,
+    confidence: complete ? 0.84 : 0.58,
     source: 'local'
   };
 }
 
 async function requestOnboardingTurnFromBackend(
   transcript: OnboardingTranscriptLine[],
-  currentIntent: IntentProfile
+  currentIntent: IntentProfile,
+  visitorId?: string
 ): Promise<OnboardingTurnResult | null> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -399,7 +679,7 @@ async function requestOnboardingTurnFromBackend(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ transcript, currentIntent }),
+      body: JSON.stringify({ transcript, currentIntent, visitorId }),
       signal: controller.signal
     });
 
@@ -436,17 +716,23 @@ async function requestOnboardingTurnFromBackend(
 export async function generateOnboardingTurnWithFallback(params: {
   transcript: OnboardingTranscriptLine[];
   currentIntent: IntentProfile;
+  visitorId?: string;
 }): Promise<OnboardingTurnResult> {
-  const backendTurn = await requestOnboardingTurnFromBackend(params.transcript, params.currentIntent);
+  const backendTurn = await requestOnboardingTurnFromBackend(
+    params.transcript,
+    params.currentIntent,
+    params.visitorId
+  );
   if (backendTurn) {
     return backendTurn;
   }
 
-  return localOnboardingFallback(params.transcript, params.currentIntent);
+  return localOnboardingFallback(params.transcript, params.currentIntent, params.visitorId);
 }
 
 async function requestBlueprintFromBackend(
-  intentProfile: IntentProfile
+  intentProfile: IntentProfile,
+  visitorId?: string
 ): Promise<BlueprintGenerationResult | null> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -457,7 +743,7 @@ async function requestBlueprintFromBackend(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ intentProfile }),
+      body: JSON.stringify({ intentProfile, visitorId }),
       signal: controller.signal
     });
 
@@ -496,15 +782,16 @@ async function requestBlueprintFromBackend(
 }
 
 export async function generateBlueprintWithFallback(
-  intentProfile: IntentProfile
+  intentProfile: IntentProfile,
+  options?: { visitorId?: string }
 ): Promise<BlueprintGenerationResult> {
-  const backendResult = await requestBlueprintFromBackend(intentProfile);
+  const backendResult = await requestBlueprintFromBackend(intentProfile, options?.visitorId);
   if (backendResult) {
     return backendResult;
   }
 
   return {
-    blueprint: await generateBlueprintFromIntent(intentProfile),
+    blueprint: await generateBlueprintFromIntent(intentProfile, options),
     source: 'stub',
     contentOverrides: {},
     gapSuggestions: [],

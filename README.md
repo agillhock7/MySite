@@ -76,11 +76,13 @@ Output:
 - `contentOverrides`: WordPress-derived module content keyed by content library keys
 - `gapSuggestions`: heuristic missing-content recommendations
 - `wordpress`: metadata about WP fetch status
+- `visitorId` is accepted and used as a deterministic design seed so two visitors with similar intent still get different UI structure/styling
 
 Conversion behavior:
 
 - Intent is classified into conversion profiles (`pro_suite_onboarding`, `hosting_plan`, `portfolio_review`, `content_learning`)
 - CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding using built-in defaults (no extra conversion config required)
+- Module ordering/variant props are post-processed with visitor seed so the shell is not a generic dashboard clone
 
 ### `POST /api/ai/onboarding.php`
 
@@ -101,6 +103,7 @@ Output:
 - `intentProfile`: updated inferred intent
 - `isComplete`: readiness to generate blueprint
 - `confidence`: extraction confidence score
+- `visitorId` is accepted to vary conversational style per visitor session
 
 ### `GET /api/content/wp.php`
 
