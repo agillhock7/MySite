@@ -1067,16 +1067,16 @@ h1 {
   }
 
   .shell-nav.nav-side {
-    width: 280px;
-    position: fixed;
-    top: 108px;
-    left: 2rem;
+    width: min(340px, 100%);
     display: grid;
     grid-template-columns: 1fr;
+    justify-items: stretch;
+    align-items: start;
+    gap: 0.48rem;
   }
 
-  .shell-nav.nav-side + .experience-scene {
-    margin-left: 300px;
+  .shell-nav.nav-side .nav-item {
+    width: 100%;
   }
 
   .chronicle-body {

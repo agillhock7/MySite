@@ -1,1 +1,1 @@
-export const BUILD_TAG = 'journey-v17';
+export const BUILD_TAG = 'journey-v18';

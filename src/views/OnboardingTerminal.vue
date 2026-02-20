@@ -12,7 +12,7 @@ import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
-import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
+import { bumpDesignIteration, getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 interface TranscriptEntry {
@@ -134,10 +134,13 @@ async function finalizeBlueprint(rawBlueprint: unknown): Promise<void> {
 async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
   await assistantReply('Great, generating your personalized experience now...', 80);
 
+  const generationNonce = bumpDesignIteration();
+  variantNonce.value = generationNonce;
+
   thinking.value = true;
   const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent), {
     visitorId,
-    variantNonce: variantNonce.value,
+    variantNonce: generationNonce,
     transcript: toTranscriptLines(transcript.value)
   });
   thinking.value = false;
