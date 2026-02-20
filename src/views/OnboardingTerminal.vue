@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { generateBlueprintWithFallback, type IntentProfile } from '@/api/ai';
+import {
+  defaultIntentProfile,
+  generateBlueprintWithFallback,
+  generateOnboardingTurnWithFallback,
+  type IntentProfile,
+  type OnboardingTranscriptLine
+} from '@/api/ai';
 import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { setRuntimeContentOverrides } from '@/content/library';
@@ -13,6 +19,9 @@ interface TranscriptEntry {
   text: string;
 }
 
+const INITIAL_ASSISTANT_MESSAGE =
+  'Tell me what you want this visit to accomplish, and I will tailor the experience for you.';
+
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
@@ -21,20 +30,9 @@ const input = ref('');
 const thinking = ref(false);
 const transcriptRef = ref<HTMLElement | null>(null);
 
-const stepIndex = ref(0);
-const intentDraft = ref<IntentProfile>({
-  goal: '',
-  vibe: 'minimal',
-  density: 'medium',
-  primaryTopics: []
-});
-
-const prompts = [
-  'What is your primary goal for this workspace?',
-  'Choose a vibe: minimal, visual, dense, or playful.',
-  'Choose information density: low, medium, or high.',
-  'List 2-4 primary topics (comma separated).'
-];
+const intentDraft = ref<IntentProfile>(defaultIntentProfile());
+const turnsTaken = ref(0);
+const fallbackNoticeShown = ref(false);
 
 function pushLine(speaker: TranscriptEntry['speaker'], text: string): void {
   transcript.value.push({
@@ -61,70 +59,33 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-async function assistantReply(text: string): Promise<void> {
-  thinking.value = true;
-  await sleep(480);
-  thinking.value = false;
+async function assistantReply(text: string, delay = 180): Promise<void> {
+  if (delay > 0) {
+    await sleep(delay);
+  }
   pushLine('assistant', text);
 }
 
 function resetOnboardingState(): void {
-  stepIndex.value = 0;
-  intentDraft.value = {
-    goal: '',
-    vibe: 'minimal',
-    density: 'medium',
-    primaryTopics: []
+  intentDraft.value = defaultIntentProfile();
+  turnsTaken.value = 0;
+  fallbackNoticeShown.value = false;
+}
+
+function normalizeIntentForGeneration(intent: IntentProfile): IntentProfile {
+  return {
+    goal: intent.goal.trim() || 'Create a practical conversion-focused site experience',
+    vibe: intent.vibe,
+    density: intent.density,
+    primaryTopics: intent.primaryTopics.length > 0 ? intent.primaryTopics : ['Hosting', 'Pro Suite']
   };
 }
 
-function normalizeVibe(raw: string): IntentProfile['vibe'] {
-  const normalized = raw.trim().toLowerCase();
-
-  if (normalized.includes('play')) {
-    return 'playful';
-  }
-
-  if (normalized.includes('visual')) {
-    return 'visual';
-  }
-
-  if (normalized.includes('dense')) {
-    return 'dense';
-  }
-
-  return 'minimal';
-}
-
-function normalizeDensity(raw: string): IntentProfile['density'] {
-  const normalized = raw.trim().toLowerCase();
-
-  if (normalized.includes('high')) {
-    return 'high';
-  }
-
-  if (normalized.includes('low')) {
-    return 'low';
-  }
-
-  return 'medium';
-}
-
-function parseTopics(raw: string): string[] {
-  const topics = raw
-    .split(',')
-    .map((topic) => topic.trim())
-    .filter(Boolean);
-
-  if (topics.length > 0) {
-    return topics.slice(0, 4);
-  }
-
-  return raw
-    .split(' ')
-    .map((token) => token.trim())
-    .filter((token) => token.length > 2)
-    .slice(0, 4);
+function toTranscriptLines(entries: TranscriptEntry[]): OnboardingTranscriptLine[] {
+  return entries.map((entry) => ({
+    role: entry.speaker,
+    text: entry.text
+  }));
 }
 
 async function finalizeBlueprint(rawBlueprint: unknown): Promise<void> {
@@ -133,11 +94,42 @@ async function finalizeBlueprint(rawBlueprint: unknown): Promise<void> {
   const resolvedBlueprint = valid ?? defaultBlueprint();
 
   if (!valid) {
-    await assistantReply('Blueprint validation failed. Loading safe default personalization.');
+    await assistantReply('Blueprint validation failed. Loading safe default personalization.', 80);
   }
 
   personalization.setBlueprint(resolvedBlueprint);
   await router.replace('/app');
+}
+
+async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
+  await assistantReply('Great, generating your personalized experience now...', 80);
+
+  thinking.value = true;
+  const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent));
+  thinking.value = false;
+
+  if (Object.keys(generationResult.contentOverrides).length > 0) {
+    setRuntimeContentOverrides(generationResult.contentOverrides);
+  }
+
+  if (generationResult.source === 'backend') {
+    const hasWordpress = generationResult.wordpress?.available ?? false;
+    await assistantReply(
+      hasWordpress
+        ? 'AI blueprint generated from backend + live WordPress content.'
+        : 'AI blueprint generated from backend. WordPress data was limited.',
+      80
+    );
+
+    if (generationResult.gapSuggestions.length > 0) {
+      const topGap = generationResult.gapSuggestions[0];
+      await assistantReply(`Top content gap I detected: ${topGap.topic}.`, 80);
+    }
+  } else {
+    await assistantReply('Backend AI unavailable. Used deterministic local blueprint generator.', 80);
+  }
+
+  await finalizeBlueprint(generationResult.blueprint);
 }
 
 async function handleCommand(command: string): Promise<void> {
@@ -151,7 +143,7 @@ async function handleCommand(command: string): Promise<void> {
     transcript.value = [];
     resetOnboardingState();
     pushLine('system', 'Personalization cache cleared. Starting onboarding again.');
-    await assistantReply(prompts[0]);
+    await assistantReply(INITIAL_ASSISTANT_MESSAGE, 80);
     return;
   }
 
@@ -162,27 +154,6 @@ async function handleCommand(command: string): Promise<void> {
   }
 
   pushLine('system', `Unknown command: ${command}. Try /help.`);
-}
-
-function collectIntentAnswer(answer: string): void {
-  if (stepIndex.value === 0) {
-    intentDraft.value.goal = answer.trim() || 'Create a practical productivity workspace';
-    return;
-  }
-
-  if (stepIndex.value === 1) {
-    intentDraft.value.vibe = normalizeVibe(answer);
-    return;
-  }
-
-  if (stepIndex.value === 2) {
-    intentDraft.value.density = normalizeDensity(answer);
-    return;
-  }
-
-  if (stepIndex.value === 3) {
-    intentDraft.value.primaryTopics = parseTopics(answer);
-  }
 }
 
 async function handleSubmit(): Promise<void> {
@@ -203,54 +174,31 @@ async function handleSubmit(): Promise<void> {
     return;
   }
 
-  collectIntentAnswer(value);
-
-  if (stepIndex.value < prompts.length - 1) {
-    stepIndex.value += 1;
-    await assistantReply(prompts[stepIndex.value]);
-    return;
-  }
-
-  if (!intentDraft.value.goal) {
-    intentDraft.value.goal = 'Create a practical productivity workspace';
-  }
-
-  if (intentDraft.value.primaryTopics.length === 0) {
-    intentDraft.value.primaryTopics = ['Planning', 'Execution'];
-  }
-
-  await assistantReply('Thanks. Generating your UI blueprint now...');
-
   thinking.value = true;
-  const generationResult = await generateBlueprintWithFallback(intentDraft.value);
+  const turn = await generateOnboardingTurnWithFallback({
+    transcript: toTranscriptLines(transcript.value),
+    currentIntent: intentDraft.value
+  });
   thinking.value = false;
 
-  if (Object.keys(generationResult.contentOverrides).length > 0) {
-    setRuntimeContentOverrides(generationResult.contentOverrides);
+  intentDraft.value = turn.intentProfile;
+  turnsTaken.value += 1;
+
+  if (turn.source === 'local' && !fallbackNoticeShown.value) {
+    fallbackNoticeShown.value = true;
+    pushLine('system', 'Live chat AI unavailable, continuing with local conversational fallback.');
   }
 
-  if (generationResult.source === 'backend') {
-    const hasWordpress = generationResult.wordpress?.available ?? false;
-    await assistantReply(
-      hasWordpress
-        ? 'AI blueprint generated from backend + live WordPress content.'
-        : 'AI blueprint generated from backend. WordPress data was limited.'
-    );
+  await assistantReply(turn.assistantMessage, 80);
 
-    if (generationResult.gapSuggestions.length > 0) {
-      const topGap = generationResult.gapSuggestions[0];
-      await assistantReply(`Suggested content gap to fill next: ${topGap.topic}.`);
-    }
-  } else {
-    await assistantReply('Backend AI unavailable. Used deterministic local blueprint generator.');
+  if (turn.isComplete || turnsTaken.value >= 8) {
+    await startBlueprintGeneration(intentDraft.value);
   }
-
-  await finalizeBlueprint(generationResult.blueprint);
 }
 
 onMounted(async () => {
   pushLine('system', 'Terminal onboarding initialized. Type /help for commands.');
-  await assistantReply(prompts[0]);
+  await assistantReply(INITIAL_ASSISTANT_MESSAGE, 80);
 });
 </script>
 

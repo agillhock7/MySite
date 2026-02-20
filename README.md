@@ -82,6 +82,26 @@ Conversion behavior:
 - Intent is classified into conversion profiles (`pro_suite_onboarding`, `hosting_plan`, `portfolio_review`, `content_learning`)
 - CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding using built-in defaults (no extra conversion config required)
 
+### `POST /api/ai/onboarding.php`
+
+Turn-by-turn onboarding conversation endpoint.
+
+Input:
+
+```json
+{
+  "transcript": [{ "role": "user", "text": "..." }],
+  "currentIntent": { "goal": "", "vibe": "minimal", "density": "medium", "primaryTopics": [] }
+}
+```
+
+Output:
+
+- `assistantMessage`: next conversational response
+- `intentProfile`: updated inferred intent
+- `isComplete`: readiness to generate blueprint
+- `confidence`: extraction confidence score
+
 ### `GET /api/content/wp.php`
 
 Returns the latest WordPress-derived `contentOverrides` + `gapSuggestions` for runtime refresh.

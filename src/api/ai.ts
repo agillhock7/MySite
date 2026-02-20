@@ -8,6 +8,19 @@ export interface IntentProfile {
   primaryTopics: string[];
 }
 
+export interface OnboardingTranscriptLine {
+  role: 'system' | 'assistant' | 'user';
+  text: string;
+}
+
+export interface OnboardingTurnResult {
+  assistantMessage: string;
+  intentProfile: IntentProfile;
+  isComplete: boolean;
+  confidence: number;
+  source: 'backend' | 'local';
+}
+
 export interface GapSuggestion {
   topic: string;
   priority: 'high' | 'medium' | 'low';
@@ -29,6 +42,65 @@ export interface BlueprintGenerationResult {
 }
 
 const BACKEND_BLUEPRINT_ENDPOINT = '/api/ai/blueprint.php';
+const BACKEND_ONBOARDING_ENDPOINT = '/api/ai/onboarding.php';
+
+export function defaultIntentProfile(): IntentProfile {
+  return {
+    goal: '',
+    vibe: 'minimal',
+    density: 'medium',
+    primaryTopics: []
+  };
+}
+
+function normalizeVibe(raw: string): IntentProfile['vibe'] {
+  const normalized = raw.toLowerCase();
+
+  if (normalized.includes('play')) {
+    return 'playful';
+  }
+
+  if (normalized.includes('visual')) {
+    return 'visual';
+  }
+
+  if (normalized.includes('dense')) {
+    return 'dense';
+  }
+
+  return 'minimal';
+}
+
+function normalizeDensity(raw: string): IntentProfile['density'] {
+  const normalized = raw.toLowerCase();
+
+  if (normalized.includes('high')) {
+    return 'high';
+  }
+
+  if (normalized.includes('low')) {
+    return 'low';
+  }
+
+  return 'medium';
+}
+
+function parseTopics(raw: string): string[] {
+  const withComma = raw
+    .split(',')
+    .map((topic) => topic.trim())
+    .filter(Boolean);
+
+  if (withComma.length > 0) {
+    return withComma.slice(0, 4);
+  }
+
+  return raw
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 3)
+    .slice(0, 4);
+}
 
 function pickAccent(vibe: IntentProfile['vibe']): string {
   const map: Record<IntentProfile['vibe'], string> = {
@@ -55,6 +127,97 @@ function inferNav(density: IntentProfile['density']): 'side' | 'top' | 'none' {
 
 function inferMode(vibe: IntentProfile['vibe']): 'dark' | 'light' {
   return vibe === 'visual' || vibe === 'playful' ? 'light' : 'dark';
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function normalizeIntentProfile(value: unknown): IntentProfile {
+  const fallback = defaultIntentProfile();
+  const record = asObject(value);
+  if (!record) {
+    return fallback;
+  }
+
+  const goal = typeof record.goal === 'string' ? record.goal.trim() : '';
+  const vibeRaw = typeof record.vibe === 'string' ? record.vibe : fallback.vibe;
+  const densityRaw = typeof record.density === 'string' ? record.density : fallback.density;
+
+  const vibe: IntentProfile['vibe'] =
+    vibeRaw === 'visual' || vibeRaw === 'dense' || vibeRaw === 'playful' ? vibeRaw : 'minimal';
+
+  const density: IntentProfile['density'] =
+    densityRaw === 'low' || densityRaw === 'high' ? densityRaw : 'medium';
+
+  const topicsRaw = Array.isArray(record.primaryTopics) ? record.primaryTopics : [];
+  const primaryTopics = topicsRaw
+    .filter((topic): topic is string => typeof topic === 'string')
+    .map((topic) => topic.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return {
+    goal,
+    vibe,
+    density,
+    primaryTopics
+  };
+}
+
+function normalizeGapSuggestions(value: unknown): GapSuggestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const record = asObject(item);
+      if (!record) {
+        return null;
+      }
+
+      const topic = typeof record.topic === 'string' ? record.topic : '';
+      const priorityRaw = typeof record.priority === 'string' ? record.priority : 'medium';
+      const reason = typeof record.reason === 'string' ? record.reason : '';
+      const suggestedAction =
+        typeof record.suggestedAction === 'string' ? record.suggestedAction : '';
+
+      const priority: GapSuggestion['priority'] =
+        priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
+
+      if (!topic) {
+        return null;
+      }
+
+      return {
+        topic,
+        priority,
+        reason,
+        suggestedAction
+      };
+    })
+    .filter((item): item is GapSuggestion => item !== null);
+}
+
+function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['wordpress'] {
+  const record = asObject(value);
+  if (!record) {
+    return null;
+  }
+
+  return {
+    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : '',
+    available: Boolean(record.available),
+    fetchedAt: typeof record.fetchedAt === 'string' ? record.fetchedAt : '',
+    errors: Array.isArray(record.errors)
+      ? record.errors.filter((item): item is string => typeof item === 'string')
+      : []
+  };
 }
 
 export async function generateBlueprintFromIntent(
@@ -133,63 +296,131 @@ interface BackendBlueprintResponse {
   wordpress?: unknown;
 }
 
-function asObject(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-
-  return value as Record<string, unknown>;
+interface BackendOnboardingResponse {
+  assistantMessage?: unknown;
+  intentProfile?: unknown;
+  isComplete?: unknown;
+  confidence?: unknown;
 }
 
-function normalizeGapSuggestions(value: unknown): GapSuggestion[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((item) => {
-      const record = asObject(item);
-      if (!record) {
-        return null;
-      }
-
-      const topic = typeof record.topic === 'string' ? record.topic : '';
-      const priorityRaw = typeof record.priority === 'string' ? record.priority : 'medium';
-      const reason = typeof record.reason === 'string' ? record.reason : '';
-      const suggestedAction =
-        typeof record.suggestedAction === 'string' ? record.suggestedAction : '';
-
-      const priority: GapSuggestion['priority'] =
-        priorityRaw === 'high' || priorityRaw === 'low' ? priorityRaw : 'medium';
-
-      if (!topic) {
-        return null;
-      }
-
-      return {
-        topic,
-        priority,
-        reason,
-        suggestedAction
-      };
-    })
-    .filter((item): item is GapSuggestion => item !== null);
+function isIntentComplete(intent: IntentProfile): boolean {
+  return intent.goal.trim().length > 0 && intent.primaryTopics.length >= 2;
 }
 
-function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['wordpress'] {
-  const record = asObject(value);
-  if (!record) {
-    return null;
+function localOnboardingFallback(
+  transcript: OnboardingTranscriptLine[],
+  currentIntent: IntentProfile
+): OnboardingTurnResult {
+  const lastUser = [...transcript].reverse().find((entry) => entry.role === 'user');
+  const latestMessage = lastUser?.text ?? '';
+
+  const nextIntent: IntentProfile = {
+    ...currentIntent,
+    goal: currentIntent.goal,
+    vibe: currentIntent.vibe,
+    density: currentIntent.density,
+    primaryTopics: [...currentIntent.primaryTopics]
+  };
+
+  if (latestMessage.trim().length > 10 && nextIntent.goal.trim().length === 0) {
+    nextIntent.goal = latestMessage.trim();
   }
+
+  if (/minimal|visual|dense|playful/i.test(latestMessage)) {
+    nextIntent.vibe = normalizeVibe(latestMessage);
+  }
+
+  if (/\blow\b|\bmedium\b|\bhigh\b/i.test(latestMessage)) {
+    nextIntent.density = normalizeDensity(latestMessage);
+  }
+
+  const extractedTopics = parseTopics(latestMessage);
+  if (nextIntent.primaryTopics.length < 2 && extractedTopics.length > 0) {
+    nextIntent.primaryTopics = extractedTopics;
+  }
+
+  let assistantMessage = 'Tell me what you want this visitor experience to accomplish first.';
+
+  if (nextIntent.goal.trim().length === 0) {
+    assistantMessage = 'What main outcome do you want for this visitor journey?';
+  } else if (!/minimal|visual|dense|playful/i.test(latestMessage) && currentIntent.vibe === nextIntent.vibe) {
+    assistantMessage = 'What vibe fits best: minimal, visual, dense, or playful?';
+  } else if (!/\blow\b|\bmedium\b|\bhigh\b/i.test(latestMessage) && currentIntent.density === nextIntent.density) {
+    assistantMessage = 'How much information density do you want: low, medium, or high?';
+  } else if (nextIntent.primaryTopics.length < 2) {
+    assistantMessage = 'Give me 2-4 primary topics separated by commas so I can shape the layout.';
+  } else {
+    assistantMessage = 'Perfect. I have enough context to generate your personalized experience.';
+  }
+
+  const complete = isIntentComplete(nextIntent);
 
   return {
-    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : '',
-    available: Boolean(record.available),
-    fetchedAt: typeof record.fetchedAt === 'string' ? record.fetchedAt : '',
-    errors: Array.isArray(record.errors)
-      ? record.errors.filter((item): item is string => typeof item === 'string')
-      : []
+    assistantMessage,
+    intentProfile: nextIntent,
+    isComplete: complete,
+    confidence: complete ? 0.82 : 0.56,
+    source: 'local'
   };
+}
+
+async function requestOnboardingTurnFromBackend(
+  transcript: OnboardingTranscriptLine[],
+  currentIntent: IntentProfile
+): Promise<OnboardingTurnResult | null> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(BACKEND_ONBOARDING_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ transcript, currentIntent }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as BackendOnboardingResponse;
+    const assistantMessage =
+      typeof payload.assistantMessage === 'string' && payload.assistantMessage.trim().length > 0
+        ? payload.assistantMessage.trim()
+        : 'Tell me your main outcome and I will tailor your experience.';
+
+    const intentProfile = normalizeIntentProfile(payload.intentProfile);
+    const isComplete = Boolean(payload.isComplete) || isIntentComplete(intentProfile);
+
+    const rawConfidence = typeof payload.confidence === 'number' ? payload.confidence : 0.7;
+    const confidence = Math.max(0, Math.min(1, rawConfidence));
+
+    return {
+      assistantMessage,
+      intentProfile,
+      isComplete,
+      confidence,
+      source: 'backend'
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function generateOnboardingTurnWithFallback(params: {
+  transcript: OnboardingTranscriptLine[];
+  currentIntent: IntentProfile;
+}): Promise<OnboardingTurnResult> {
+  const backendTurn = await requestOnboardingTurnFromBackend(params.transcript, params.currentIntent);
+  if (backendTurn) {
+    return backendTurn;
+  }
+
+  return localOnboardingFallback(params.transcript, params.currentIntent);
 }
 
 async function requestBlueprintFromBackend(
