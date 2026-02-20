@@ -1,14 +1,20 @@
 import type { Pinia } from 'pinia';
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { loadBlueprint } from '@/blueprint/engine';
 import OnboardingTerminal from '@/views/OnboardingTerminal.vue';
 import PersonalizedShell from '@/views/PersonalizedShell.vue';
 import { usePersonalizationStore } from '@/stores/personalization';
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: () => (loadBlueprint() ? '/app' : '/onboarding')
+    redirect: (to) => {
+      if (to.query.reset === '1' || to.query.clear === '1') {
+        return '/onboarding?force=1&reset=1';
+      }
+
+      return loadBlueprint() ? '/app' : '/onboarding';
+    }
   },
   {
     path: '/reset',
