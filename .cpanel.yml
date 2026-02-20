@@ -1,4 +1,4 @@
 deployment:
   tasks:
-    - /bin/bash -lc 'set -e; DEPLOYPATH=/home/alexande/my.alexanderjgill.com; echo "[deploy] using prebuilt dist (no server build)"; test -d dist; mkdir -p "$DEPLOYPATH"'
-    - /bin/bash -lc 'set -e; DEPLOYPATH=/home/alexande/my.alexanderjgill.com; echo "[deploy] copy dist to: $DEPLOYPATH"; if command -v rsync >/dev/null 2>&1; then rsync -av --delete dist/ "$DEPLOYPATH"/; else cp -r dist/* "$DEPLOYPATH"/; fi'
+    - /bin/mkdir -p /home/alexande/my.alexanderjgill.com
+    - /bin/cp -R dist/. /home/alexande/my.alexanderjgill.com/
