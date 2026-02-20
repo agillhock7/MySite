@@ -41,6 +41,11 @@ function formatActionHint(action: string): string {
 }
 
 function runInlineAction(action: string): void {
+  if (action.startsWith('/')) {
+    window.location.assign(action);
+    return;
+  }
+
   if (action === 'reopen-onboarding') {
     window.location.assign('/onboarding?force=1');
     return;

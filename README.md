@@ -12,6 +12,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - Valid blueprint is cached in `localStorage` for offline-friendly repeat visits.
 - Reset controls clear personalization and restart onboarding.
 - Final personalized shell includes an embedded AI concierge chat for UX guidance, hosting onboarding, and AI access routing.
+- Includes an internal story route (`/story/:id`) with modern full-article rendering from WordPress posts.
 
 ## Stack
 
@@ -33,6 +34,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - `public/api/ai/blueprint.php`: blueprint generation endpoint
 - `public/api/ai/assistant.php`: in-shell assistant endpoint
 - `public/api/content/wp.php`: WordPress content bundle endpoint
+- `public/api/content/post.php`: single-post detail endpoint for internal story pages
 
 ## Local development
 

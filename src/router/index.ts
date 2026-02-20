@@ -2,6 +2,7 @@ import type { Pinia } from 'pinia';
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import OnboardingTerminal from '@/views/OnboardingTerminal.vue';
 import PersonalizedShell from '@/views/PersonalizedShell.vue';
+import PostStory from '@/views/PostStory.vue';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 const routes: RouteRecordRaw[] = [
@@ -23,6 +24,11 @@ const routes: RouteRecordRaw[] = [
     path: '/app',
     name: 'app',
     component: PersonalizedShell
+  },
+  {
+    path: '/story/:id(\\d+)',
+    name: 'story',
+    component: PostStory
   },
   {
     path: '/:pathMatch(.*)*',
@@ -62,7 +68,7 @@ export function installRouterGuards(pinia: Pinia): void {
       }
     }
 
-    if (to.path === '/app' && !personalization.blueprint) {
+    if ((to.path === '/app' || to.path.startsWith('/story/')) && !personalization.blueprint) {
       return '/onboarding';
     }
 

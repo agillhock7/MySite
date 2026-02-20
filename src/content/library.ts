@@ -7,17 +7,21 @@ export interface HeroContent {
 }
 
 export interface GridItem {
+  id?: number;
   title: string;
   description: string;
   href?: string;
+  canonicalUrl?: string;
   imageUrl?: string;
   meta?: string;
 }
 
 export interface ListItem {
+  id?: number;
   title: string;
   detail: string;
   href?: string;
+  canonicalUrl?: string;
   imageUrl?: string;
 }
 

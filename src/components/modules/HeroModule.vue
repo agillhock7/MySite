@@ -85,6 +85,21 @@ const variant = computed(() => {
   return 'default';
 });
 
+const visualFx = computed(() => {
+  const value = props.moduleProps.visualFx;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'neon';
+});
+
+const textureFx = computed(() => {
+  const value = props.moduleProps.textureFx;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'glass';
+});
+
+const energyFx = computed(() => {
+  const value = props.moduleProps.energyFx;
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : 'balanced';
+});
+
 const ctaLabel = computed(() => {
   const fromModule = props.moduleProps.ctaLabel;
   if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
@@ -111,7 +126,7 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 </script>
 
 <template>
-  <section class="hero-module" :class="`variant-${variant}`">
+  <section class="hero-module" :class="[`variant-${variant}`, `fx-${visualFx}`, `texture-${textureFx}`, `energy-${energyFx}`]">
     <div class="hero-copy">
       <div v-if="brandName || brandTagline" class="brand-lockup">
         <img v-if="brandIconUrl" :src="brandIconUrl" alt="" loading="lazy" />
@@ -147,6 +162,7 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 
 <style scoped>
 .hero-module {
+  position: relative;
   background:
     radial-gradient(circle at 88% -10%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 44%),
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, white), var(--surface));
@@ -264,6 +280,54 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
     ),
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, white), var(--surface));
   border-width: 2px;
+}
+
+.fx-signal {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+}
+
+.fx-prism {
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--accent) 24%, transparent),
+      transparent 32%,
+      color-mix(in srgb, var(--accent) 12%, transparent) 32%,
+      transparent 62%,
+      color-mix(in srgb, var(--accent) 20%, transparent) 62%,
+      transparent
+    ),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, white), var(--surface));
+}
+
+.fx-zen {
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.texture-grid {
+  background-size: auto, 100% 100%;
+}
+
+.texture-scan::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--accent) 8%, transparent) 0,
+    color-mix(in srgb, var(--accent) 8%, transparent) 1px,
+    transparent 1px,
+    transparent 18px
+  );
+}
+
+.energy-high .primary-btn {
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.energy-low .primary-btn {
+  box-shadow: 0 5px 10px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .eyebrow {

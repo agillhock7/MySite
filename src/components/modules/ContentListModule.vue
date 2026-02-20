@@ -23,6 +23,11 @@ const variant = computed(() => {
   return typeof value === 'string' && value.trim().length > 0 ? value : 'default';
 });
 
+const visualFx = computed(() => {
+  const value = props.moduleProps.visualFx;
+  return typeof value === 'string' && value.trim().length > 0 ? value : 'neon';
+});
+
 const items = computed(() => {
   const content = props.content as { items?: ListItem[] };
   return Array.isArray(content.items) ? content.items : [];
@@ -49,10 +54,18 @@ const visibleItems = computed(() => {
 
   return items.value.slice(offset, offset + Math.max(1, limit));
 });
+
+function isExternalHref(href: string | undefined): boolean {
+  if (!href) {
+    return false;
+  }
+
+  return /^https?:\/\//i.test(href);
+}
 </script>
 
 <template>
-  <section class="module-card" :class="`variant-${variant}`">
+  <section class="module-card" :class="[`variant-${variant}`, `fx-${visualFx}`]">
     <h3>{{ title }}</h3>
     <p v-if="intro" class="intro">{{ intro }}</p>
     <ul>
@@ -68,8 +81,8 @@ const visibleItems = computed(() => {
           <a
             v-if="item.href && item.href.length > 0"
             :href="item.href"
-            target="_blank"
-            rel="noopener noreferrer"
+            :target="isExternalHref(item.href) ? '_blank' : '_self'"
+            :rel="isExternalHref(item.href) ? 'noopener noreferrer' : undefined"
             class="item-link"
           >
             {{ item.title }}
@@ -77,6 +90,26 @@ const visibleItems = computed(() => {
           <template v-else>{{ item.title }}</template>
         </strong>
         <p>{{ item.detail }}</p>
+        <div class="item-actions">
+          <a
+            v-if="item.href && item.href.length > 0"
+            class="read-btn"
+            :href="item.href"
+            :target="isExternalHref(item.href) ? '_blank' : '_self'"
+            :rel="isExternalHref(item.href) ? 'noopener noreferrer' : undefined"
+          >
+            {{ isExternalHref(item.href) ? 'Open Source' : 'Read Story' }}
+          </a>
+          <a
+            v-if="item.canonicalUrl && item.canonicalUrl.length > 0 && !isExternalHref(item.href)"
+            class="source-btn"
+            :href="item.canonicalUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Source
+          </a>
+        </div>
       </li>
     </ul>
   </section>
@@ -138,6 +171,32 @@ p {
   color: var(--text-secondary);
 }
 
+.item-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.read-btn,
+.source-btn {
+  text-decoration: none;
+  font-size: 0.72rem;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+
+.read-btn {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #ffffff));
+}
+
+.source-btn {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
 .item-link {
   color: inherit;
   text-decoration: none;
@@ -189,5 +248,23 @@ p {
 .variant-river li {
   border-left: 4px solid color-mix(in srgb, var(--accent) 62%, transparent);
   border-right: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+.fx-matrix li {
+  border-style: dashed;
+}
+
+.fx-prism li {
+  background:
+    linear-gradient(
+      130deg,
+      color-mix(in srgb, var(--accent) 16%, transparent),
+      transparent 32%,
+      color-mix(in srgb, var(--accent) 8%, transparent) 32%,
+      transparent 62%,
+      color-mix(in srgb, var(--accent) 14%, transparent) 62%,
+      transparent
+    ),
+    color-mix(in srgb, var(--surface-muted) 76%, var(--surface));
 }
 </style>

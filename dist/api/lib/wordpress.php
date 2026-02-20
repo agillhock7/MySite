@@ -95,6 +95,81 @@ function mysite_wp_extract_post_image(array $post): string
     return '';
 }
 
+function mysite_wp_estimated_read_minutes(string $contentHtml): int
+{
+    $plain = mysite_wp_strip_text($contentHtml);
+    if ($plain === '') {
+        return 1;
+    }
+
+    $wordCount = str_word_count($plain);
+    if ($wordCount <= 0) {
+        return 1;
+    }
+
+    return max(1, (int) ceil($wordCount / 220));
+}
+
+function mysite_wp_sanitize_html(string $html): string
+{
+    $clean = $html;
+
+    // Remove script/style tags and their contents.
+    $clean = preg_replace('/<script\b[^>]*>(.*?)<\/script>/is', '', $clean) ?? '';
+    $clean = preg_replace('/<style\b[^>]*>(.*?)<\/style>/is', '', $clean) ?? '';
+
+    // Remove inline event handlers such as onclick.
+    $clean = preg_replace('/\son[a-z]+\s*=\s*("|\')(.*?)\1/i', '', $clean) ?? $clean;
+
+    // Prevent javascript: URIs in href/src.
+    $clean = preg_replace('/(href|src)\s*=\s*("|\')\s*javascript:[^"\']*\2/i', '$1="#"', $clean) ?? $clean;
+
+    return $clean;
+}
+
+function mysite_wp_extract_terms(array $post): array
+{
+    $categories = [];
+    $tags = [];
+
+    $terms = $post['_embedded']['wp:term'] ?? null;
+    if (!is_array($terms)) {
+        return [
+            'categories' => $categories,
+            'tags' => $tags
+        ];
+    }
+
+    foreach ($terms as $taxonomyTerms) {
+        if (!is_array($taxonomyTerms)) {
+            continue;
+        }
+
+        foreach ($taxonomyTerms as $term) {
+            if (!is_array($term)) {
+                continue;
+            }
+
+            $taxonomy = (string) ($term['taxonomy'] ?? '');
+            $name = mysite_wp_strip_text((string) ($term['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+
+            if ($taxonomy === 'category') {
+                $categories[] = $name;
+            } elseif ($taxonomy === 'post_tag') {
+                $tags[] = $name;
+            }
+        }
+    }
+
+    return [
+        'categories' => array_values(array_unique($categories)),
+        'tags' => array_values(array_unique($tags))
+    ];
+}
+
 function mysite_wp_fetch_json(string $url, int $timeoutSeconds): array
 {
     $curl = curl_init($url);
@@ -128,6 +203,94 @@ function mysite_wp_fetch_json(string $url, int $timeoutSeconds): array
     }
 
     return ['ok' => true, 'error' => '', 'status' => $status, 'data' => $decoded];
+}
+
+function mysite_wp_fetch_post_detail(array $config, int $postId): array
+{
+    if ($postId <= 0) {
+        return [
+            'available' => false,
+            'post' => null,
+            'related' => [],
+            'errors' => ['Invalid post id']
+        ];
+    }
+
+    $snapshot = mysite_wp_fetch_snapshot($config);
+    $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
+    $timeout = (int) (($config['wordpress']['timeout_seconds'] ?? 12));
+    if ($timeout < 3) {
+        $timeout = 3;
+    }
+    if ($timeout > 40) {
+        $timeout = 40;
+    }
+
+    $postRes = mysite_wp_fetch_json(
+        $baseUrl . '/wp-json/wp/v2/posts/' . $postId . '?_embed=wp:featuredmedia,author,wp:term',
+        $timeout
+    );
+
+    if (!$postRes['ok'] || !is_array($postRes['data'] ?? null)) {
+        return [
+            'available' => false,
+            'post' => null,
+            'related' => [],
+            'errors' => ['Unable to load post detail']
+        ];
+    }
+
+    $post = $postRes['data'];
+    $title = mysite_wp_strip_text((string) (($post['title']['rendered'] ?? '') ?: 'Untitled'));
+    $excerpt = mysite_wp_strip_text((string) (($post['excerpt']['rendered'] ?? '') ?: ''));
+    $contentHtml = mysite_wp_sanitize_html((string) (($post['content']['rendered'] ?? '') ?: ''));
+    $authorName = mysite_wp_strip_text((string) (($post['_embedded']['author'][0]['name'] ?? '') ?: ''));
+    $terms = mysite_wp_extract_terms($post);
+
+    $related = [];
+    foreach (array_slice($snapshot['posts'] ?? [], 0, 8) as $candidate) {
+        if (!is_array($candidate)) {
+            continue;
+        }
+
+        $candidateId = (int) ($candidate['id'] ?? 0);
+        if ($candidateId <= 0 || $candidateId === $postId) {
+            continue;
+        }
+
+        $related[] = [
+            'id' => $candidateId,
+            'title' => (string) ($candidate['title'] ?? 'Untitled'),
+            'excerpt' => (string) ($candidate['excerpt'] ?? ''),
+            'href' => '/story/' . (string) $candidateId,
+            'imageUrl' => (string) (($candidate['imageUrl'] ?? '') ?: ''),
+            'date' => (string) ($candidate['date'] ?? '')
+        ];
+
+        if (count($related) >= 4) {
+            break;
+        }
+    }
+
+    return [
+        'available' => true,
+        'post' => [
+            'id' => (int) ($post['id'] ?? $postId),
+            'title' => $title,
+            'excerpt' => $excerpt,
+            'contentHtml' => $contentHtml,
+            'canonicalUrl' => (string) ($post['link'] ?? ''),
+            'date' => (string) ($post['date'] ?? ''),
+            'modified' => (string) ($post['modified'] ?? ''),
+            'imageUrl' => mysite_wp_extract_post_image($post),
+            'author' => $authorName,
+            'categories' => $terms['categories'],
+            'tags' => $terms['tags'],
+            'readMinutes' => mysite_wp_estimated_read_minutes($contentHtml)
+        ],
+        'related' => $related,
+        'errors' => []
+    ];
 }
 
 function mysite_wp_fetch_snapshot(array $config): array
@@ -504,6 +667,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 
     $gridItems = [];
     foreach (array_slice($posts, 0, 6) as $post) {
+        $postId = (int) ($post['id'] ?? 0);
         $dateRaw = (string) ($post['date'] ?? '');
         $dateLabel = '';
         if ($dateRaw !== '') {
@@ -514,9 +678,11 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         }
 
         $gridItems[] = [
+            'id' => $postId,
             'title' => (string) ($post['title'] ?? 'Untitled'),
             'description' => (string) (($post['excerpt'] ?? '') !== '' ? $post['excerpt'] : 'No excerpt available.'),
-            'href' => (string) ($post['link'] ?? ''),
+            'href' => $postId > 0 ? '/story/' . (string) $postId : (string) ($post['link'] ?? ''),
+            'canonicalUrl' => (string) ($post['link'] ?? ''),
             'imageUrl' => (string) (($post['imageUrl'] ?? '') ?: ''),
             'meta' => $dateLabel !== '' ? $dateLabel : 'Latest post'
         ];
@@ -532,6 +698,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 
     $listItems = [];
     foreach (array_slice($posts, 0, 6) as $post) {
+        $postId = (int) ($post['id'] ?? 0);
         $title = (string) ($post['title'] ?? 'Untitled');
         $excerpt = (string) ($post['excerpt'] ?? '');
         $dateRaw = (string) ($post['date'] ?? '');
@@ -544,9 +711,11 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         }
 
         $listItems[] = [
+            'id' => $postId,
             'title' => $title,
             'detail' => $excerpt !== '' ? $excerpt : ('Published ' . ($dateLabel !== '' ? $dateLabel : 'recently')),
-            'href' => (string) ($post['link'] ?? ''),
+            'href' => $postId > 0 ? '/story/' . (string) $postId : (string) ($post['link'] ?? ''),
+            'canonicalUrl' => (string) ($post['link'] ?? ''),
             'imageUrl' => (string) (($post['imageUrl'] ?? '') ?: '')
         ];
     }
@@ -600,6 +769,16 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
             'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')
         ]
     ];
+
+    if (isset($posts[0]) && is_array($posts[0])) {
+        $latestId = (int) ($posts[0]['id'] ?? 0);
+        if ($latestId > 0) {
+            array_unshift($actions, [
+                'label' => 'Read Latest Story',
+                'action' => '/story/' . (string) $latestId
+            ]);
+        }
+    }
 
     foreach (mysite_wp_pick_priority_posts($snapshot) as $postAction) {
         $actions[] = $postAction;

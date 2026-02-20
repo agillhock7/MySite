@@ -23,6 +23,11 @@ const variant = computed(() => {
   return typeof value === 'string' && value.trim().length > 0 ? value : 'default';
 });
 
+const visualFx = computed(() => {
+  const value = props.moduleProps.visualFx;
+  return typeof value === 'string' && value.trim().length > 0 ? value : 'neon';
+});
+
 const gridColumnsClass = computed(() => {
   const value = props.moduleProps.columns;
   if (typeof value === 'number' && value >= 3) {
@@ -62,10 +67,18 @@ const visibleItems = computed(() => {
 
   return items.value.slice(offset, offset + Math.max(1, limit));
 });
+
+function isExternalHref(href: string | undefined): boolean {
+  if (!href) {
+    return false;
+  }
+
+  return /^https?:\/\//i.test(href);
+}
 </script>
 
 <template>
-  <section class="module-card" :class="`variant-${variant}`">
+  <section class="module-card" :class="[`variant-${variant}`, `fx-${visualFx}`]">
     <h3>{{ title }}</h3>
     <p v-if="intro" class="intro">{{ intro }}</p>
     <div class="grid" :class="gridColumnsClass">
@@ -81,8 +94,8 @@ const visibleItems = computed(() => {
           <a
             v-if="item.href && item.href.length > 0"
             :href="item.href"
-            target="_blank"
-            rel="noopener noreferrer"
+            :target="isExternalHref(item.href) ? '_blank' : '_self'"
+            :rel="isExternalHref(item.href) ? 'noopener noreferrer' : undefined"
             class="item-link"
           >
             {{ item.title }}
@@ -91,6 +104,26 @@ const visibleItems = computed(() => {
         </h4>
         <p v-if="item.meta" class="meta">{{ item.meta }}</p>
         <p>{{ item.description }}</p>
+        <div class="item-actions">
+          <a
+            v-if="item.href && item.href.length > 0"
+            class="read-btn"
+            :href="item.href"
+            :target="isExternalHref(item.href) ? '_blank' : '_self'"
+            :rel="isExternalHref(item.href) ? 'noopener noreferrer' : undefined"
+          >
+            {{ isExternalHref(item.href) ? 'Open Source' : 'Read Story' }}
+          </a>
+          <a
+            v-if="item.canonicalUrl && item.canonicalUrl.length > 0 && !isExternalHref(item.href)"
+            class="source-btn"
+            :href="item.canonicalUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Source
+          </a>
+        </div>
       </article>
     </div>
   </section>
@@ -159,6 +192,32 @@ h4 {
 p {
   margin: 0.4rem 0 0;
   color: var(--text-secondary);
+}
+
+.item-actions {
+  margin-top: 0.55rem;
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.read-btn,
+.source-btn {
+  text-decoration: none;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+
+.read-btn {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #ffffff));
+}
+
+.source-btn {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 .meta {
@@ -231,6 +290,24 @@ p {
 
 .variant-zigzag .grid-item:hover {
   transform: rotate(0deg) translateY(-3px);
+}
+
+.fx-matrix .grid-item {
+  border-style: dashed;
+}
+
+.fx-prism .grid-item {
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 26%,
+      color-mix(in srgb, var(--accent) 8%, transparent) 26%,
+      transparent 58%,
+      color-mix(in srgb, var(--accent) 16%, transparent) 58%,
+      transparent
+    ),
+    color-mix(in srgb, var(--surface-muted) 76%, var(--surface));
 }
 
 @media (min-width: 700px) {
