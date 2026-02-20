@@ -49,6 +49,13 @@ return [
     'max_categories' => 12,
     'max_tags' => 12
   ],
+  'experience' => [
+    'brand_name' => 'Alexander J Gill',
+    'company_name' => 'Dark Horse Virtue',
+    'hosting_start_url' => 'https://alexanderjgill.com',
+    'pro_suite_onboarding_url' => 'https://hiops.darkhorsevirtue.io',
+    'primary_conversion_goal' => 'pro_suite_onboarding'
+  ],
   'database' => [
     'driver' => 'mysql',
     'host' => 'localhost',
@@ -76,6 +83,11 @@ Output:
 - `contentOverrides`: WordPress-derived module content keyed by content library keys
 - `gapSuggestions`: heuristic missing-content recommendations
 - `wordpress`: metadata about WP fetch status
+
+Conversion behavior:
+
+- Intent is classified into conversion profiles (`pro_suite_onboarding`, `hosting_plan`, `portfolio_review`, `content_learning`)
+- CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding
 
 ### `GET /api/content/wp.php`
 

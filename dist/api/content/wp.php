@@ -25,7 +25,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 $config = mysite_load_server_config();
 $wpSnapshot = mysite_wp_fetch_snapshot($config);
 $gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
-$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions);
+$defaultIntent = [
+    'goal' => 'Start a hosting plan or Pro Suite onboarding',
+    'vibe' => 'minimal',
+    'density' => 'medium',
+    'primaryTopics' => ['Hosting', 'Pro Suite']
+];
+$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $defaultIntent, $config);
 
 send_json(200, [
     'contentOverrides' => $contentOverrides,

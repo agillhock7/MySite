@@ -2,6 +2,7 @@ export interface HeroContent {
   title: string;
   subtitle: string;
   ctaLabel: string;
+  ctaUrl?: string;
 }
 
 export interface GridItem {

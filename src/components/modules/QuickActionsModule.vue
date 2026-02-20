@@ -22,16 +22,38 @@ const actions = computed(() => {
 
   return props.shortcuts.map((shortcut) => ({ label: shortcut.label, action: shortcut.action }));
 });
+
+function isUrlAction(action: string): boolean {
+  return /^https?:\/\//i.test(action);
+}
+
+function runInlineAction(action: string): void {
+  if (action === 'refresh-personalization') {
+    window.location.reload();
+  }
+}
 </script>
 
 <template>
   <section class="module-card">
     <h3>{{ title }}</h3>
     <div class="actions-grid">
-      <button v-for="action in actions" :key="action.action" type="button" class="action-btn">
-        <span>{{ action.label }}</span>
-        <small>{{ action.action }}</small>
-      </button>
+      <template v-for="action in actions" :key="action.action">
+        <a
+          v-if="isUrlAction(action.action)"
+          class="action-btn"
+          :href="action.action"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>{{ action.label }}</span>
+          <small>{{ action.action }}</small>
+        </a>
+        <button v-else type="button" class="action-btn" @click="runInlineAction(action.action)">
+          <span>{{ action.label }}</span>
+          <small>{{ action.action }}</small>
+        </button>
+      </template>
     </div>
   </section>
 </template>
@@ -64,6 +86,7 @@ h3 {
   padding: 0.65rem 0.75rem;
   display: grid;
   gap: 0.2rem;
+  text-decoration: none;
 }
 
 small {

@@ -27,6 +27,21 @@ const subtitle = computed(() => {
 
   return heroContent.value.subtitle;
 });
+
+const ctaUrl = computed(() => {
+  const fromModule = props.moduleProps.ctaUrl;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule;
+  }
+
+  if (typeof heroContent.value.ctaUrl === 'string' && heroContent.value.ctaUrl.trim().length > 0) {
+    return heroContent.value.ctaUrl;
+  }
+
+  return '';
+});
+
+const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 </script>
 
 <template>
@@ -35,7 +50,16 @@ const subtitle = computed(() => {
     <h2>{{ title }}</h2>
     <p class="subtitle">{{ subtitle }}</p>
     <div class="actions">
-      <button type="button" class="primary-btn">{{ heroContent.ctaLabel }}</button>
+      <a
+        v-if="ctaUrl"
+        class="primary-btn"
+        :href="ctaUrl"
+        :target="isExternalCta ? '_blank' : '_self'"
+        :rel="isExternalCta ? 'noopener noreferrer' : undefined"
+      >
+        {{ heroContent.ctaLabel }}
+      </a>
+      <button v-else type="button" class="primary-btn">{{ heroContent.ctaLabel }}</button>
       <span class="shortcut-hint" v-if="shortcuts.length > 0">
         {{ shortcuts[0]?.label }}: {{ shortcuts[0]?.action }}
       </span>
@@ -78,11 +102,14 @@ h2 {
 }
 
 .primary-btn {
+  display: inline-flex;
+  align-items: center;
   border: 0;
   border-radius: 999px;
   padding: 0.55rem 0.95rem;
   background: var(--accent);
   color: #ffffff;
+  text-decoration: none;
 }
 
 .shortcut-hint {

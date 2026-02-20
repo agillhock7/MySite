@@ -9,6 +9,21 @@ function mysite_wp_strip_text(string $value): string
     return trim($compact);
 }
 
+function mysite_wp_contains_any(string $haystack, array $needles): bool
+{
+    foreach ($needles as $needle) {
+        if ($needle === '') {
+            continue;
+        }
+
+        if (strpos($haystack, strtolower($needle)) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function mysite_wp_fetch_json(string $url, int $timeoutSeconds): array
 {
     $curl = curl_init($url);
@@ -211,8 +226,9 @@ function mysite_wp_gap_suggestions(array $snapshot): array
         ['topic' => 'Services', 'match' => ['service', 'offer', 'consult'], 'priority' => 'high'],
         ['topic' => 'Case Studies', 'match' => ['case study', 'project', 'result'], 'priority' => 'high'],
         ['topic' => 'Testimonials', 'match' => ['testimonial', 'review', 'client feedback'], 'priority' => 'high'],
+        ['topic' => 'Pro Suite Onboarding', 'match' => ['pro suite', 'onboard', 'hiops', 'dark horse virtue'], 'priority' => 'high'],
+        ['topic' => 'Hosting Plan CTA', 'match' => ['hosting plan', 'hosting', 'infrastructure'], 'priority' => 'high'],
         ['topic' => 'FAQ', 'match' => ['faq', 'questions'], 'priority' => 'medium'],
-        ['topic' => 'Pricing', 'match' => ['pricing', 'rates', 'packages'], 'priority' => 'medium'],
         ['topic' => 'Contact CTA', 'match' => ['contact', 'book call', 'get in touch'], 'priority' => 'high']
     ];
 
@@ -241,19 +257,157 @@ function mysite_wp_gap_suggestions(array $snapshot): array
     return $missing;
 }
 
-function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
+function mysite_wp_conversion_profile(array $intent, array $config): array
+{
+    $experience = is_array($config['experience'] ?? null) ? $config['experience'] : [];
+
+    $brandName = trim((string) ($experience['brand_name'] ?? 'Alexander J Gill'));
+    $companyName = trim((string) ($experience['company_name'] ?? 'Dark Horse Virtue'));
+
+    $hostingStartUrl = trim((string) ($experience['hosting_start_url'] ?? 'https://alexanderjgill.com'));
+    if ($hostingStartUrl === '') {
+        $hostingStartUrl = 'https://alexanderjgill.com';
+    }
+
+    $proSuiteOnboardingUrl = trim((string) ($experience['pro_suite_onboarding_url'] ?? 'https://hiops.darkhorsevirtue.io'));
+    if ($proSuiteOnboardingUrl === '') {
+        $proSuiteOnboardingUrl = 'https://hiops.darkhorsevirtue.io';
+    }
+
+    $goalText = strtolower((string) ($intent['goal'] ?? ''));
+    $topics = $intent['primaryTopics'] ?? [];
+    $topicText = strtolower(implode(' ', is_array($topics) ? $topics : []));
+
+    $searchText = trim($goalText . ' ' . $topicText);
+
+    $intentType = 'pro_suite_onboarding';
+
+    if (mysite_wp_contains_any($searchText, ['host', 'hosting', 'plan', 'infrastructure'])) {
+        $intentType = 'hosting_plan';
+    }
+
+    if (mysite_wp_contains_any($searchText, ['pro suite', 'whmcs', 'dark horse virtue', 'onboarding', 'hiops'])) {
+        $intentType = 'pro_suite_onboarding';
+    }
+
+    if (mysite_wp_contains_any($searchText, ['portfolio', 'work', 'project', 'case study'])) {
+        $intentType = 'portfolio_review';
+    }
+
+    if (mysite_wp_contains_any($searchText, ['read', 'blog', 'article', 'learn'])) {
+        $intentType = 'content_learning';
+    }
+
+    $primaryGoal = (string) ($experience['primary_conversion_goal'] ?? 'pro_suite_onboarding');
+    if ($searchText === '') {
+        $intentType = $primaryGoal;
+    }
+
+    $profiles = [
+        'pro_suite_onboarding' => [
+            'intentType' => 'pro_suite_onboarding',
+            'heroTitle' => 'Start your Pro Suite onboarding with ' . $companyName,
+            'heroSubtitle' => 'We tailor your path into HiOps so you can activate client operations quickly.',
+            'heroCtaLabel' => 'Start Pro Suite Onboarding',
+            'heroCtaUrl' => $proSuiteOnboardingUrl,
+            'primaryActionLabel' => 'Open HiOps Onboarding',
+            'primaryActionUrl' => $proSuiteOnboardingUrl,
+            'secondaryActionLabel' => 'View Hosting Plan Options',
+            'secondaryActionUrl' => $hostingStartUrl
+        ],
+        'hosting_plan' => [
+            'intentType' => 'hosting_plan',
+            'heroTitle' => 'Choose a hosting plan that fits your growth path',
+            'heroSubtitle' => 'This experience helps visitors move from research to a clear hosting decision.',
+            'heroCtaLabel' => 'Start Hosting Plan',
+            'heroCtaUrl' => $hostingStartUrl,
+            'primaryActionLabel' => 'Start Hosting Plan',
+            'primaryActionUrl' => $hostingStartUrl,
+            'secondaryActionLabel' => 'Need Managed Onboarding? Open HiOps',
+            'secondaryActionUrl' => $proSuiteOnboardingUrl
+        ],
+        'portfolio_review' => [
+            'intentType' => 'portfolio_review',
+            'heroTitle' => 'See how ' . $brandName . ' executes across strategy, systems, and delivery',
+            'heroSubtitle' => 'Portfolio-minded visitors can browse work, then move into hosting or onboarding when ready.',
+            'heroCtaLabel' => 'Explore Work',
+            'heroCtaUrl' => 'https://alexanderjgill.com/work/',
+            'primaryActionLabel' => 'Explore Work',
+            'primaryActionUrl' => 'https://alexanderjgill.com/work/',
+            'secondaryActionLabel' => 'Start Pro Suite Onboarding',
+            'secondaryActionUrl' => $proSuiteOnboardingUrl
+        ],
+        'content_learning' => [
+            'intentType' => 'content_learning',
+            'heroTitle' => 'Explore practical guidance from ' . $brandName,
+            'heroSubtitle' => 'Learning-focused visitors can read first, then transition into hosting or Pro Suite onboarding.',
+            'heroCtaLabel' => 'Read Latest Insights',
+            'heroCtaUrl' => 'https://alexanderjgill.com/read/',
+            'primaryActionLabel' => 'Open Reading Hub',
+            'primaryActionUrl' => 'https://alexanderjgill.com/read/',
+            'secondaryActionLabel' => 'Start Hosting Plan',
+            'secondaryActionUrl' => $hostingStartUrl
+        ]
+    ];
+
+    $fallbackKey = array_key_exists($primaryGoal, $profiles) ? $primaryGoal : 'pro_suite_onboarding';
+    return $profiles[$intentType] ?? $profiles[$fallbackKey];
+}
+
+function mysite_wp_pick_priority_pages(array $snapshot): array
+{
+    $pages = $snapshot['pages'] ?? [];
+    $priorityKeywords = [
+        'work',
+        'lab',
+        'read',
+        'bio',
+        'market',
+        'service',
+        'pricing',
+        'contact'
+    ];
+
+    $selected = [];
+
+    foreach ($priorityKeywords as $keyword) {
+        foreach ($pages as $page) {
+            $title = strtolower((string) ($page['title'] ?? ''));
+            if (strpos($title, $keyword) === false) {
+                continue;
+            }
+
+            $link = (string) ($page['link'] ?? '');
+            if ($link === '') {
+                continue;
+            }
+
+            $selected[$link] = [
+                'label' => (string) ($page['title'] ?? ucfirst($keyword)),
+                'action' => $link
+            ];
+
+            break;
+        }
+    }
+
+    return array_values($selected);
+}
+
+function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array $intent, array $config): array
 {
     $posts = $snapshot['posts'] ?? [];
     $pages = $snapshot['pages'] ?? [];
+    $conversionProfile = mysite_wp_conversion_profile($intent, $config);
 
-    $heroTitle = 'Explore tailored content from alexanderjgill.com';
-    if (count($posts) > 0) {
-        $heroTitle = (string) ($posts[0]['title'] ?? $heroTitle);
-    } elseif (count($pages) > 0) {
-        $heroTitle = (string) ($pages[0]['title'] ?? $heroTitle);
+    $heroTitle = (string) ($conversionProfile['heroTitle'] ?? 'Explore tailored content from alexanderjgill.com');
+    $heroSubtitle = (string) ($conversionProfile['heroSubtitle'] ?? 'Personalized from your intent and live WordPress content.');
+    $heroCtaLabel = (string) ($conversionProfile['heroCtaLabel'] ?? 'Visit Source Site');
+    $heroCtaUrl = (string) ($conversionProfile['heroCtaUrl'] ?? ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'));
+
+    if (count($posts) > 0 && (string) ($posts[0]['title'] ?? '') !== '') {
+        $heroTitle = $heroTitle . ' · ' . (string) $posts[0]['title'];
     }
-
-    $heroSubtitle = 'This experience is generated from your intent plus live WordPress content via read-only REST API.';
 
     $gridItems = [];
     foreach (array_slice($posts, 0, 6) as $post) {
@@ -263,15 +417,32 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
         ];
     }
 
-    $listItems = [];
-    foreach (array_slice($pages, 0, 6) as $page) {
+    if (count($gridItems) === 0) {
+        $gridItems[] = [
+            'title' => 'No recent posts discovered',
+            'description' => 'Publish or expose recent posts in WP REST to enrich this personalized experience.'
+        ];
+    }
+
+    $listItems = [
+        [
+            'title' => 'Primary conversion path',
+            'detail' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding')
+        ],
+        [
+            'title' => 'Secondary conversion path',
+            'detail' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan')
+        ]
+    ];
+
+    foreach (array_slice($pages, 0, 5) as $page) {
         $listItems[] = [
             'title' => (string) ($page['title'] ?? 'Untitled'),
             'detail' => (string) (($page['excerpt'] ?? '') !== '' ? $page['excerpt'] : 'No page summary available.')
         ];
     }
 
-    foreach (array_slice($gapSuggestions, 0, 4) as $gap) {
+    foreach (array_slice($gapSuggestions, 0, 3) as $gap) {
         $listItems[] = [
             'title' => 'Gap: ' . (string) ($gap['topic'] ?? 'Untitled'),
             'detail' => (string) ($gap['suggestedAction'] ?? 'Add content in WordPress for this topic.')
@@ -279,12 +450,28 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
     }
 
     $actions = [
-        ['label' => 'View WordPress Site', 'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')],
-        ['label' => 'Open WP Posts API', 'action' => rtrim((string) ($snapshot['baseUrl'] ?? ''), '/') . '/wp-json/wp/v2/posts'],
-        ['label' => 'Refresh Personalization', 'action' => 'refresh-personalization']
+        [
+            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
+            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+        ],
+        [
+            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
+            'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'))
+        ],
+        [
+            'label' => 'View Main Site',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')
+        ]
     ];
 
-    if (count($posts) > 0 && (string) ($posts[0]['link'] ?? '') !== '') {
+    foreach (mysite_wp_pick_priority_pages($snapshot) as $pageAction) {
+        $actions[] = $pageAction;
+        if (count($actions) >= 8) {
+            break;
+        }
+    }
+
+    if (count($posts) > 0 && (string) ($posts[0]['link'] ?? '') !== '' && count($actions) < 8) {
         $actions[] = ['label' => 'Read Latest Post', 'action' => (string) $posts[0]['link']];
     }
 
@@ -294,8 +481,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
             'answer' => 'No. Integration is read-only and only fetches public data from the WordPress REST API.'
         ],
         [
-            'question' => 'Where does personalization come from?',
-            'answer' => 'From onboarding intent + available WordPress content + AI blueprint generation.'
+            'question' => 'How is this personalized per visitor?',
+            'answer' => 'The onboarding intent determines which conversion path is prioritized first.'
         ],
         [
             'question' => 'What should be added next?',
@@ -309,7 +496,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
         'heroWelcome' => [
             'title' => $heroTitle,
             'subtitle' => $heroSubtitle,
-            'ctaLabel' => 'Visit Source Site'
+            'ctaLabel' => $heroCtaLabel,
+            'ctaUrl' => $heroCtaUrl
         ],
         'featuredGrid' => [
             'items' => $gridItems
@@ -326,7 +514,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions): array
     ];
 }
 
-function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions): array
+function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, array $intent, array $config): array
 {
     $postTitles = [];
     foreach (array_slice(($snapshot['posts'] ?? []), 0, 8) as $post) {
@@ -358,6 +546,7 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions): a
         'pageTitles' => $pageTitles,
         'categoryNames' => $categoryNames,
         'gapTopics' => $gapTopics,
+        'conversionProfile' => mysite_wp_conversion_profile($intent, $config),
         'errors' => $snapshot['errors'] ?? []
     ];
 }

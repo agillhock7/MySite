@@ -191,8 +191,8 @@ if ($apiKey === '') {
 
 $wpSnapshot = mysite_wp_fetch_snapshot($config);
 $gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
-$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions);
-$wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions);
+$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $intent, $config);
+$wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions, $intent, $config);
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {
@@ -216,7 +216,11 @@ $systemPrompt = <<<PROMPT
 You generate UI Blueprint JSON only.
 Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
-Prioritize discoverability of existing WordPress content and add guidance to fill content gaps.
+Primary conversion priorities are:
+1) Start a hosting plan
+2) Onboard into a Pro Suite hosting account via Dark Horse Virtue HiOps.
+Design module ordering and shortcut labels around visitor intent and these conversion paths.
+Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
 PROMPT;
 
 $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .

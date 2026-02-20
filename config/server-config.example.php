@@ -29,6 +29,13 @@ return [
         'max_categories' => 12,
         'max_tags' => 12
     ],
+    'experience' => [
+        'brand_name' => 'Alexander J Gill',
+        'company_name' => 'Dark Horse Virtue',
+        'hosting_start_url' => 'https://alexanderjgill.com',
+        'pro_suite_onboarding_url' => 'https://hiops.darkhorsevirtue.io',
+        'primary_conversion_goal' => 'pro_suite_onboarding'
+    ],
     'database' => [
         'driver' => 'mysql',
         'host' => 'localhost',

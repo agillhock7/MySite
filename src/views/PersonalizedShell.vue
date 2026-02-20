@@ -33,7 +33,7 @@ const wordpressStatus = computed(() => {
     return '';
   }
 
-  return 'WordPress source: alexanderjgill.com';
+  return 'Adaptive visitor journey sourced from alexanderjgill.com';
 });
 
 async function resetPersonalization(): Promise<void> {
@@ -62,8 +62,8 @@ onMounted(async () => {
   <main v-if="blueprint" class="shell" :class="modeClass" :style="shellStyle">
     <header class="shell-header">
       <div>
-        <p class="eyebrow">UI Blueprint</p>
-        <h1>{{ blueprint.layout.nav === 'none' ? 'Minimal Workspace' : 'Personalized Workspace' }}</h1>
+        <p class="eyebrow">Personalized Theme Layer</p>
+        <h1>{{ blueprint.layout.nav === 'none' ? 'Focused Visitor Journey' : 'Adaptive Site Experience' }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
       </div>
       <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
