@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { generateBlueprintFromIntent, type IntentProfile } from '@/api/ai';
+import { generateBlueprintWithFallback, type IntentProfile } from '@/api/ai';
 import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { usePersonalizationStore } from '@/stores/personalization';
@@ -221,10 +221,16 @@ async function handleSubmit(): Promise<void> {
   await assistantReply('Thanks. Generating your UI blueprint now...');
 
   thinking.value = true;
-  const generated = await generateBlueprintFromIntent(intentDraft.value);
+  const generationResult = await generateBlueprintWithFallback(intentDraft.value);
   thinking.value = false;
 
-  await finalizeBlueprint(generated);
+  if (generationResult.source === 'backend') {
+    await assistantReply('AI blueprint generated from backend successfully.');
+  } else {
+    await assistantReply('Backend AI unavailable. Used deterministic local blueprint generator.');
+  }
+
+  await finalizeBlueprint(generationResult.blueprint);
 }
 
 onMounted(async () => {

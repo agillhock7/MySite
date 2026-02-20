@@ -1,4 +1,5 @@
 import type { Blueprint } from '@/blueprint/schema';
+import { validateBlueprint } from '@/blueprint/engine';
 
 export interface IntentProfile {
   goal: string;
@@ -6,6 +7,13 @@ export interface IntentProfile {
   density: 'low' | 'medium' | 'high';
   primaryTopics: string[];
 }
+
+export interface BlueprintGenerationResult {
+  blueprint: Blueprint;
+  source: 'backend' | 'stub';
+}
+
+const BACKEND_BLUEPRINT_ENDPOINT = '/api/ai/blueprint.php';
 
 function pickAccent(vibe: IntentProfile['vibe']): string {
   const map: Record<IntentProfile['vibe'], string> = {
@@ -104,19 +112,61 @@ export async function generateBlueprintFromIntent(
   };
 }
 
-/*
-// Future backend integration example:
-// export async function generateBlueprintFromIntent(intentProfile: IntentProfile): Promise<Blueprint> {
-//   const response = await fetch('/api/ai/blueprint', {
-//     method: 'POST',
-//     headers: { 'Content-Type': 'application/json' },
-//     body: JSON.stringify({ intentProfile })
-//   });
-//
-//   if (!response.ok) {
-//     throw new Error('Blueprint generation failed');
-//   }
-//
-//   return (await response.json()) as Blueprint;
-// }
-*/
+function normalizeBackendPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+
+  const asRecord = payload as Record<string, unknown>;
+  if (asRecord.blueprint && typeof asRecord.blueprint === 'object') {
+    return asRecord.blueprint;
+  }
+
+  return payload;
+}
+
+async function requestBlueprintFromBackend(
+  intentProfile: IntentProfile
+): Promise<Blueprint | null> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(BACKEND_BLUEPRINT_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ intentProfile }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as unknown;
+    const normalized = normalizeBackendPayload(payload);
+    const valid = validateBlueprint(normalized);
+
+    return valid;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function generateBlueprintWithFallback(
+  intentProfile: IntentProfile
+): Promise<BlueprintGenerationResult> {
+  const backendBlueprint = await requestBlueprintFromBackend(intentProfile);
+  if (backendBlueprint) {
+    return { blueprint: backendBlueprint, source: 'backend' };
+  }
+
+  return {
+    blueprint: await generateBlueprintFromIntent(intentProfile),
+    source: 'stub'
+  };
+}
