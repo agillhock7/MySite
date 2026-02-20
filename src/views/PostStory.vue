@@ -23,6 +23,50 @@ const modeClass = computed(() => (personalization.blueprint?.theme.mode === 'lig
 const post = computed(() => detail.value?.post ?? null);
 const related = computed(() => detail.value?.related ?? []);
 
+function hashText(input: string): number {
+  let hash = 2166136261;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function seededUnit(seed: number, salt: string): number {
+  return hashText(`${seed}:${salt}`) / 4294967295;
+}
+
+const storySeed = computed(() => {
+  const base = `${post.value?.id ?? 0}|${post.value?.title ?? ''}|${accent.value}`;
+  return hashText(base);
+});
+
+const ambientNodes = computed(() => {
+  const nodes = [] as Array<{
+    key: string;
+    left: string;
+    top: string;
+    size: string;
+    opacity: string;
+    duration: string;
+  }>;
+
+  for (let index = 0; index < 8; index += 1) {
+    nodes.push({
+      key: `story-node-${index}`,
+      left: `${(seededUnit(storySeed.value, `left-${index}`) * 100).toFixed(2)}%`,
+      top: `${(seededUnit(storySeed.value, `top-${index}`) * 100).toFixed(2)}%`,
+      size: `${(160 + seededUnit(storySeed.value, `size-${index}`) * 300).toFixed(0)}px`,
+      opacity: (0.12 + seededUnit(storySeed.value, `opacity-${index}`) * 0.34).toFixed(2),
+      duration: `${(11 + seededUnit(storySeed.value, `duration-${index}`) * 14).toFixed(1)}s`
+    });
+  }
+
+  return nodes;
+});
+
 const shellStyle = computed(() => ({
   '--accent': accent.value
 }));
@@ -105,6 +149,23 @@ watch(
 
 <template>
   <main class="story-root" :class="modeClass" :style="shellStyle">
+    <div class="ambient-layer" aria-hidden="true">
+      <span class="ambient-grid"></span>
+      <span
+        v-for="node in ambientNodes"
+        :key="node.key"
+        class="ambient-node"
+        :style="{
+          left: node.left,
+          top: node.top,
+          width: node.size,
+          height: node.size,
+          opacity: node.opacity,
+          animationDuration: node.duration
+        }"
+      ></span>
+    </div>
+
     <div class="progress-wrap" aria-hidden="true">
       <span class="progress-bar" :style="{ transform: `scaleX(${readingProgress})` }"></span>
     </div>
@@ -120,18 +181,15 @@ watch(
     </section>
 
     <article v-else-if="post" class="story-shell">
-      <header class="story-header">
+      <header class="story-hero">
         <a href="/app" class="back-link">← Back to experience</a>
         <h1>{{ post.title }}</h1>
         <p class="deck" v-if="post.excerpt">{{ post.excerpt }}</p>
+
         <div class="meta-row">
           <span v-if="post.author">By {{ post.author }}</span>
           <span v-if="post.date">{{ formatDate(post.date) }}</span>
           <span>{{ post.readMinutes }} min read</span>
-        </div>
-        <div class="chip-row" v-if="post.categories.length || post.tags.length">
-          <span v-for="category in post.categories" :key="`c:${category}`" class="chip category">{{ category }}</span>
-          <span v-for="tag in post.tags.slice(0, 8)" :key="`t:${tag}`" class="chip">{{ tag }}</span>
         </div>
       </header>
 
@@ -139,13 +197,31 @@ watch(
         <img :src="post.imageUrl" alt="" loading="lazy" />
       </figure>
 
-      <section class="article-content" v-html="post.contentHtml"></section>
+      <div class="story-grid">
+        <aside class="story-sidebar">
+          <div class="sidebar-block" v-if="post.categories.length || post.tags.length">
+            <p class="sidebar-label">Topics</p>
+            <div class="chip-row">
+              <span v-for="category in post.categories" :key="`c:${category}`" class="chip category">{{ category }}</span>
+              <span v-for="tag in post.tags.slice(0, 10)" :key="`t:${tag}`" class="chip">{{ tag }}</span>
+            </div>
+          </div>
 
-      <footer class="story-footer">
-        <a v-if="post.canonicalUrl" :href="post.canonicalUrl" target="_blank" rel="noopener noreferrer" class="source-link">
-          View original on WordPress ↗
-        </a>
-      </footer>
+          <div class="sidebar-block" v-if="post.canonicalUrl">
+            <p class="sidebar-label">Source</p>
+            <a :href="post.canonicalUrl" target="_blank" rel="noopener noreferrer" class="source-link">View original on WordPress ↗</a>
+          </div>
+
+          <div class="sidebar-block" v-if="related.length > 0">
+            <p class="sidebar-label">Next stories</p>
+            <div class="related-inline">
+              <a v-for="item in related.slice(0, 3)" :key="item.id" :href="item.href" class="related-inline-item">{{ item.title }}</a>
+            </div>
+          </div>
+        </aside>
+
+        <section class="article-content" v-html="post.contentHtml"></section>
+      </div>
     </article>
 
     <section v-if="!loading && !error && related.length > 0" class="related-shell">
@@ -165,19 +241,56 @@ watch(
 
 <style scoped>
 .story-root {
+  position: relative;
+  overflow: hidden;
   min-height: 100vh;
   padding: 0 1rem 12rem;
   background:
-    radial-gradient(circle at 90% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 44%),
-    linear-gradient(165deg, #050b18, #0a1429 50%, #101d39);
+    radial-gradient(circle at 88% -10%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 44%),
+    linear-gradient(165deg, #040a17, #09162e 48%, #0f2142);
   color: #e8eefb;
 }
 
 .mode-light.story-root {
   background:
-    radial-gradient(circle at 90% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
-    linear-gradient(160deg, #f4f8ff, #e7efff 45%, #f3f8ff);
+    radial-gradient(circle at 88% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 44%),
+    linear-gradient(160deg, #f4f8ff, #e7efff 45%, #f4f8ff);
   color: #111827;
+}
+
+.ambient-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ambient-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.24;
+  background:
+    linear-gradient(transparent 95%, color-mix(in srgb, var(--accent) 20%, transparent) 100%),
+    linear-gradient(90deg, transparent 95%, color-mix(in srgb, var(--accent) 16%, transparent) 100%);
+  background-size: 100% 32px, 32px 100%;
+}
+
+.ambient-node {
+  position: absolute;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  filter: blur(22px);
+  transform: translate(-50%, -50%);
+  animation: breathe 14s ease-in-out infinite alternate;
+}
+
+.progress-wrap,
+.story-loading,
+.story-error,
+.story-shell,
+.related-shell {
+  position: relative;
+  z-index: 2;
 }
 
 .progress-wrap {
@@ -192,14 +305,14 @@ watch(
   display: block;
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #ffffff), var(--accent));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 74%, #ffffff), var(--accent));
   transform-origin: 0 50%;
 }
 
 .story-loading,
 .story-error {
-  max-width: 900px;
-  margin: 3rem auto 0;
+  max-width: 980px;
+  margin: 2.8rem auto 0;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--accent) 36%, #334155);
   background: color-mix(in srgb, var(--accent) 8%, #0f172a);
@@ -207,36 +320,36 @@ watch(
 }
 
 .story-shell {
-  max-width: 980px;
-  margin: 1.25rem auto 0;
+  max-width: 1100px;
+  margin: 1.2rem auto 0;
   display: grid;
-  gap: 1rem;
+  gap: 0.9rem;
 }
 
-.story-header {
+.story-hero {
   border-radius: 22px;
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, #334155);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, #334155);
   background:
-    linear-gradient(140deg, color-mix(in srgb, var(--accent) 10%, rgba(15, 23, 42, 0.94)), rgba(15, 23, 42, 0.88));
-  padding: 1.2rem;
+    linear-gradient(140deg, color-mix(in srgb, var(--accent) 10%, rgba(15, 23, 42, 0.9)), rgba(15, 23, 42, 0.84));
+  padding: clamp(1rem, 2.4vw, 1.4rem);
 }
 
-.mode-light .story-header {
-  background:
-    linear-gradient(140deg, color-mix(in srgb, var(--accent) 8%, #ffffff), color-mix(in srgb, var(--accent) 2%, #ffffff));
+.mode-light .story-hero {
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 8%, #ffffff), color-mix(in srgb, var(--accent) 2%, #ffffff));
 }
 
 .back-link {
   display: inline-block;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.68rem;
   color: color-mix(in srgb, var(--accent) 84%, #9ca3af);
   text-decoration: none;
 }
 
 h1 {
   margin: 0;
-  font-size: clamp(1.8rem, 5.2vw, 3rem);
-  line-height: 1.06;
+  font-size: clamp(1.7rem, 5.3vw, 3.2rem);
+  line-height: 1.04;
+  text-wrap: balance;
 }
 
 .deck {
@@ -258,37 +371,17 @@ h1 {
 
 .meta-row span {
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, #334155);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, #334155);
   padding: 0.22rem 0.6rem;
   font-size: 0.78rem;
-}
-
-.chip-row {
-  margin-top: 0.75rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.38rem;
-}
-
-.chip {
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, #334155);
-  padding: 0.2rem 0.58rem;
-  font-size: 0.72rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.chip.category {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .hero-image {
   margin: 0;
   border-radius: 20px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, #334155);
-  max-height: 480px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, #334155);
+  max-height: 500px;
 }
 
 .hero-image img {
@@ -298,14 +391,85 @@ h1 {
   object-fit: cover;
 }
 
+.story-grid {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.story-sidebar {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sidebar-block {
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, #334155);
+  background: color-mix(in srgb, var(--accent) 8%, rgba(15, 23, 42, 0.74));
+  padding: 0.68rem;
+}
+
+.mode-light .sidebar-block {
+  background: color-mix(in srgb, var(--accent) 4%, #ffffff);
+}
+
+.sidebar-label {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 84%, #94a3b8);
+}
+
+.chip-row {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.chip {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, #334155);
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.chip.category {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.source-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: color-mix(in srgb, var(--accent) 82%, #cbd5e1);
+  text-decoration: none;
+}
+
+.related-inline {
+  margin-top: 0.48rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.related-inline-item {
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, #334155);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  padding: 0.4rem 0.5rem;
+  font-size: 0.86rem;
+}
+
 .article-content {
   border-radius: 22px;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, #334155);
-  background:
-    linear-gradient(160deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.8));
-  padding: clamp(1rem, 3.6vw, 2.1rem);
-  line-height: 1.78;
-  font-size: 1.04rem;
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.8));
+  padding: clamp(1rem, 3.4vw, 2.15rem);
+  line-height: 1.8;
+  font-size: 1.05rem;
 }
 
 .mode-light .article-content {
@@ -330,23 +494,13 @@ h1 {
 
 .article-content :deep(blockquote) {
   margin: 1em 0;
-  padding: 0.65em 0.85em;
+  padding: 0.7em 0.9em;
   border-left: 3px solid color-mix(in srgb, var(--accent) 70%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-.story-footer {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.source-link {
-  color: color-mix(in srgb, var(--accent) 86%, #9ca3af);
-  text-decoration: none;
-}
-
 .related-shell {
-  max-width: 980px;
+  max-width: 1100px;
   margin: 1rem auto 0;
 }
 
@@ -373,9 +527,13 @@ h1 {
   gap: 0.5rem;
 }
 
+.mode-light .related-card {
+  background: color-mix(in srgb, var(--accent) 4%, #ffffff);
+}
+
 .related-card img {
   width: 100%;
-  height: 160px;
+  height: 170px;
   object-fit: cover;
   border-radius: 12px;
 }
@@ -393,9 +551,28 @@ h1 {
   color: #4b5563;
 }
 
-@media (min-width: 880px) {
+@keyframes breathe {
+  from {
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+  to {
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@media (min-width: 980px) {
   .story-root {
     padding: 0 2rem 8rem;
+  }
+
+  .story-grid {
+    grid-template-columns: 300px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .story-sidebar {
+    position: sticky;
+    top: 18px;
   }
 
   .related-grid {

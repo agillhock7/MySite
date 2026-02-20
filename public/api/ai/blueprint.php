@@ -498,13 +498,13 @@ function infer_layout_from_intent(array $intent, string $visitorId): array
 
     $nav = 'top';
     if ($density === 'high') {
-        $nav = seeded_value($visitorId, 'nav-high', 3) === 0 ? 'top' : 'side';
+        $nav = seeded_value($visitorId, 'nav-high', 3) === 0 ? 'side' : 'top';
     }
     if ($density === 'medium') {
-        $nav = seeded_value($visitorId, 'nav-medium', 2) === 0 ? 'top' : 'side';
+        $nav = seeded_value($visitorId, 'nav-medium', 5) === 0 ? 'side' : 'top';
     }
     if ($density === 'low') {
-        $nav = seeded_value($visitorId, 'nav-low', 4) === 0 ? 'top' : 'none';
+        $nav = seeded_value($visitorId, 'nav-low', 4) === 0 ? 'none' : 'top';
     }
 
     return [
@@ -825,7 +825,7 @@ function infer_persona_design_profile(array $intent, string $visitorId): array
         $focusTopics = ['Personal brand', 'Future of web'];
     }
 
-    $styleMotifs = ['holographic', 'cinematic', 'signal-driven', 'editorial', 'ambient'];
+    $styleMotifs = ['holographic', 'cinematic', 'signal-driven', 'editorial', 'ambient', 'futurist', 'atelier'];
     $motif = $styleMotifs[seeded_value($visitorId, 'style-motif', count($styleMotifs))];
 
     return [
@@ -872,7 +872,7 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     $gridVariants = ['default', 'magazine', 'mosaic', 'cards', 'neon', 'zigzag'];
     $listVariants = ['default', 'timeline', 'checklist', 'stacked', 'neon', 'river'];
     $gridColumns = [2, 2, 3];
-    $shellProfiles = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
+    $shellProfiles = ['orbital', 'editorial', 'kinetic', 'glass', 'neo', 'atlas', 'spectral'];
     $typographyProfiles = ['grotesk', 'literary', 'display', 'mono'];
     $motionProfiles = ['calm', 'balanced', 'kinetic'];
 

@@ -4,10 +4,17 @@ import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
 import AssistantDock from '@/components/AssistantDock.vue';
 import { fetchWordpressContentBundle } from '@/api/wp';
-import { setRuntimeContentOverrides } from '@/content/library';
+import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
+
+interface VisualCard {
+  key: string;
+  title: string;
+  imageUrl: string;
+  href: string;
+}
 
 const router = useRouter();
 const personalization = usePersonalizationStore();
@@ -15,6 +22,9 @@ const personalization = usePersonalizationStore();
 const initializing = ref(true);
 const initializationError = ref('');
 const wordpressError = ref('');
+const pointerX = ref(52);
+const pointerY = ref(36);
+
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
 const assistantVariantNonce = getDesignIteration();
@@ -28,6 +38,14 @@ function hashText(input: string): number {
   }
 
   return hash >>> 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }
 
 function firstStringModuleProp(propName: string): string {
@@ -63,6 +81,19 @@ function firstStringArrayModuleProp(propName: string): string[] {
   return [];
 }
 
+function seededUnit(seed: number, salt: string): number {
+  return hashText(`${seed}:${salt}`) / 4294967295;
+}
+
+function seededChoice<T>(seed: number, salt: string, options: T[]): T {
+  if (options.length === 0) {
+    throw new Error('seededChoice requires at least one option');
+  }
+
+  const index = Math.floor(seededUnit(seed, salt) * options.length) % options.length;
+  return options[index];
+}
+
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
@@ -77,7 +108,9 @@ async function initializePersonalization(): Promise<void> {
     setRuntimeContentOverrides(wpBundle.contentOverrides);
   }
 
-  if (wpBundle?.wordpress && !wpBundle.wordpress.available) {
+  if (!wpBundle) {
+    wordpressError.value = 'WordPress fetch unavailable. Rendering from cached content when possible.';
+  } else if (wpBundle.wordpress && !wpBundle.wordpress.available) {
     const firstError = wpBundle.wordpress.errors[0] ?? '';
     wordpressError.value = firstError
       ? `WordPress REST fetch warning: ${firstError}`
@@ -93,19 +126,44 @@ async function initializePersonalization(): Promise<void> {
   initializing.value = false;
 }
 
-const visualSeed = computed(() => {
+const baseSeed = computed(() => {
   if (!blueprint.value) {
     return 0;
   }
 
   const moduleIds = blueprint.value.modules.map((module) => module.id).join('|');
-  return hashText(`${blueprint.value.theme.accent}:${blueprint.value.layout.nav}:${moduleIds}`);
+  return hashText(`${blueprint.value.theme.accent}|${blueprint.value.layout.nav}|${moduleIds}|${blueprint.value.createdAt}`);
+});
+
+const focusTopics = computed(() => {
+  const topics = firstStringArrayModuleProp('focusTopics');
+  return topics.length > 0 ? topics.slice(0, 7) : ['Identity', 'Interests', 'Intent'];
+});
+
+const designSignature = computed(() => {
+  const fromBlueprint = firstStringModuleProp('signature');
+  if (fromBlueprint) {
+    return fromBlueprint.slice(0, 10).toUpperCase();
+  }
+
+  return baseSeed.value.toString(36).toUpperCase().padStart(6, '0').slice(0, 8);
+});
+
+const visualSeed = computed(() => {
+  if (!blueprint.value) {
+    return 0;
+  }
+
+  const shellHint = firstStringModuleProp('shellProfile');
+  const topicKey = focusTopics.value.join('|').toLowerCase();
+  return hashText(`${baseSeed.value}|${designSignature.value}|${shellHint}|${topicKey}`);
 });
 
 const modeClass = computed(() => (blueprint.value?.theme.mode === 'dark' ? 'mode-dark' : 'mode-light'));
+
 const shellProfile = computed(() => {
   const fromBlueprint = firstStringModuleProp('shellProfile').toLowerCase();
-  const allowed = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
+  const allowed = ['orbital', 'editorial', 'kinetic', 'glass', 'neo', 'atlas', 'spectral'];
 
   if (allowed.includes(fromBlueprint)) {
     return fromBlueprint;
@@ -113,7 +171,6 @@ const shellProfile = computed(() => {
 
   return allowed[visualSeed.value % allowed.length];
 });
-const shellProfileClass = computed(() => `profile-${shellProfile.value}`);
 
 const typographyProfile = computed(() => {
   const fromBlueprint = firstStringModuleProp('typographyProfile').toLowerCase();
@@ -134,36 +191,20 @@ const motionProfile = computed(() => {
     return fromBlueprint;
   }
 
-  return allowed[visualSeed.value % allowed.length];
+  return allowed[(visualSeed.value >> 2) % allowed.length];
 });
+
+const experienceMode = computed(() => visualSeed.value % 4);
 
 const toneClass = computed(() => `tone-${typographyProfile.value}`);
 const motionClass = computed(() => `motion-${motionProfile.value}`);
-const experienceMode = computed(() => (visualSeed.value + shellProfile.value.length) % 3);
+const shellProfileClass = computed(() => `profile-${shellProfile.value}`);
 const experienceClass = computed(() => `experience-${experienceMode.value}`);
-
-const experienceLabel = computed(() => {
-  const labelsByProfile: Record<string, string[]> = {
-    orbital: ['Orbit Chronicle', 'Orbit Cinema', 'Orbit Atelier'],
-    editorial: ['Editorial Chronicle', 'Feature Cinema', 'Archive Atelier'],
-    kinetic: ['Pulse Chronicle', 'Motion Cinema', 'Kinetic Atelier'],
-    glass: ['Glass Chronicle', 'Prism Cinema', 'Halo Atelier'],
-    neo: ['Neo Chronicle', 'Neo Cinema', 'Neo Atelier']
-  };
-
-  const labels = labelsByProfile[shellProfile.value] ?? labelsByProfile.editorial;
-  return labels[experienceMode.value];
-});
-
-const designSignature = computed(() => {
-  const fromBlueprint = firstStringModuleProp('signature');
-  if (fromBlueprint) {
-    return fromBlueprint.slice(0, 10).toUpperCase();
-  }
-
-  const signature = visualSeed.value.toString(36).toUpperCase();
-  return signature.padStart(6, '0').slice(0, 6);
-});
+const fxClass = computed(() => `fx-${firstStringModuleProp('visualFx') || 'neon'}`);
+const textureClass = computed(() => `texture-${firstStringModuleProp('textureFx') || 'glass'}`);
+const energyClass = computed(() => `energy-${firstStringModuleProp('energyFx') || 'balanced'}`);
+const motifClass = computed(() => `motif-${firstStringModuleProp('styleMotif') || 'editorial'}`);
+const layoutClass = computed(() => `layout-nav-${blueprint.value?.layout.nav ?? 'top'}`);
 
 const brandName = computed(() => firstStringModuleProp('brandName') || 'Alexander Gill');
 const brandTagline = computed(() => firstStringModuleProp('brandTagline') || 'Power plays.');
@@ -176,47 +217,55 @@ const brandSecondaryIconUrl = computed(
     firstStringModuleProp('brandSecondaryIconUrl') ||
     'https://alexanderjgill.com/wp-content/uploads/2025/09/cropped-darkhorsevirtueio_icon_1.png'
 );
+
 const brandSections = computed(() => {
   const sections = firstStringArrayModuleProp('brandSections');
-  if (sections.length > 0) {
-    return sections.slice(0, 7);
+  return sections.length > 0 ? sections.slice(0, 8) : ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
+});
+
+const shellTitle = computed(() => {
+  const labelsByProfile: Record<string, string[]> = {
+    orbital: ['Orbiting Story Field', 'Immersive Orbit Chronicle', 'Future Signal Stories', 'Curated Orbit Atelier'],
+    editorial: ['Editorial Story Engine', 'Feature Narrative Stream', 'Curated Editorial Atlas', 'Signature Story Archive'],
+    kinetic: ['High-Velocity Storyline', 'Kinetic Story Surface', 'Motion-Driven Editorial', 'Pulse Narrative Engine'],
+    glass: ['Prism Story Layer', 'Luminous Story Atelier', 'Translucent Narrative Grid', 'Refraction Editorial Stream'],
+    neo: ['Neo Chronicle System', 'Modern Signal Editorial', 'Neo Atlas Feed', 'Future Blog Interface'],
+    atlas: ['Atlas Story Cartography', 'Map of Living Posts', 'Topographic Narrative Field', 'Explorer Story Grid'],
+    spectral: ['Spectral Story Spectrum', 'Chromatic Narrative Field', 'Lightwave Editorial Surface', 'Prismatic Post Engine']
+  };
+
+  const labels = labelsByProfile[shellProfile.value] ?? labelsByProfile.editorial;
+  return labels[experienceMode.value % labels.length];
+});
+
+const experienceLabel = computed(() => {
+  const labels = ['Chronicle', 'Cinema', 'Atelier', 'Pulse'];
+  return `${shellProfile.value.toUpperCase()} ${labels[experienceMode.value]}`;
+});
+
+const wordpressStatus = computed(() => {
+  if (!blueprint.value) {
+    return '';
   }
 
-  return ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
+  return 'Live post stream from alexanderjgill.com WordPress REST content.';
 });
-
-const focusTopics = computed(() => {
-  const topics = firstStringArrayModuleProp('focusTopics');
-  return topics.length > 0 ? topics.slice(0, 6) : ['Personal brand', 'Future web'];
-});
-
-const visualFx = computed(() => firstStringModuleProp('visualFx') || 'neon');
-const textureFx = computed(() => firstStringModuleProp('textureFx') || 'glass');
-const energyFx = computed(() => firstStringModuleProp('energyFx') || 'balanced');
-const styleMotif = computed(() => firstStringModuleProp('styleMotif') || 'editorial');
-
-const fxClass = computed(() => `fx-${visualFx.value}`);
-const textureClass = computed(() => `texture-${textureFx.value}`);
-const energyClass = computed(() => `energy-${energyFx.value}`);
-const motifClass = computed(() => `motif-${styleMotif.value}`);
-
-function toBrandSectionUrl(section: string): string {
-  return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
-}
 
 const shellStyle = computed(() => {
-  const radius = 12 + (visualSeed.value % 9);
-  const panelBlur = 2 + (visualSeed.value % 6);
+  const radius = 12 + Math.floor(seededUnit(visualSeed.value, 'radius') * 12);
+  const panelBlur = 4 + Math.floor(seededUnit(visualSeed.value, 'blur') * 8);
 
   return {
     '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
     '--radius': `${radius}px`,
     '--panel-blur': `${panelBlur}px`,
-    '--module-gap': `${0.7 + (visualSeed.value % 4) * 0.16}rem`
+    '--module-gap': `${0.8 + seededUnit(visualSeed.value, 'gap') * 0.75}rem`,
+    '--pointer-x': `${pointerX.value}%`,
+    '--pointer-y': `${pointerY.value}%`
   };
 });
 
-const navItems = computed(() => (blueprint.value?.shortcuts ?? []).slice(0, 6));
+const navItems = computed(() => (blueprint.value?.shortcuts ?? []).slice(0, 8));
 
 const orderedModules = computed(() => {
   const modules = blueprint.value?.modules ?? [];
@@ -244,37 +293,111 @@ function isSupportType(type: string): boolean {
   return type === 'QuickActions' || type === 'FAQ';
 }
 
-const supportModules = computed(() =>
-  remainingModuleEntries.value.filter((entry) => isSupportType(entry.module.type))
-);
+const supportModules = computed(() => remainingModuleEntries.value.filter((entry) => isSupportType(entry.module.type)));
+const featureModules = computed(() => remainingModuleEntries.value.filter((entry) => !isSupportType(entry.module.type)));
 
-const storyModules = computed(() =>
-  remainingModuleEntries.value.filter((entry) => !isSupportType(entry.module.type))
-);
+const heroVisualCards = computed<VisualCard[]>(() => {
+  const rawFeatured = asRecord(getContentByKey('featuredGrid'));
+  const rawItems = Array.isArray(rawFeatured?.items) ? (rawFeatured?.items as unknown[]) : [];
 
-const shellTitle = computed(() => {
-  const labelByMode = {
-    orbital: ['Orbiting Story Field', 'Immersive Signal Field', 'Curated Orbit Atelier'],
-    editorial: ['Editorial Chronicle', 'Immersive Story Stream', 'Curated Atelier Feed'],
-    kinetic: ['Kinetic Narrative Surface', 'Momentum Story Stream', 'High-Tempo Atelier Feed'],
-    glass: ['Prism Narrative Layer', 'Glass Story Stream', 'Luminous Atelier Feed'],
-    neo: ['Neo Editorial Grid', 'Neo Story Stream', 'Neo Atelier Feed']
-  } as Record<string, string[]>;
+  const cards = rawItems
+    .map((entry, index) => {
+      const item = asRecord(entry);
+      if (!item) {
+        return null;
+      }
 
-  const titles = labelByMode[shellProfile.value] ?? labelByMode.editorial;
-  return titles[experienceMode.value] ?? 'Headless WordPress Experience';
-});
+      const title = typeof item.title === 'string' ? item.title.trim() : `Post ${index + 1}`;
+      const imageUrl = typeof item.imageUrl === 'string' ? item.imageUrl.trim() : '';
+      const hrefRaw = typeof item.href === 'string' ? item.href.trim() : '';
+      const canonical = typeof item.canonicalUrl === 'string' ? item.canonicalUrl.trim() : '';
+      const href = hrefRaw || canonical || brandBaseUrl.value;
 
-const wordpressStatus = computed(() => {
-  if (!blueprint.value) {
-    return '';
+      return {
+        key: `${item.id ?? title}-${index}`,
+        title,
+        imageUrl,
+        href
+      };
+    })
+    .filter((item): item is VisualCard => item !== null)
+    .slice(0, 5);
+
+  if (cards.length > 0) {
+    return cards;
   }
 
-  return 'Post-driven interface generated from alexanderjgill.com REST content.';
+  return focusTopics.value.slice(0, 4).map((topic, index) => ({
+    key: `${topic}-${index}`,
+    title: topic,
+    imageUrl: '',
+    href: brandBaseUrl.value
+  }));
 });
+
+const ambientNodes = computed(() => {
+  const nodes = [] as Array<{
+    key: string;
+    size: string;
+    left: string;
+    top: string;
+    opacity: string;
+    duration: string;
+    delay: string;
+    blendClass: string;
+  }>;
+
+  const blendModes = ['blend-screen', 'blend-overlay', 'blend-plus'];
+
+  for (let index = 0; index < 11; index += 1) {
+    const size = 130 + seededUnit(visualSeed.value, `node-size-${index}`) * 360;
+    const left = seededUnit(visualSeed.value, `node-left-${index}`) * 100;
+    const top = seededUnit(visualSeed.value, `node-top-${index}`) * 100;
+    const opacity = 0.16 + seededUnit(visualSeed.value, `node-opacity-${index}`) * 0.44;
+    const duration = 11 + seededUnit(visualSeed.value, `node-duration-${index}`) * 18;
+    const delay = seededUnit(visualSeed.value, `node-delay-${index}`) * -8;
+
+    nodes.push({
+      key: `ambient-${index}`,
+      size: `${size.toFixed(0)}px`,
+      left: `${left.toFixed(2)}%`,
+      top: `${top.toFixed(2)}%`,
+      opacity: opacity.toFixed(2),
+      duration: `${duration.toFixed(1)}s`,
+      delay: `${delay.toFixed(1)}s`,
+      blendClass: seededChoice(visualSeed.value, `node-mix-${index}`, blendModes)
+    });
+  }
+
+  return nodes;
+});
+
+function toBrandSectionUrl(section: string): string {
+  return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
+}
 
 function isUrlAction(action: string): boolean {
   return /^https?:\/\//i.test(action);
+}
+
+function handlePointerMove(event: PointerEvent): void {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+
+  pointerX.value = ((event.clientX - rect.left) / rect.width) * 100;
+  pointerY.value = ((event.clientY - rect.top) / rect.height) * 100;
+}
+
+function handlePointerLeave(): void {
+  pointerX.value = 52;
+  pointerY.value = 36;
 }
 
 async function resetPersonalization(): Promise<void> {
@@ -294,7 +417,7 @@ onMounted(async () => {
 <template>
   <main v-if="initializing" class="booting-shell">
     <section class="boot-card">
-      <p>Composing a fresh editorial experience from live post data...</p>
+      <p>Composing a fresh personalized interface from live post signals...</p>
     </section>
   </main>
 
@@ -304,66 +427,106 @@ onMounted(async () => {
     :class="[
       modeClass,
       toneClass,
-      experienceClass,
-      shellProfileClass,
       motionClass,
+      shellProfileClass,
+      experienceClass,
       fxClass,
       textureClass,
       energyClass,
-      motifClass
+      motifClass,
+      layoutClass
     ]"
     :style="shellStyle"
+    @pointermove="handlePointerMove"
+    @pointerleave="handlePointerLeave"
   >
-    <div class="backdrop-layer" aria-hidden="true">
-      <span class="scan-grid"></span>
-      <span class="noise-overlay"></span>
-      <span class="shape shape-a"></span>
-      <span class="shape shape-b"></span>
-      <span class="shape shape-c"></span>
-      <span class="shape shape-d"></span>
-      <span class="shape shape-e"></span>
+    <div class="ambient-layer" aria-hidden="true">
+      <span class="ambient-grid"></span>
+      <span class="ambient-noise"></span>
+      <span
+        v-for="node in ambientNodes"
+        :key="node.key"
+        class="ambient-node"
+        :class="node.blendClass"
+        :style="{
+          width: node.size,
+          height: node.size,
+          left: node.left,
+          top: node.top,
+          opacity: node.opacity,
+          animationDuration: node.duration,
+          animationDelay: node.delay
+        }"
+      ></span>
+      <span class="ambient-sweep"></span>
     </div>
 
-    <header class="shell-header">
-      <div>
-        <a class="brand-lockup" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
-          <img class="brand-primary-icon" :src="brandIconUrl" alt="" loading="lazy" />
-          <span class="brand-lockup-text">
-            <strong>{{ brandName }}</strong>
-            <em>{{ brandTagline }}</em>
-          </span>
-          <img class="brand-secondary-icon" :src="brandSecondaryIconUrl" alt="" loading="lazy" />
-        </a>
-        <p class="eyebrow">
-          {{ experienceLabel }} · {{ shellProfile }} profile · Signature {{ designSignature }} · {{ BUILD_TAG }}
-        </p>
+    <header class="command-header">
+      <a class="brand-lockup" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
+        <img class="brand-primary-icon" :src="brandIconUrl" alt="" loading="lazy" />
+        <span class="brand-lockup-text">
+          <strong>{{ brandName }}</strong>
+          <em>{{ brandTagline }}</em>
+        </span>
+        <img class="brand-secondary-icon" :src="brandSecondaryIconUrl" alt="" loading="lazy" />
+      </a>
+
+      <div class="header-meta">
+        <p class="eyebrow">{{ experienceLabel }} · Signature {{ designSignature }} · {{ BUILD_TAG }}</p>
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
         <p class="persona-note">Designed around: {{ focusTopics.join(' · ') }}</p>
         <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
         <p v-if="wordpressError" class="fallback-note">{{ wordpressError }}</p>
       </div>
+
       <div class="header-actions">
         <button type="button" class="secondary-btn" @click="openChatRefinement">Refine With Chat</button>
         <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
       </div>
     </header>
 
-    <section class="brand-rail" aria-label="Brand sections">
-      <a
-        v-for="section in brandSections"
-        :key="section"
-        class="brand-section-chip"
-        :href="toBrandSectionUrl(section)"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        {{ section }}
-      </a>
-    </section>
+    <section class="hero-stage">
+      <article class="identity-card">
+        <p class="identity-title">Experience DNA</p>
+        <div class="topic-cluster" aria-label="Personalization topics">
+          <span v-for="topic in focusTopics" :key="topic" class="topic-chip">{{ topic }}</span>
+        </div>
 
-    <section class="persona-rail" aria-label="Personalization topics">
-      <span v-for="topic in focusTopics" :key="topic" class="persona-chip">{{ topic }}</span>
+        <div class="brand-rail" aria-label="Brand sections">
+          <a
+            v-for="section in brandSections"
+            :key="section"
+            class="brand-section-chip"
+            :href="toBrandSectionUrl(section)"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {{ section }}
+          </a>
+        </div>
+      </article>
+
+      <article class="artboard-card">
+        <p class="identity-title">Live Post Canvas</p>
+        <div class="poster-grid" :class="`count-${heroVisualCards.length}`">
+          <a
+            v-for="(card, idx) in heroVisualCards"
+            :key="card.key"
+            class="poster-card"
+            :class="`poster-${(idx % 5) + 1}`"
+            :href="card.href"
+            :target="isUrlAction(card.href) ? '_blank' : '_self'"
+            :rel="isUrlAction(card.href) ? 'noopener noreferrer' : undefined"
+          >
+            <img v-if="card.imageUrl" :src="card.imageUrl" alt="" loading="lazy" />
+            <div v-else class="poster-fallback" aria-hidden="true">
+              <span>{{ card.title.slice(0, 28) }}</span>
+            </div>
+            <p>{{ card.title }}</p>
+          </a>
+        </div>
+      </article>
     </section>
 
     <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
@@ -383,93 +546,31 @@ onMounted(async () => {
       </template>
     </nav>
 
-    <section v-if="experienceMode === 0" class="experience-scene scene-chronicle">
-      <article
-        v-if="leadModuleEntry"
-        class="lead-slot"
-        :style="{ '--stagger': '0ms' }"
-      >
+    <section class="module-stage">
+      <article v-if="leadModuleEntry" class="lead-slot" :style="{ '--stagger': '0ms' }">
         <ModuleRenderer :module="leadModuleEntry.module" :shortcuts="blueprint.shortcuts" />
       </article>
 
-      <div class="chronicle-body">
-        <div class="story-column">
+      <div class="module-columns">
+        <div class="feature-stack">
           <article
-            v-for="(entry, idx) in storyModules"
+            v-for="(entry, idx) in featureModules"
             :key="entry.module.id"
             class="module-slot"
-            :class="[`slot-type-${entry.module.type}`, idx % 2 === 0 ? 'slot-tilt-left' : 'slot-tilt-right']"
-            :style="{ '--stagger': `${120 + idx * 80}ms` }"
+            :class="[`slot-type-${entry.module.type}`, idx % 2 === 0 ? 'slot-left' : 'slot-right']"
+            :style="{ '--stagger': `${90 + idx * 80}ms` }"
           >
             <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
           </article>
         </div>
 
-        <aside class="rail-column">
+        <aside v-if="supportModules.length > 0" class="support-stack">
           <article
             v-for="(entry, idx) in supportModules"
             :key="entry.module.id"
-            class="module-slot rail-slot"
+            class="module-slot support-slot"
             :class="`slot-type-${entry.module.type}`"
-            :style="{ '--stagger': `${140 + idx * 90}ms` }"
-          >
-            <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
-          </article>
-        </aside>
-      </div>
-    </section>
-
-    <section v-else-if="experienceMode === 1" class="experience-scene scene-cinematic">
-      <article
-        v-if="leadModuleEntry"
-        class="module-slot cinematic-lead"
-        :style="{ '--stagger': '0ms' }"
-      >
-        <ModuleRenderer :module="leadModuleEntry.module" :shortcuts="blueprint.shortcuts" />
-      </article>
-
-      <article
-        v-for="(entry, idx) in remainingModuleEntries"
-        :key="entry.module.id"
-        class="module-slot cinematic-panel"
-        :class="[
-          `slot-type-${entry.module.type}`,
-          idx % 2 === 0 ? 'panel-left' : 'panel-right',
-          idx % 3 === 0 ? 'panel-wide' : ''
-        ]"
-        :style="{ '--stagger': `${110 + idx * 85}ms` }"
-      >
-        <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
-      </article>
-    </section>
-
-    <section v-else class="experience-scene scene-atelier">
-      <div class="atelier-grid">
-        <article
-          v-if="leadModuleEntry"
-          class="module-slot atelier-lead"
-          :style="{ '--stagger': '0ms' }"
-        >
-          <ModuleRenderer :module="leadModuleEntry.module" :shortcuts="blueprint.shortcuts" />
-        </article>
-
-        <article
-          v-for="(entry, idx) in storyModules"
-          :key="entry.module.id"
-          class="module-slot atelier-story"
-          :class="[`slot-type-${entry.module.type}`, `story-${(idx % 3) + 1}`]"
-          :style="{ '--stagger': `${100 + idx * 75}ms` }"
-        >
-          <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
-        </article>
-
-        <aside class="atelier-rail">
-          <article
-            v-for="(entry, idx) in supportModules"
-            :key="entry.module.id"
-            class="module-slot rail-slot"
-            :class="`slot-type-${entry.module.type}`"
-            :style="{ '--stagger': `${160 + idx * 95}ms` }"
+            :style="{ '--stagger': `${120 + idx * 90}ms` }"
           >
             <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
           </article>
@@ -490,7 +591,7 @@ onMounted(async () => {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: #05080f;
+  background: #03060f;
   color: #dbeafe;
   padding: 1rem;
 }
@@ -506,235 +607,146 @@ onMounted(async () => {
   position: relative;
   overflow: hidden;
   min-height: 100vh;
-  padding: 1rem 1rem 16rem;
-  font-family: var(--shell-font, 'IBM Plex Sans', 'Segoe UI', sans-serif);
+  padding: 1rem 1rem 15rem;
+  font-family: var(--shell-font, 'Sora', 'Avenir Next', 'Segoe UI', sans-serif);
+  color: var(--text-primary);
   background: var(--bg);
 }
 
-.backdrop-layer {
+.ambient-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
 }
 
-.scan-grid {
+.ambient-grid {
   position: absolute;
   inset: 0;
-  opacity: 0.28;
+  opacity: 0.26;
   background:
-    linear-gradient(transparent 96%, color-mix(in srgb, var(--accent) 22%, transparent) 100%),
-    linear-gradient(90deg, transparent 96%, color-mix(in srgb, var(--accent) 18%, transparent) 100%);
-  background-size: 100% 34px, 34px 100%;
-  mask-image: radial-gradient(circle at 50% 35%, black, transparent 85%);
+    linear-gradient(transparent 96%, color-mix(in srgb, var(--accent) 26%, transparent) 100%),
+    linear-gradient(90deg, transparent 96%, color-mix(in srgb, var(--accent) 20%, transparent) 100%);
+  background-size: 100% 32px, 32px 100%;
+  mask-image: radial-gradient(circle at var(--pointer-x) var(--pointer-y), black, transparent 85%);
 }
 
-.noise-overlay {
+.ambient-noise {
   position: absolute;
   inset: 0;
   opacity: 0.1;
   background-image:
-    radial-gradient(circle at 16% 22%, rgba(255, 255, 255, 0.18) 0, transparent 1.5px),
-    radial-gradient(circle at 81% 39%, rgba(255, 255, 255, 0.16) 0, transparent 1.5px),
-    radial-gradient(circle at 40% 74%, rgba(255, 255, 255, 0.12) 0, transparent 1.5px);
-  background-size: 170px 170px, 150px 150px, 130px 130px;
+    radial-gradient(circle at 12% 22%, rgba(255, 255, 255, 0.18) 0, transparent 1.5px),
+    radial-gradient(circle at 86% 37%, rgba(255, 255, 255, 0.16) 0, transparent 1.6px),
+    radial-gradient(circle at 44% 74%, rgba(255, 255, 255, 0.12) 0, transparent 1.5px);
+  background-size: 160px 160px, 150px 150px, 130px 130px;
 }
 
-.shape {
+.ambient-node {
   position: absolute;
   border-radius: 999px;
-  filter: blur(0.5px);
-  opacity: 0.35;
-  animation: drift 18s ease-in-out infinite alternate;
+  background: color-mix(in srgb, var(--accent) 42%, transparent);
+  filter: blur(16px);
+  transform: translate(-50%, -50%);
+  animation: breathe 15s ease-in-out infinite alternate;
 }
 
-.shape-a {
-  width: 460px;
-  height: 460px;
-  top: -170px;
-  left: -90px;
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
+.blend-screen {
+  mix-blend-mode: screen;
 }
 
-.shape-b {
-  width: 320px;
-  height: 320px;
-  top: 8%;
-  right: -90px;
-  background: color-mix(in srgb, var(--accent) 19%, transparent);
+.blend-overlay {
+  mix-blend-mode: overlay;
 }
 
-.shape-c {
-  width: 300px;
-  height: 300px;
-  bottom: -120px;
-  left: 30%;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+.blend-plus {
+  mix-blend-mode: plus-lighter;
 }
 
-.shape-d {
-  width: 220px;
-  height: 220px;
-  bottom: 18%;
-  right: 18%;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.shape-e {
-  width: 520px;
-  height: 220px;
-  top: 32%;
-  left: 18%;
-  border-radius: 30%;
-  background: linear-gradient(
-    95deg,
-    color-mix(in srgb, var(--accent) 24%, transparent),
-    color-mix(in srgb, var(--accent) 8%, transparent)
-  );
-  filter: blur(22px);
-  opacity: 0.35;
-  animation-duration: 22s;
+.ambient-sweep {
+  position: absolute;
+  inset: -20% -20% auto -20%;
+  height: 56%;
+  background: radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 24%, transparent), transparent 58%);
+  opacity: 0.75;
 }
 
 .mode-light {
-  --bg: linear-gradient(155deg, #f4f7ff, #e9f3ff 42%, #f4f7ff 100%);
-  --surface: #ffffff;
-  --surface-muted: #e9f1ff;
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --border: #d1d5db;
+  --bg:
+    radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 12%, transparent), transparent 46%),
+    linear-gradient(150deg, #f6f9ff, #e9f2ff 42%, #f5f8ff);
+  --surface: rgba(255, 255, 255, 0.9);
+  --surface-muted: #e8f1ff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border: #cbd5e1;
 }
 
 .mode-dark {
   --bg:
-    radial-gradient(circle at 84% -12%, rgba(22, 199, 207, 0.25), transparent 38%),
-    linear-gradient(160deg, #050b18, #081225 44%, #0c1a32 100%);
-  --surface: #111a2f;
-  --surface-muted: #16233f;
-  --text-primary: #e5e7eb;
-  --text-secondary: #94a3b8;
-  --border: #2a3a5f;
+    radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 19%, transparent), transparent 44%),
+    linear-gradient(165deg, #040a17, #08132a 45%, #0c1d3a 100%);
+  --surface: rgba(12, 22, 43, 0.84);
+  --surface-muted: rgba(25, 39, 70, 0.9);
+  --text-primary: #e5edf7;
+  --text-secondary: #93a7c9;
+  --border: #2a3c63;
 }
 
 .tone-grotesk {
-  --shell-font: 'Avenir Next', 'Trebuchet MS', sans-serif;
+  --shell-font: 'Sora', 'Avenir Next', sans-serif;
 }
 
 .tone-literary {
-  --shell-font: 'Baskerville', 'Palatino Linotype', serif;
+  --shell-font: 'Iowan Old Style', 'Baskerville', serif;
 }
 
 .tone-display {
-  --shell-font: 'Franklin Gothic Medium', 'Arial Narrow', sans-serif;
+  --shell-font: 'Bebas Neue', 'Franklin Gothic Medium', sans-serif;
 }
 
 .tone-mono {
   --shell-font: 'IBM Plex Mono', 'Fira Code', monospace;
 }
 
-.profile-orbital .shape-a {
-  transform: rotate(18deg) scale(1.08);
-}
-
-.profile-orbital .shape-c {
-  opacity: 0.5;
-}
-
-.profile-editorial .shell-header {
-  border-left-width: 4px;
-  border-left-color: color-mix(in srgb, var(--accent) 68%, var(--border));
-}
-
-.profile-editorial .shape-b {
-  border-radius: 32% 68% 42% 58%;
-}
-
-.profile-kinetic .shape-b,
-.profile-kinetic .shape-d {
-  opacity: 0.58;
-}
-
-.profile-kinetic .panel-left {
-  margin-right: 2%;
-}
-
-.profile-kinetic .panel-right {
-  margin-left: 2%;
-}
-
-.profile-glass .shell-header,
-.profile-glass .nav-item {
-  background: color-mix(in srgb, var(--surface) 68%, transparent);
-  backdrop-filter: blur(calc(var(--panel-blur) + 2px));
-}
-
-.profile-glass .shape-a,
-.profile-glass .shape-d {
-  opacity: 0.56;
-}
-
-.profile-neo .shell-header {
-  border-width: 2px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.profile-neo .shape-b {
-  border-radius: 16px;
-}
-
-.profile-neo .shape-c {
-  border-radius: 22px;
-}
-
-.motion-calm .module-slot,
-.motion-calm .lead-slot {
-  animation-duration: 760ms;
-}
-
-.motion-balanced .module-slot,
-.motion-balanced .lead-slot {
-  animation-duration: 620ms;
-}
-
-.motion-kinetic .module-slot,
-.motion-kinetic .lead-slot {
-  animation-duration: 460ms;
-}
-
-.shell-header {
+.command-header,
+.hero-stage,
+.shell-nav,
+.module-stage {
   position: relative;
   z-index: 2;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 1rem;
-  border-radius: calc(var(--radius) + 2px);
+}
+
+.command-header {
+  display: grid;
+  gap: 0.85rem;
+  border-radius: calc(var(--radius) + 6px);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
   background:
     linear-gradient(
-      140deg,
-      color-mix(in srgb, var(--accent) 8%, var(--surface)),
-      color-mix(in srgb, var(--surface) 86%, transparent)
+      138deg,
+      color-mix(in srgb, var(--accent) 10%, var(--surface)),
+      color-mix(in srgb, var(--surface) 88%, transparent)
     );
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   backdrop-filter: blur(var(--panel-blur));
+  padding: 1rem;
 }
 
 .brand-lockup {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  color: inherit;
+  gap: 0.55rem;
+  width: fit-content;
   text-decoration: none;
-  margin-bottom: 0.45rem;
+  color: inherit;
 }
 
 .brand-primary-icon,
 .brand-secondary-icon {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
   object-fit: cover;
 }
 
@@ -744,316 +756,358 @@ onMounted(async () => {
 }
 
 .brand-lockup-text strong {
-  font-size: 0.78rem;
-  text-transform: uppercase;
+  font-size: 0.82rem;
   letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .brand-lockup-text em {
   font-style: normal;
   font-size: 0.72rem;
-  color: color-mix(in srgb, var(--accent) 76%, var(--text-secondary));
+  color: color-mix(in srgb, var(--accent) 82%, var(--text-secondary));
+}
+
+.header-meta {
+  min-width: 0;
 }
 
 .eyebrow {
   margin: 0;
   color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.78rem;
+  letter-spacing: 0.09em;
+  font-size: 0.76rem;
 }
 
 h1 {
   margin: 0.2rem 0 0;
-  font-size: clamp(1.35rem, 4.3vw, 2.25rem);
+  font-size: clamp(1.45rem, 4.8vw, 2.8rem);
+  line-height: 1.03;
+  text-wrap: balance;
 }
 
-.source-note {
+.source-note,
+.persona-note,
+.fallback-note {
   margin: 0.35rem 0 0;
   color: var(--text-secondary);
-  font-size: 0.9rem;
 }
 
 .persona-note {
-  margin: 0.35rem 0 0;
-  color: color-mix(in srgb, var(--accent) 76%, var(--text-secondary));
-  font-size: 0.84rem;
-  letter-spacing: 0.03em;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary));
 }
 
 .fallback-note {
-  margin: 0.45rem 0 0;
-  color: color-mix(in srgb, var(--accent) 70%, var(--text-secondary));
-  font-size: 0.84rem;
+  color: color-mix(in srgb, var(--accent) 86%, var(--text-secondary));
+  font-size: 0.86rem;
 }
 
 .header-actions {
   display: flex;
-  gap: 0.55rem;
   flex-wrap: wrap;
+  gap: 0.52rem;
 }
 
 .secondary-btn,
 .reset-btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
   border-radius: 999px;
   background:
     linear-gradient(
       140deg,
-      color-mix(in srgb, var(--accent) 18%, var(--surface)),
-      color-mix(in srgb, var(--accent) 4%, var(--surface))
+      color-mix(in srgb, var(--accent) 16%, var(--surface)),
+      color-mix(in srgb, var(--surface) 92%, transparent)
     );
   color: var(--text-primary);
-  padding: 0.55rem 0.95rem;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 0.52rem 0.9rem;
+}
+
+.hero-stage {
+  margin-top: 0.95rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.identity-card,
+.artboard-card {
+  border-radius: calc(var(--radius) + 2px);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--accent) 8%, var(--surface)),
+      color-mix(in srgb, var(--surface) 90%, transparent)
+    );
+  padding: 0.9rem;
+  backdrop-filter: blur(var(--panel-blur));
+}
+
+.identity-title {
+  margin: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--accent) 86%, var(--text-secondary));
+}
+
+.topic-cluster {
+  margin-top: 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.topic-chip {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  padding: 0.24rem 0.56rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .brand-rail {
-  position: relative;
-  z-index: 2;
-  margin-top: 0.85rem;
+  margin-top: 0.62rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.42rem;
+  gap: 0.35rem;
 }
 
 .brand-section-chip {
   text-decoration: none;
-  color: var(--text-primary);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  color: inherit;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  background: color-mix(in srgb, var(--accent) 11%, var(--surface));
-  padding: 0.32rem 0.65rem;
-}
-
-.persona-rail {
-  position: relative;
-  z-index: 2;
-  margin-top: 0.45rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.36rem;
-}
-
-.persona-chip {
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  padding: 0.24rem 0.56rem;
   font-size: 0.7rem;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-  padding: 0.25rem 0.58rem;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.poster-grid {
+  margin-top: 0.58rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.poster-card {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 114px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  text-decoration: none;
+  color: inherit;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.poster-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  box-shadow: 0 12px 22px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.poster-card img,
+.poster-fallback {
+  width: 100%;
+  height: 100%;
+  min-height: 114px;
+  object-fit: cover;
+}
+
+.poster-fallback {
+  display: grid;
+  place-items: center;
+  padding: 0.8rem;
+  text-align: center;
+  background:
+    radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 44%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 24%, #0b1222), #0f172a 60%, #111827);
+}
+
+.poster-fallback span {
+  color: color-mix(in srgb, var(--accent) 32%, #ffffff);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.poster-card p {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0.42rem 0.52rem;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  color: #ffffff;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0));
+}
+
+.poster-1,
+.poster-4 {
+  transform: translateY(-2px);
 }
 
 .shell-nav {
-  position: relative;
-  z-index: 2;
   margin-top: 0.9rem;
   display: flex;
-  gap: 0.55rem;
   flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .nav-item {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
   border-radius: 999px;
   background:
     linear-gradient(
       140deg,
-      color-mix(in srgb, var(--accent) 11%, var(--surface)),
-      color-mix(in srgb, var(--surface) 88%, transparent)
+      color-mix(in srgb, var(--accent) 12%, var(--surface)),
+      color-mix(in srgb, var(--surface) 90%, transparent)
     );
-  color: var(--text-primary);
-  padding: 0.48rem 0.82rem;
+  color: inherit;
   text-decoration: none;
-  font-size: 0.86rem;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 0.45rem 0.8rem;
+  font-size: 0.84rem;
 }
 
-.experience-scene {
-  position: relative;
-  z-index: 1;
+.module-stage {
   margin-top: 1rem;
+  display: grid;
+  gap: var(--module-gap);
 }
 
-.module-slot,
-.lead-slot {
+.lead-slot,
+.module-slot {
   animation: rise-in 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   animation-delay: var(--stagger, 0ms);
 }
 
 .lead-slot :deep(.hero-module) {
-  border-radius: calc(var(--radius) + 5px);
+  border-radius: calc(var(--radius) + 8px);
 }
 
-.scene-chronicle .lead-slot {
-  margin-bottom: var(--module-gap);
-}
-
-.chronicle-body {
+.module-columns {
   display: grid;
   gap: var(--module-gap);
 }
 
-.story-column,
-.rail-column {
+.feature-stack,
+.support-stack {
   display: grid;
   gap: var(--module-gap);
 }
 
-.slot-tilt-left {
+.slot-left {
   transform-origin: left center;
 }
 
-.slot-tilt-right {
+.slot-right {
   transform-origin: right center;
 }
 
-.scene-cinematic {
-  display: grid;
-  gap: var(--module-gap);
+.layout-nav-side .shell-nav.nav-side {
+  border-radius: calc(var(--radius) + 2px);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  padding: 0.6rem;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
 }
 
-.cinematic-lead :deep(.hero-module) {
+.profile-atlas .poster-grid,
+.profile-spectral .poster-grid,
+.profile-orbital .poster-grid {
+  grid-auto-flow: dense;
+}
+
+.profile-atlas .poster-1,
+.profile-spectral .poster-3 {
+  grid-column: span 2;
+}
+
+.profile-neo .command-header {
   border-width: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
-.cinematic-panel {
-  border-radius: calc(var(--radius) + 3px);
+.profile-glass .command-header,
+.profile-glass .identity-card,
+.profile-glass .artboard-card {
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  backdrop-filter: blur(calc(var(--panel-blur) + 3px));
 }
 
-.panel-left {
-  margin-right: 6%;
-}
-
-.panel-right {
-  margin-left: 6%;
-}
-
-.panel-wide {
-  margin-left: 0;
-  margin-right: 0;
-}
-
-.scene-atelier .atelier-grid {
-  display: grid;
-  gap: var(--module-gap);
-}
-
-.atelier-rail {
-  display: grid;
-  gap: var(--module-gap);
-}
-
-.experience-2 .shell-header {
-  border-style: dashed;
-}
-
-.experience-1 .shape-b,
-.experience-1 .shape-d {
+.fx-matrix .ambient-grid {
   opacity: 0.46;
 }
 
-.experience-0 .shape-a,
-.experience-0 .shape-c {
-  opacity: 0.44;
+.fx-prism .ambient-node {
+  border-radius: 36% 64% 56% 44%;
 }
 
-.fx-neon .shape-a,
-.fx-neon .shape-b {
-  opacity: 0.56;
+.fx-zen .ambient-node {
+  opacity: 0.22;
 }
 
-.fx-signal .shape-e {
-  opacity: 0.5;
-  filter: blur(16px);
-}
-
-.fx-prism .shape-a,
-.fx-prism .shape-c {
-  border-radius: 34% 66% 58% 42%;
-}
-
-.fx-matrix .scan-grid {
-  opacity: 0.4;
-}
-
-.fx-zen .shape-a,
-.fx-zen .shape-b,
-.fx-zen .shape-c,
-.fx-zen .shape-d,
-.fx-zen .shape-e {
-  opacity: 0.24;
-}
-
-.texture-grid .scan-grid {
-  opacity: 0.42;
-}
-
-.texture-scan .noise-overlay {
-  opacity: 0.04;
-}
-
-.texture-grain .noise-overlay {
+.texture-grain .ambient-noise {
   opacity: 0.18;
 }
 
-.texture-soft .scan-grid {
+.texture-soft .ambient-grid {
   opacity: 0.14;
 }
 
-.energy-high .module-slot,
-.energy-high .lead-slot {
-  animation-duration: 390ms;
+.energy-high .ambient-node {
+  animation-duration: 10s;
 }
 
-.energy-high .shape {
-  animation-duration: 12s;
-}
-
-.energy-low .module-slot,
-.energy-low .lead-slot {
-  animation-duration: 760ms;
-}
-
-.energy-low .shape {
+.energy-low .ambient-node {
   animation-duration: 24s;
+  opacity: 0.24;
 }
 
-.motif-cinematic .shell-header {
-  border-width: 2px;
+.motion-calm .lead-slot,
+.motion-calm .module-slot {
+  animation-duration: 780ms;
 }
 
-.motif-holographic .brand-section-chip,
-.motif-holographic .persona-chip {
-  background:
-    linear-gradient(
-      130deg,
-      color-mix(in srgb, var(--accent) 20%, var(--surface)),
-      color-mix(in srgb, var(--accent) 5%, var(--surface))
-    );
+.motion-kinetic .lead-slot,
+.motion-kinetic .module-slot {
+  animation-duration: 420ms;
 }
 
-.motif-signal-driven .shell-nav .nav-item {
-  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
-  letter-spacing: 0.04em;
+.experience-1 .module-columns {
+  align-items: start;
 }
 
-@keyframes drift {
+.experience-2 .lead-slot :deep(.hero-module) {
+  border-style: dashed;
+}
+
+.experience-3 .poster-card:nth-child(odd) {
+  transform: rotate(-0.35deg);
+}
+
+.experience-3 .poster-card:nth-child(even) {
+  transform: rotate(0.35deg);
+}
+
+@keyframes breathe {
   from {
-    transform: translate3d(0, 0, 0) scale(1);
+    transform: translate(-50%, -50%) scale(0.9);
   }
   to {
-    transform: translate3d(0, -12px, 0) scale(1.04);
+    transform: translate(-50%, -50%) scale(1.08);
   }
 }
 
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(16px) scale(0.985);
+    transform: translateY(14px) scale(0.99);
   }
   to {
     opacity: 1;
@@ -1063,79 +1117,38 @@ h1 {
 
 @media (min-width: 900px) {
   .shell {
-    padding: 1.3rem 2rem 6.5rem;
+    padding: 1.2rem 2rem 6.5rem;
+  }
+
+  .command-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .hero-stage {
+    grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
+    align-items: stretch;
   }
 
   .shell-nav.nav-side {
-    width: min(340px, 100%);
+    width: 340px;
     display: grid;
     grid-template-columns: 1fr;
-    justify-items: stretch;
-    align-items: start;
-    gap: 0.48rem;
   }
 
   .shell-nav.nav-side .nav-item {
     width: 100%;
   }
 
-  .chronicle-body {
+  .module-columns {
     grid-template-columns: minmax(0, 1fr) 320px;
     align-items: start;
   }
 
-  .rail-column {
+  .support-stack {
     position: sticky;
-    top: 110px;
-  }
-
-  .scene-cinematic {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-  }
-
-  .scene-cinematic .cinematic-lead {
-    grid-column: 1 / -1;
-  }
-
-  .scene-cinematic .cinematic-panel {
-    grid-column: span 7;
-  }
-
-  .scene-cinematic .panel-right {
-    grid-column: 6 / -1;
-  }
-
-  .scene-cinematic .panel-left {
-    grid-column: 1 / span 7;
-  }
-
-  .scene-cinematic .panel-wide {
-    grid-column: 1 / -1;
-  }
-
-  .scene-atelier .atelier-grid {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-  }
-
-  .atelier-lead {
-    grid-column: 1 / span 8;
-  }
-
-  .atelier-story.story-1 {
-    grid-column: 9 / -1;
-  }
-
-  .atelier-story.story-2 {
-    grid-column: 1 / span 5;
-  }
-
-  .atelier-story.story-3 {
-    grid-column: 6 / span 7;
-  }
-
-  .atelier-rail {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    top: 96px;
   }
 }
 </style>

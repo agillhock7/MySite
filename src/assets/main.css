@@ -20,9 +20,14 @@ body,
 #app {
   margin: 0;
   min-height: 100%;
-  font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
+  font-family: 'Sora', 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
   color: var(--text-primary);
-  background: radial-gradient(circle at top right, #d9ecff, #f6f7fb 45%);
+  background:
+    radial-gradient(circle at 86% -18%, rgba(22, 199, 207, 0.14), transparent 44%),
+    radial-gradient(circle at -14% 100%, rgba(22, 199, 207, 0.09), transparent 52%),
+    #f6f7fb;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -41,7 +46,7 @@ button {
 }
 
 *::-webkit-scrollbar-track {
-  background: color-mix(in srgb, var(--surface-muted) 86%, transparent);
+  background: color-mix(in srgb, var(--surface-muted) 88%, transparent);
 }
 
 *::-webkit-scrollbar-thumb {

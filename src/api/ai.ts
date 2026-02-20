@@ -266,14 +266,14 @@ function seededMode(intentProfile: IntentProfile, seed: string): 'dark' | 'light
 
 function seededNav(density: IntentProfile['density'], seed: string): 'side' | 'top' | 'none' {
   if (density === 'high') {
-    return seededIndex(seed, 'high-nav', 3) === 0 ? 'top' : 'side';
+    return seededIndex(seed, 'high-nav', 3) === 0 ? 'side' : 'top';
   }
 
   if (density === 'low') {
-    return seededIndex(seed, 'low-nav', 4) === 0 ? 'top' : 'none';
+    return seededIndex(seed, 'low-nav', 4) === 0 ? 'none' : 'top';
   }
 
-  return seededIndex(seed, 'medium-nav', 2) === 0 ? 'top' : 'side';
+  return seededIndex(seed, 'medium-nav', 5) === 0 ? 'side' : 'top';
 }
 
 function buildSeededModules(intentProfile: IntentProfile, seed: string): BlueprintModule[] {
