@@ -49,13 +49,6 @@ return [
     'max_categories' => 12,
     'max_tags' => 12
   ],
-  'experience' => [
-    'brand_name' => 'Alexander J Gill',
-    'company_name' => 'Dark Horse Virtue',
-    'hosting_start_url' => 'https://alexanderjgill.com',
-    'pro_suite_onboarding_url' => 'https://hiops.darkhorsevirtue.io',
-    'primary_conversion_goal' => 'pro_suite_onboarding'
-  ],
   'database' => [
     'driver' => 'mysql',
     'host' => 'localhost',
@@ -87,7 +80,7 @@ Output:
 Conversion behavior:
 
 - Intent is classified into conversion profiles (`pro_suite_onboarding`, `hosting_plan`, `portfolio_review`, `content_learning`)
-- CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding
+- CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding using built-in defaults (no extra conversion config required)
 
 ### `GET /api/content/wp.php`
 

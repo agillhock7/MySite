@@ -191,8 +191,8 @@ if ($apiKey === '') {
 
 $wpSnapshot = mysite_wp_fetch_snapshot($config);
 $gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
-$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $intent, $config);
-$wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions, $intent, $config);
+$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $intent);
+$wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions, $intent);
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {

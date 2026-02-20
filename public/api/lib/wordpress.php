@@ -257,22 +257,12 @@ function mysite_wp_gap_suggestions(array $snapshot): array
     return $missing;
 }
 
-function mysite_wp_conversion_profile(array $intent, array $config): array
+function mysite_wp_conversion_profile(array $intent): array
 {
-    $experience = is_array($config['experience'] ?? null) ? $config['experience'] : [];
-
-    $brandName = trim((string) ($experience['brand_name'] ?? 'Alexander J Gill'));
-    $companyName = trim((string) ($experience['company_name'] ?? 'Dark Horse Virtue'));
-
-    $hostingStartUrl = trim((string) ($experience['hosting_start_url'] ?? 'https://alexanderjgill.com'));
-    if ($hostingStartUrl === '') {
-        $hostingStartUrl = 'https://alexanderjgill.com';
-    }
-
-    $proSuiteOnboardingUrl = trim((string) ($experience['pro_suite_onboarding_url'] ?? 'https://hiops.darkhorsevirtue.io'));
-    if ($proSuiteOnboardingUrl === '') {
-        $proSuiteOnboardingUrl = 'https://hiops.darkhorsevirtue.io';
-    }
+    $brandName = 'Alexander J Gill';
+    $companyName = 'Dark Horse Virtue';
+    $hostingStartUrl = 'https://alexanderjgill.com';
+    $proSuiteOnboardingUrl = 'https://hiops.darkhorsevirtue.io';
 
     $goalText = strtolower((string) ($intent['goal'] ?? ''));
     $topics = $intent['primaryTopics'] ?? [];
@@ -298,7 +288,7 @@ function mysite_wp_conversion_profile(array $intent, array $config): array
         $intentType = 'content_learning';
     }
 
-    $primaryGoal = (string) ($experience['primary_conversion_goal'] ?? 'pro_suite_onboarding');
+    $primaryGoal = 'pro_suite_onboarding';
     if ($searchText === '') {
         $intentType = $primaryGoal;
     }
@@ -394,11 +384,11 @@ function mysite_wp_pick_priority_pages(array $snapshot): array
     return array_values($selected);
 }
 
-function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array $intent, array $config): array
+function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array $intent): array
 {
     $posts = $snapshot['posts'] ?? [];
     $pages = $snapshot['pages'] ?? [];
-    $conversionProfile = mysite_wp_conversion_profile($intent, $config);
+    $conversionProfile = mysite_wp_conversion_profile($intent);
 
     $heroTitle = (string) ($conversionProfile['heroTitle'] ?? 'Explore tailored content from alexanderjgill.com');
     $heroSubtitle = (string) ($conversionProfile['heroSubtitle'] ?? 'Personalized from your intent and live WordPress content.');
@@ -514,7 +504,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
     ];
 }
 
-function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, array $intent, array $config): array
+function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, array $intent): array
 {
     $postTitles = [];
     foreach (array_slice(($snapshot['posts'] ?? []), 0, 8) as $post) {
@@ -546,7 +536,7 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, ar
         'pageTitles' => $pageTitles,
         'categoryNames' => $categoryNames,
         'gapTopics' => $gapTopics,
-        'conversionProfile' => mysite_wp_conversion_profile($intent, $config),
+        'conversionProfile' => mysite_wp_conversion_profile($intent),
         'errors' => $snapshot['errors'] ?? []
     ];
 }

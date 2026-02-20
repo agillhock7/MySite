@@ -31,7 +31,7 @@ $defaultIntent = [
     'density' => 'medium',
     'primaryTopics' => ['Hosting', 'Pro Suite']
 ];
-$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $defaultIntent, $config);
+$contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $defaultIntent);
 
 send_json(200, [
     'contentOverrides' => $contentOverrides,
