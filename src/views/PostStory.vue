@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router';
 import { fetchWordpressPostDetail, type WordpressPostDetailResponse } from '@/api/wp';
 import { usePersonalizationStore } from '@/stores/personalization';
 import AssistantDock from '@/components/AssistantDock.vue';
+import HoloBackdrop from '@/components/effects/HoloBackdrop.vue';
 import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { useReducedMotion } from '@/composables/useReducedMotion';
 import { hashText, seededUnit } from '@/utils/seed';
@@ -166,6 +167,7 @@ watch(
 <template>
   <main class="story-root" :class="[modeClass, prefersReducedMotion ? 'reduced-motion' : '']" :style="shellStyle">
     <div class="ambient-layer" aria-hidden="true">
+      <HoloBackdrop class="holo-layer" :accent="accent" :seed="storySeed" :reduced-motion="prefersReducedMotion" />
       <span class="ambient-grid"></span>
       <span
         v-for="ring in ambientRings"
@@ -293,6 +295,12 @@ watch(
   inset: 0;
   pointer-events: none;
   z-index: 0;
+}
+
+.holo-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0.68;
 }
 
 .ambient-grid {

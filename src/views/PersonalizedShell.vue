@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
 import AssistantDock from '@/components/AssistantDock.vue';
+import HoloBackdrop from '@/components/effects/HoloBackdrop.vue';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
@@ -194,6 +195,8 @@ const shellStyle = computed(() => {
   const radius = system?.radius ?? 16;
   const panelBlur = system?.panelBlur ?? 8;
   const moduleGapRem = system?.moduleGapRem ?? 1.05;
+  const tiltY = ((pointerX.value - 50) / 50) * 1.8;
+  const tiltX = ((pointerY.value - 50) / 50) * -1.8;
 
   return {
     '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
@@ -201,7 +204,9 @@ const shellStyle = computed(() => {
     '--panel-blur': `${panelBlur}px`,
     '--module-gap': `${moduleGapRem}rem`,
     '--pointer-x': `${pointerX.value}%`,
-    '--pointer-y': `${pointerY.value}%`
+    '--pointer-y': `${pointerY.value}%`,
+    '--tilt-x': `${tiltX.toFixed(3)}deg`,
+    '--tilt-y': `${tiltY.toFixed(3)}deg`
   };
 });
 
@@ -364,6 +369,12 @@ onMounted(async () => {
     @pointerleave="handlePointerLeave"
   >
     <div class="ambient-layer" aria-hidden="true">
+      <HoloBackdrop
+        class="holo-layer"
+        :accent="blueprint.theme.accent"
+        :seed="experienceSystem?.visualSeed ?? 0"
+        :reduced-motion="prefersReducedMotion"
+      />
       <span class="ambient-grid"></span>
       <span class="ambient-noise"></span>
       <span
@@ -558,6 +569,12 @@ onMounted(async () => {
   z-index: 0;
 }
 
+.holo-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0.72;
+}
+
 .ambient-grid {
   position: absolute;
   inset: 0;
@@ -663,7 +680,14 @@ onMounted(async () => {
   z-index: 2;
 }
 
+.command-header,
+.hero-stage {
+  transform: perspective(1400px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
+  transform-style: preserve-3d;
+}
+
 .command-header {
+  position: relative;
   display: grid;
   gap: 0.85rem;
   border-radius: calc(var(--radius) + 6px);
@@ -676,6 +700,33 @@ onMounted(async () => {
     );
   backdrop-filter: blur(var(--panel-blur));
   padding: 1rem;
+  overflow: hidden;
+}
+
+.command-header::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background:
+    conic-gradient(
+      from 0deg at 50% 50%,
+      color-mix(in srgb, var(--accent) 56%, transparent),
+      transparent 22%,
+      color-mix(in srgb, var(--accent) 38%, transparent) 36%,
+      transparent 52%,
+      color-mix(in srgb, var(--accent) 44%, transparent) 68%,
+      transparent 84%,
+      color-mix(in srgb, var(--accent) 56%, transparent)
+    );
+  filter: blur(18px);
+  opacity: 0.22;
+  animation: spin-halo 14s linear infinite;
+  pointer-events: none;
+}
+
+.command-header > * {
+  position: relative;
+  z-index: 1;
 }
 
 .brand-lockup {
@@ -986,6 +1037,11 @@ h1 {
   backdrop-filter: blur(calc(var(--panel-blur) + 3px));
 }
 
+.reduced-motion .command-header,
+.reduced-motion .hero-stage {
+  transform: none;
+}
+
 .fx-matrix .ambient-grid {
   opacity: 0.46;
 }
@@ -1043,6 +1099,10 @@ h1 {
   transition-duration: 0.01ms !important;
 }
 
+.reduced-motion .command-header::before {
+  animation: none;
+}
+
 @keyframes breathe {
   from {
     transform: translate(-50%, -50%) scale(0.9);
@@ -1069,6 +1129,15 @@ h1 {
   }
   to {
     transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes spin-halo {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 
