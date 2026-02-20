@@ -95,10 +95,10 @@ function resetOnboardingState(): void {
 
 function normalizeIntentForGeneration(intent: IntentProfile): IntentProfile {
   return {
-    goal: intent.goal.trim() || 'Create a practical conversion-focused site experience',
+    goal: intent.goal.trim() || 'Create a custom headless front-end experience for alexanderjgill.com',
     vibe: intent.vibe,
     density: intent.density,
-    primaryTopics: intent.primaryTopics.length > 0 ? intent.primaryTopics : ['Hosting', 'Pro Suite']
+    primaryTopics: intent.primaryTopics.length > 0 ? intent.primaryTopics : ['Work', 'Read', 'Bio']
   };
 }
 
@@ -165,13 +165,13 @@ async function handleCommand(command: string): Promise<void> {
     personalization.resetPersonalization();
     transcript.value = [];
     resetOnboardingState();
-    pushLine('system', 'Personalization cache cleared. Starting onboarding again.');
+    pushLine('system', 'Personalization cache cleared. Starting refinement chat again.');
     await seedConversation();
     return;
   }
 
   if (command === '/skip') {
-    pushLine('system', 'Skipping onboarding. Using default blueprint.');
+    pushLine('system', 'Skipping chat. Using default blueprint.');
     await finalizeBlueprint(defaultBlueprint());
     return;
   }
@@ -228,7 +228,7 @@ async function handleSubmit(): Promise<void> {
 }
 
 onMounted(async () => {
-  pushLine('system', 'Terminal onboarding initialized. Type /help for commands.');
+  pushLine('system', 'Refinement chat initialized. Type /help for commands.');
   await seedConversation();
 });
 </script>

@@ -226,10 +226,10 @@ function mysite_wp_gap_suggestions(array $snapshot): array
         ['topic' => 'Services', 'match' => ['service', 'offer', 'consult'], 'priority' => 'high'],
         ['topic' => 'Case Studies', 'match' => ['case study', 'project', 'result'], 'priority' => 'high'],
         ['topic' => 'Testimonials', 'match' => ['testimonial', 'review', 'client feedback'], 'priority' => 'high'],
-        ['topic' => 'Pro Suite Onboarding', 'match' => ['pro suite', 'onboard', 'hiops', 'dark horse virtue'], 'priority' => 'high'],
-        ['topic' => 'Hosting Plan CTA', 'match' => ['hosting plan', 'hosting', 'infrastructure'], 'priority' => 'high'],
+        ['topic' => 'About / Bio', 'match' => ['bio', 'about', 'profile'], 'priority' => 'medium'],
+        ['topic' => 'Contact CTA', 'match' => ['contact', 'book call', 'get in touch'], 'priority' => 'high'],
         ['topic' => 'FAQ', 'match' => ['faq', 'questions'], 'priority' => 'medium'],
-        ['topic' => 'Contact CTA', 'match' => ['contact', 'book call', 'get in touch'], 'priority' => 'high']
+        ['topic' => 'Editorial Hub', 'match' => ['read', 'insight', 'blog', 'article'], 'priority' => 'medium']
     ];
 
     $missing = [];
@@ -260,9 +260,11 @@ function mysite_wp_gap_suggestions(array $snapshot): array
 function mysite_wp_conversion_profile(array $intent): array
 {
     $brandName = 'Alexander J Gill';
-    $companyName = 'Dark Horse Virtue';
-    $hostingStartUrl = 'https://alexanderjgill.com';
-    $proSuiteOnboardingUrl = 'https://hiops.darkhorsevirtue.io';
+    $siteRootUrl = 'https://alexanderjgill.com';
+    $workUrl = 'https://alexanderjgill.com/work/';
+    $readUrl = 'https://alexanderjgill.com/read/';
+    $bioUrl = 'https://alexanderjgill.com/bio/';
+    $contactUrl = 'https://alexanderjgill.com/contact/';
 
     $goalText = strtolower((string) ($intent['goal'] ?? ''));
     $topics = $intent['primaryTopics'] ?? [];
@@ -270,15 +272,7 @@ function mysite_wp_conversion_profile(array $intent): array
 
     $searchText = trim($goalText . ' ' . $topicText);
 
-    $intentType = 'pro_suite_onboarding';
-
-    if (mysite_wp_contains_any($searchText, ['host', 'hosting', 'plan', 'infrastructure'])) {
-        $intentType = 'hosting_plan';
-    }
-
-    if (mysite_wp_contains_any($searchText, ['pro suite', 'whmcs', 'dark horse virtue', 'onboarding', 'hiops'])) {
-        $intentType = 'pro_suite_onboarding';
-    }
+    $intentType = 'site_discovery';
 
     if (mysite_wp_contains_any($searchText, ['portfolio', 'work', 'project', 'case study'])) {
         $intentType = 'portfolio_review';
@@ -288,59 +282,78 @@ function mysite_wp_conversion_profile(array $intent): array
         $intentType = 'content_learning';
     }
 
-    $primaryGoal = 'pro_suite_onboarding';
+    if (mysite_wp_contains_any($searchText, ['bio', 'about', 'profile'])) {
+        $intentType = 'bio_profile';
+    }
+
+    if (mysite_wp_contains_any($searchText, ['contact', 'call', 'reach', 'email'])) {
+        $intentType = 'contact_start';
+    }
+
+    $primaryGoal = 'site_discovery';
     if ($searchText === '') {
         $intentType = $primaryGoal;
     }
 
     $profiles = [
-        'pro_suite_onboarding' => [
-            'intentType' => 'pro_suite_onboarding',
-            'heroTitle' => 'Start your Pro Suite onboarding with ' . $companyName,
-            'heroSubtitle' => 'We tailor your path into HiOps so you can activate client operations quickly.',
-            'heroCtaLabel' => 'Start Pro Suite Onboarding',
-            'heroCtaUrl' => $proSuiteOnboardingUrl,
-            'primaryActionLabel' => 'Open HiOps Onboarding',
-            'primaryActionUrl' => $proSuiteOnboardingUrl,
-            'secondaryActionLabel' => 'View Hosting Plan Options',
-            'secondaryActionUrl' => $hostingStartUrl
-        ],
-        'hosting_plan' => [
-            'intentType' => 'hosting_plan',
-            'heroTitle' => 'Choose a hosting plan that fits your growth path',
-            'heroSubtitle' => 'This experience helps visitors move from research to a clear hosting decision.',
-            'heroCtaLabel' => 'Start Hosting Plan',
-            'heroCtaUrl' => $hostingStartUrl,
-            'primaryActionLabel' => 'Start Hosting Plan',
-            'primaryActionUrl' => $hostingStartUrl,
-            'secondaryActionLabel' => 'Need Managed Onboarding? Open HiOps',
-            'secondaryActionUrl' => $proSuiteOnboardingUrl
+        'site_discovery' => [
+            'intentType' => 'site_discovery',
+            'heroTitle' => 'Explore the latest from ' . $brandName,
+            'heroSubtitle' => 'A personalized front-end view generated from live WordPress content.',
+            'heroCtaLabel' => 'Explore Main Site',
+            'heroCtaUrl' => $siteRootUrl,
+            'primaryActionLabel' => 'Explore Main Site',
+            'primaryActionUrl' => $siteRootUrl,
+            'secondaryActionLabel' => 'Read Latest Insights',
+            'secondaryActionUrl' => $readUrl
         ],
         'portfolio_review' => [
             'intentType' => 'portfolio_review',
             'heroTitle' => 'See how ' . $brandName . ' executes across strategy, systems, and delivery',
-            'heroSubtitle' => 'Portfolio-minded visitors can browse work, then move into hosting or onboarding when ready.',
+            'heroSubtitle' => 'Portfolio-focused visitors can review recent project signals and related writing.',
             'heroCtaLabel' => 'Explore Work',
-            'heroCtaUrl' => 'https://alexanderjgill.com/work/',
+            'heroCtaUrl' => $workUrl,
             'primaryActionLabel' => 'Explore Work',
-            'primaryActionUrl' => 'https://alexanderjgill.com/work/',
-            'secondaryActionLabel' => 'Start Pro Suite Onboarding',
-            'secondaryActionUrl' => $proSuiteOnboardingUrl
+            'primaryActionUrl' => $workUrl,
+            'secondaryActionLabel' => 'Read Latest Insights',
+            'secondaryActionUrl' => $readUrl
         ],
         'content_learning' => [
             'intentType' => 'content_learning',
             'heroTitle' => 'Explore practical guidance from ' . $brandName,
-            'heroSubtitle' => 'Learning-focused visitors can read first, then transition into hosting or Pro Suite onboarding.',
+            'heroSubtitle' => 'Learning-focused visitors can read first, then branch into portfolio and bio pages.',
             'heroCtaLabel' => 'Read Latest Insights',
-            'heroCtaUrl' => 'https://alexanderjgill.com/read/',
+            'heroCtaUrl' => $readUrl,
             'primaryActionLabel' => 'Open Reading Hub',
-            'primaryActionUrl' => 'https://alexanderjgill.com/read/',
-            'secondaryActionLabel' => 'Start Hosting Plan',
-            'secondaryActionUrl' => $hostingStartUrl
+            'primaryActionUrl' => $readUrl,
+            'secondaryActionLabel' => 'Explore Work',
+            'secondaryActionUrl' => $workUrl
+        ],
+        'bio_profile' => [
+            'intentType' => 'bio_profile',
+            'heroTitle' => 'Get to know ' . $brandName,
+            'heroSubtitle' => 'Narrative-first visitors can start with bio, then explore work and articles.',
+            'heroCtaLabel' => 'Read Bio',
+            'heroCtaUrl' => $bioUrl,
+            'primaryActionLabel' => 'Read Bio',
+            'primaryActionUrl' => $bioUrl,
+            'secondaryActionLabel' => 'Explore Work',
+            'secondaryActionUrl' => $workUrl
+        ],
+        'contact_start' => [
+            'intentType' => 'contact_start',
+            'heroTitle' => 'Start a conversation with ' . $brandName,
+            'heroSubtitle' => 'This path prioritizes fast context and clear contact options.',
+            'heroCtaLabel' => 'Contact',
+            'heroCtaUrl' => $contactUrl,
+            'primaryActionLabel' => 'Open Contact',
+            'primaryActionUrl' => $contactUrl,
+            'secondaryActionLabel' => 'Read Bio',
+            'secondaryActionUrl' => $bioUrl
         ]
     ];
 
-    $fallbackKey = array_key_exists($primaryGoal, $profiles) ? $primaryGoal : 'pro_suite_onboarding';
+    $fallbackKey = array_key_exists($primaryGoal, $profiles) ? $primaryGoal : 'site_discovery';
     return $profiles[$intentType] ?? $profiles[$fallbackKey];
 }
 
@@ -418,12 +431,12 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 
     $listItems = [
         [
-            'title' => 'Primary conversion path',
-            'detail' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding')
+            'title' => 'Primary journey path',
+            'detail' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site')
         ],
         [
-            'title' => 'Secondary conversion path',
-            'detail' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan')
+            'title' => 'Secondary journey path',
+            'detail' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Read Latest Insights')
         ]
     ];
 
@@ -444,11 +457,11 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 
     $actions = [
         [
-            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
-            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site'),
+            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://alexanderjgill.com')
         ],
         [
-            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
+            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Read Latest Insights'),
             'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'))
         ],
         [
@@ -475,7 +488,7 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         ],
         [
             'question' => 'How is this personalized per visitor?',
-            'answer' => 'Visitor-specific onboarding signals and a per-visitor design seed drive layout, styling, and conversion emphasis.'
+            'answer' => 'Visitor signals and a per-visitor design seed drive layout, styling, and content emphasis.'
         ],
         [
             'question' => 'What should be added next?',

@@ -34,7 +34,7 @@ function normalize_intent(array $decoded): array
     $validDensity = ['low', 'medium', 'high'];
 
     if ($goal === '') {
-        $goal = 'Create a practical productivity workspace';
+        $goal = 'Create a unique headless frontend for alexanderjgill.com';
     }
 
     if (!in_array($vibe, $validVibes, true)) {
@@ -64,7 +64,7 @@ function normalize_intent(array $decoded): array
     }
 
     if (count($cleanTopics) === 0) {
-        $cleanTopics = ['Planning', 'Execution'];
+        $cleanTopics = ['Work', 'Read'];
     }
 
     return [
@@ -325,11 +325,11 @@ function normalize_shortcuts(array $candidateShortcuts, array $intent, array $sn
 
     $defaults = [
         [
-            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
-            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site'),
+            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? $baseUrl)
         ],
         [
-            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
+            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Read Latest Insights'),
             'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl)
         ],
         ['label' => 'Explore Main Site', 'action' => $baseUrl]
@@ -411,8 +411,8 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
 {
     $goal = trim((string) ($intent['goal'] ?? ''));
     $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
-    $firstTopic = isset($topics[0]) ? trim((string) $topics[0]) : 'hosting';
-    $secondTopic = isset($topics[1]) ? trim((string) $topics[1]) : 'onboarding';
+    $firstTopic = isset($topics[0]) ? trim((string) $topics[0]) : 'work';
+    $secondTopic = isset($topics[1]) ? trim((string) $topics[1]) : 'insights';
     $conversion = mysite_wp_conversion_profile($intent);
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
@@ -440,7 +440,7 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
                 $props['subtitle'] = 'This shell prioritizes ' . strtolower((string) ($conversion['primaryActionLabel'] ?? 'the next conversion action')) . '.';
             }
             if (trim((string) ($props['ctaUrl'] ?? '')) === '') {
-                $props['ctaUrl'] = (string) ($conversion['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io');
+                $props['ctaUrl'] = (string) ($conversion['primaryActionUrl'] ?? 'https://alexanderjgill.com');
             }
         }
 
@@ -457,16 +457,16 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
 
         if ($type === 'ContentList') {
             if (trim((string) ($props['title'] ?? '')) === '') {
-                $props['title'] = 'Decision path for ' . $secondTopic;
+                $props['title'] = 'Editorial path for ' . $secondTopic;
             }
             if (trim((string) ($props['intro'] ?? '')) === '') {
-                $props['intro'] = 'Action sequence generated from onboarding + content signals.';
+                $props['intro'] = 'Action sequence generated from visitor + content signals.';
             }
             $props['variant'] = $listVariants[seeded_value($visitorId, 'list-variant:' . $index, count($listVariants))];
         }
 
         if ($type === 'QuickActions' && trim((string) ($props['title'] ?? '')) === '') {
-            $props['title'] = 'Primary Conversion Paths';
+            $props['title'] = 'Primary Navigation Paths';
         }
 
         if ($type === 'FAQ' && trim((string) ($props['title'] ?? '')) === '') {
@@ -585,10 +585,8 @@ Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
 Design a distinctive front-end site experience, not a dashboard.
 Treat modules as website sections with intentional hierarchy, flow, and tone.
-Primary conversion priorities are:
-1) Start a hosting plan
-2) Onboard into a Pro Suite hosting account via Dark Horse Virtue HiOps.
-Design module ordering and shortcut labels around visitor intent and these conversion paths.
+Design module ordering and shortcut labels around visitor intent and alexanderjgill.com content discovery.
+Prioritize pathways like Work, Read, Bio, Contact, and Main Site navigation.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
 Each visitor has a design seed. Use it to make the layout feel unique, not generic.
 PROMPT;

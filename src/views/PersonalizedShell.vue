@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
+import { defaultIntentProfile, generateBlueprintWithFallback, type IntentProfile } from '@/api/ai';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { setRuntimeContentOverrides } from '@/content/library';
-import { usePersonalizationStore } from '@/stores/personalization';
 import { BUILD_TAG } from '@/meta/build';
+import { getOrCreateVisitorId } from '@/personalization/visitor';
+import { usePersonalizationStore } from '@/stores/personalization';
 
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
+const initializing = ref(true);
+const initializationError = ref('');
 const blueprint = computed(() => personalization.blueprint);
 
 function hashText(input: string): number {
@@ -21,6 +25,47 @@ function hashText(input: string): number {
   }
 
   return hash >>> 0;
+}
+
+function deriveAutoIntent(): IntentProfile {
+  const intent = defaultIntentProfile();
+  intent.goal = 'Create a unique headless front-end experience for alexanderjgill.com visitors.';
+  intent.vibe = 'visual';
+  intent.density = 'medium';
+  intent.primaryTopics = ['Work', 'Read', 'Bio', 'Markets'];
+  return intent;
+}
+
+async function initializePersonalization(): Promise<void> {
+  initializing.value = true;
+  initializationError.value = '';
+
+  if (!personalization.blueprint) {
+    personalization.loadFromStorage();
+  }
+
+  const wpBundle = await fetchWordpressContentBundle();
+  if (wpBundle && Object.keys(wpBundle.contentOverrides).length > 0) {
+    setRuntimeContentOverrides(wpBundle.contentOverrides);
+  }
+
+  if (!personalization.blueprint) {
+    const visitorId = getOrCreateVisitorId();
+    const generated = await generateBlueprintWithFallback(deriveAutoIntent(), { visitorId });
+
+    if (Object.keys(generated.contentOverrides).length > 0) {
+      setRuntimeContentOverrides(generated.contentOverrides);
+    }
+
+    personalization.setBlueprint(generated.blueprint);
+
+    if (generated.source === 'stub') {
+      initializationError.value =
+        'AI endpoint is currently unavailable. Running local personalization fallback.';
+    }
+  }
+
+  initializing.value = false;
 }
 
 const visualSeed = computed(() => {
@@ -73,18 +118,18 @@ const orderedModules = computed(() => {
 
 const shellTitle = computed(() => {
   if (!blueprint.value) {
-    return 'Adaptive Site Experience';
+    return 'Headless WordPress Experience';
   }
 
   if (blueprint.value.layout.nav === 'none') {
-    return 'Focused Conversion Journey';
+    return 'Focused Content Journey';
   }
 
   if (blueprint.value.layout.nav === 'side') {
-    return 'Guided Multi-Section Experience';
+    return 'Editorial Discovery Layout';
   }
 
-  return 'Adaptive Site Experience';
+  return 'Headless WordPress Experience';
 });
 
 const wordpressStatus = computed(() => {
@@ -92,7 +137,7 @@ const wordpressStatus = computed(() => {
     return '';
   }
 
-  return 'Personalized using alexanderjgill.com as source-of-truth content.';
+  return 'Read-only data from alexanderjgill.com powers this frontend.';
 });
 
 function isUrlAction(action: string): boolean {
@@ -101,35 +146,37 @@ function isUrlAction(action: string): boolean {
 
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
-  await router.replace('/onboarding?force=1&reset=1');
+  await initializePersonalization();
+}
+
+async function openChatRefinement(): Promise<void> {
+  await router.push('/onboarding?force=1');
 }
 
 onMounted(async () => {
-  if (!blueprint.value) {
-    personalization.loadFromStorage();
-  }
-
-  if (!personalization.blueprint) {
-    await router.replace('/onboarding');
-    return;
-  }
-
-  const wpBundle = await fetchWordpressContentBundle();
-  if (wpBundle && Object.keys(wpBundle.contentOverrides).length > 0) {
-    setRuntimeContentOverrides(wpBundle.contentOverrides);
-  }
+  await initializePersonalization();
 });
 </script>
 
 <template>
-  <main v-if="blueprint" class="shell" :class="[modeClass, toneClass]" :style="shellStyle">
+  <main v-if="initializing" class="booting-shell">
+    <section class="boot-card">
+      <p>Building a personalized headless frontend from WordPress content...</p>
+    </section>
+  </main>
+
+  <main v-else-if="blueprint" class="shell" :class="[modeClass, toneClass]" :style="shellStyle">
     <header class="shell-header">
       <div>
         <p class="eyebrow">Visitor Signature {{ designSignature }} · {{ BUILD_TAG }}</p>
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
+        <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
       </div>
-      <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
+      <div class="header-actions">
+        <button type="button" class="secondary-btn" @click="openChatRefinement">Refine With Chat</button>
+        <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
+      </div>
     </header>
 
     <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
@@ -163,6 +210,22 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.booting-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #060c18;
+  color: #dbeafe;
+  padding: 1rem;
+}
+
+.boot-card {
+  border: 1px solid #1e3a5f;
+  border-radius: 14px;
+  background: #0b1425;
+  padding: 1rem 1.25rem;
+}
+
 .shell {
   min-height: 100vh;
   padding: 1rem;
@@ -245,6 +308,19 @@ h1 {
   font-size: 0.88rem;
 }
 
+.fallback-note {
+  margin: 0.45rem 0 0;
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-secondary));
+  font-size: 0.85rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.secondary-btn,
 .reset-btn {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   border-radius: 999px;

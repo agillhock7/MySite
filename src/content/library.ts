@@ -33,7 +33,7 @@ export const contentLibrary: Record<string, unknown> = {
   heroWelcome: {
     title: 'Build your workspace faster',
     subtitle:
-      'Your layout is generated from onboarding intent and can be reset any time.',
+      'Your layout is generated from visitor intent and WordPress content and can be reset any time.',
     ctaLabel: 'Explore Modules'
   } as HeroContent,
   featuredGrid: {
@@ -53,7 +53,7 @@ export const contentLibrary: Record<string, unknown> = {
   } as { items: ListItem[] },
   quickStartActions: {
     actions: [
-      { label: 'Re-run Onboarding', action: 'reopen-onboarding' },
+      { label: 'Refine Personalization', action: 'reopen-onboarding' },
       { label: 'Inspect Blueprint JSON', action: 'inspect-blueprint' },
       { label: 'Open Content Library', action: 'open-content-library' }
     ]
@@ -69,7 +69,7 @@ export const contentLibrary: Record<string, unknown> = {
         answer: 'No. Invalid data is rejected by Zod and replaced with a safe default blueprint.'
       },
       {
-        question: 'Does onboarding run real AI?',
+        question: 'Does personalization run real AI?',
         answer: 'When backend is configured it uses real AI, otherwise deterministic local fallback is used.'
       }
     ]

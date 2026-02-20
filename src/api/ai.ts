@@ -139,23 +139,13 @@ function inferJourneyProfile(intentProfile: IntentProfile): {
 } {
   const source = `${intentProfile.goal} ${intentProfile.primaryTopics.join(' ')}`.toLowerCase();
 
-  if (/host|hosting|infrastructure|server|plan/.test(source)) {
-    return {
-      primaryLabel: 'Start Hosting Plan',
-      primaryUrl: 'https://alexanderjgill.com',
-      secondaryLabel: 'Open Pro Suite Onboarding',
-      secondaryUrl: 'https://hiops.darkhorsevirtue.io',
-      narrative: 'Focus this journey on decision support and trust for hosting buyers.'
-    };
-  }
-
   if (/work|portfolio|case|project|build/.test(source)) {
     return {
       primaryLabel: 'Explore Work',
       primaryUrl: 'https://alexanderjgill.com/work/',
-      secondaryLabel: 'Start Pro Suite Onboarding',
-      secondaryUrl: 'https://hiops.darkhorsevirtue.io',
-      narrative: 'Use proof-first storytelling with strong transitions into conversion moments.'
+      secondaryLabel: 'Read Insights',
+      secondaryUrl: 'https://alexanderjgill.com/read/',
+      narrative: 'Lead with proof-first storytelling, then guide visitors to deeper content.'
     };
   }
 
@@ -163,18 +153,28 @@ function inferJourneyProfile(intentProfile: IntentProfile): {
     return {
       primaryLabel: 'Read Insights',
       primaryUrl: 'https://alexanderjgill.com/read/',
-      secondaryLabel: 'Start Hosting Plan',
-      secondaryUrl: 'https://alexanderjgill.com',
-      narrative: 'Prioritize educational flow and then escalate to conversion prompts.'
+      secondaryLabel: 'Explore Work',
+      secondaryUrl: 'https://alexanderjgill.com/work/',
+      narrative: 'Prioritize educational flow with contextual links into portfolio and bio.'
+    };
+  }
+
+  if (/bio|about|alexander|profile/.test(source)) {
+    return {
+      primaryLabel: 'Read Bio',
+      primaryUrl: 'https://alexanderjgill.com/bio/',
+      secondaryLabel: 'Explore Work',
+      secondaryUrl: 'https://alexanderjgill.com/work/',
+      narrative: 'Center narrative and credibility, then branch to projects and insights.'
     };
   }
 
   return {
-    primaryLabel: 'Start Pro Suite Onboarding',
-    primaryUrl: 'https://hiops.darkhorsevirtue.io',
-    secondaryLabel: 'Start Hosting Plan',
-    secondaryUrl: 'https://alexanderjgill.com',
-    narrative: 'Lead with concierge onboarding and provide a second path into hosting plans.'
+    primaryLabel: 'Explore Main Site',
+    primaryUrl: 'https://alexanderjgill.com',
+    secondaryLabel: 'Explore Work',
+    secondaryUrl: 'https://alexanderjgill.com/work/',
+    narrative: 'Guide visitors through core site sections with clear editorial hierarchy.'
   };
 }
 
@@ -219,8 +219,8 @@ function seededNav(density: IntentProfile['density'], seed: string): 'side' | 't
 
 function buildSeededModules(intentProfile: IntentProfile, seed: string): BlueprintModule[] {
   const journey = inferJourneyProfile(intentProfile);
-  const firstTopic = intentProfile.primaryTopics[0] ?? 'hosting';
-  const secondTopic = intentProfile.primaryTopics[1] ?? 'onboarding';
+  const firstTopic = intentProfile.primaryTopics[0] ?? 'work';
+  const secondTopic = intentProfile.primaryTopics[1] ?? 'insights';
 
   const heroKicker = seededPick(seed, 'hero-kicker', [
     'Visitor Blueprint',
@@ -271,8 +271,8 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         id: 'list-decision',
         type: 'ContentList',
         props: {
-          title: `Decision path for ${secondTopic}`,
-          intro: 'Structured next actions based on onboarding intent.',
+          title: `Editorial path for ${secondTopic}`,
+          intro: 'Structured next actions based on content and visitor intent.',
           variant: listVariant
         },
         contentKey: 'nextStepsList'
@@ -314,7 +314,7 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         id: 'actions-paths',
         type: 'QuickActions',
         props: {
-          title: 'Primary Conversion Paths'
+          title: 'Primary Navigation Paths'
         },
         contentKey: 'quickStartActions'
       },
@@ -355,7 +355,7 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         type: 'ContentList',
         props: {
           title: 'Visitor Priorities',
-          intro: 'Top priorities inferred from the onboarding conversation.',
+          intro: 'Top priorities inferred from visitor behavior and page context.',
           variant: listVariant
         },
         contentKey: 'nextStepsList'
@@ -509,7 +509,8 @@ export async function generateBlueprintFromIntent(
       { label: journey.secondaryLabel, action: journey.secondaryUrl },
       { label: 'Explore Main Site', action: 'https://alexanderjgill.com' },
       { label: 'Read Insights', action: 'https://alexanderjgill.com/read/' },
-      { label: 'Open Work Archive', action: 'https://alexanderjgill.com/work/' }
+      { label: 'Open Work Archive', action: 'https://alexanderjgill.com/work/' },
+      { label: 'Read Bio', action: 'https://alexanderjgill.com/bio/' }
     ],
     createdAt: timestamp,
     updatedAt: timestamp
@@ -564,8 +565,8 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
   if (userLooksConfused(lastUserMessage)) {
     return seededPick(seed, 'confusion', [
       'No problem. Should this feel simple and direct, or rich with detail?',
-      'All good. Are we optimizing for hosting signups, Pro Suite onboarding, or both first?',
-      'Clear. Tell me the one action visitors should take first, and I will shape the flow.'
+      'All good. Should we prioritize portfolio, insights, or bio content first?',
+      'Clear. Tell me the one page area visitors should hit first, and I will shape the flow.'
     ]);
   }
 
@@ -573,7 +574,7 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
     return seededPick(seed, 'ask-goal', [
       'What outcome should this first-time visitor experience drive?',
       'In one line, what should visitors accomplish before leaving the page?',
-      'What is the main conversion action you want this experience to trigger?'
+      'What is the main page journey you want this experience to trigger?'
     ]);
   }
 

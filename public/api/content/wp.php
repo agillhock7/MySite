@@ -26,10 +26,10 @@ $config = mysite_load_server_config();
 $wpSnapshot = mysite_wp_fetch_snapshot($config);
 $gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
 $defaultIntent = [
-    'goal' => 'Start a hosting plan or Pro Suite onboarding',
+    'goal' => 'Create a personalized headless front-end experience for alexanderjgill.com',
     'vibe' => 'minimal',
     'density' => 'medium',
-    'primaryTopics' => ['Hosting', 'Pro Suite']
+    'primaryTopics' => ['Work', 'Read', 'Bio']
 ];
 $contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $defaultIntent);
 

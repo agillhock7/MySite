@@ -1,6 +1,6 @@
 # MySite MVP
 
-Vue 3 + Vite + TypeScript app with terminal onboarding, AI blueprint generation, and read-only WordPress content integration.
+Vue 3 + Vite + TypeScript app with AI-generated headless frontend blueprints and read-only WordPress content integration.
 
 ## Local development
 
@@ -78,15 +78,15 @@ Output:
 - `wordpress`: metadata about WP fetch status
 - `visitorId` is accepted and used as a deterministic design seed so two visitors with similar intent still get different UI structure/styling
 
-Conversion behavior:
+Behavior:
 
-- Intent is classified into conversion profiles (`pro_suite_onboarding`, `hosting_plan`, `portfolio_review`, `content_learning`)
-- CTAs are personalized toward hosting-plan start and/or HiOps Pro Suite onboarding using built-in defaults (no extra conversion config required)
+- Intent is classified into journey profiles (site discovery, portfolio review, content learning, bio profile, contact start)
+- CTAs are personalized toward alexanderjgill.com page pathways (Work, Read, Bio, Contact, Main Site)
 - Module ordering/variant props are post-processed with visitor seed so the shell is not a generic dashboard clone
 
-### `POST /api/ai/onboarding.php`
+### `POST /api/ai/onboarding.php` (optional chat refinement)
 
-Turn-by-turn onboarding conversation endpoint.
+Turn-by-turn refinement conversation endpoint.
 
 Input:
 
@@ -135,5 +135,5 @@ Deployment flow:
 
 After deploy:
 
-- Open `/reset` to force-clear personalization cache and restart onboarding.
-- Check onboarding header build tag to confirm latest frontend is live.
+- Open `/reset` to force-clear personalization cache and regenerate a fresh shell.
+- Check shell header build tag to confirm latest frontend is live.

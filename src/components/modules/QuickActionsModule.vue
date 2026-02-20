@@ -41,6 +41,11 @@ function formatActionHint(action: string): string {
 }
 
 function runInlineAction(action: string): void {
+  if (action === 'reopen-onboarding') {
+    window.location.assign('/onboarding?force=1');
+    return;
+  }
+
   if (action === 'refresh-personalization') {
     window.location.reload();
   }
