@@ -1,6 +1,4 @@
 deployment:
   tasks:
-    - /bin/bash -lc 'set -e; echo "[deploy] install deps"; if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi'
-    - /bin/bash -lc 'set -e; echo "[deploy] build"; npm run build'
-    - /bin/bash -lc 'set -e; DEPLOYPATH=/home/alexande/my.alexanderjgill.com; echo "[deploy] ensure path: $DEPLOYPATH"; mkdir -p "$DEPLOYPATH"'
+    - /bin/bash -lc 'set -e; DEPLOYPATH=/home/alexande/my.alexanderjgill.com; echo "[deploy] using prebuilt dist (no server build)"; test -d dist; mkdir -p "$DEPLOYPATH"'
     - /bin/bash -lc 'set -e; DEPLOYPATH=/home/alexande/my.alexanderjgill.com; echo "[deploy] copy dist to: $DEPLOYPATH"; if command -v rsync >/dev/null 2>&1; then rsync -av --delete dist/ "$DEPLOYPATH"/; else cp -r dist/* "$DEPLOYPATH"/; fi'
