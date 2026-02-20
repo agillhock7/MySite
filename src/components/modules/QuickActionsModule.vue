@@ -82,10 +82,13 @@ function runInlineAction(action: string): void {
 
 <style scoped>
 .module-card {
-  background: var(--surface);
+  background:
+    radial-gradient(circle at 100% -24%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 46%),
+    var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem;
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 h3 {
@@ -102,7 +105,12 @@ h3 {
 .action-btn {
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--accent) 16%, var(--surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--surface))
+    );
   color: inherit;
   text-align: left;
   padding: 0.65rem 0.75rem;
@@ -111,12 +119,13 @@ h3 {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   text-decoration: none;
-  transition: transform 160ms ease, border-color 160ms ease;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .action-btn:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  box-shadow: 0 12px 22px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 em {

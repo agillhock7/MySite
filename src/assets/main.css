@@ -6,7 +6,7 @@
   --text-primary: #101828;
   --text-secondary: #475467;
   --border: #d0d5dd;
-  --accent: #0ea5e9;
+  --accent: #16c7cf;
   --radius: 14px;
   --shadow-soft: 0 12px 30px rgba(16, 24, 40, 0.08);
 }
@@ -20,9 +20,9 @@ body,
 #app {
   margin: 0;
   min-height: 100%;
-  font-family: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+  font-family: 'Space Grotesk', 'Avenir Next', 'Segoe UI', sans-serif;
   color: var(--text-primary);
-  background: radial-gradient(circle at top right, #dde7ff, #f6f7fb 45%);
+  background: radial-gradient(circle at top right, #d9ecff, #f6f7fb 45%);
 }
 
 button,
@@ -33,4 +33,18 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--surface-muted) 86%, transparent);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 44%, #6b7280);
+  border-radius: 999px;
 }

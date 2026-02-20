@@ -98,10 +98,13 @@ const visibleItems = computed(() => {
 
 <style scoped>
 .module-card {
-  background: var(--surface);
+  background:
+    radial-gradient(circle at 94% -30%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+    var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.15rem;
+  box-shadow: 0 14px 32px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 h3 {
@@ -117,10 +120,15 @@ h3 {
 
 .grid-item {
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-muted) 70%, var(--surface));
+  background:
+    linear-gradient(
+      150deg,
+      color-mix(in srgb, var(--accent) 8%, var(--surface-muted)),
+      color-mix(in srgb, var(--surface-muted) 76%, var(--surface))
+    );
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   padding: 0.8rem;
-  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
 }
 
 .cover {
@@ -135,6 +143,7 @@ h3 {
 .grid-item:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 12px 24px color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 h4 {
@@ -193,6 +202,35 @@ p {
 
 .variant-cards .grid-item h4 {
   font-size: 1.05rem;
+}
+
+.variant-neon .grid-item {
+  border-width: 2px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 16%, var(--surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--surface-muted))
+    );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.variant-neon .grid-item:hover {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
+    0 14px 28px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.variant-zigzag .grid-item:nth-child(odd) {
+  transform: rotate(-0.45deg) translateY(-2px);
+}
+
+.variant-zigzag .grid-item:nth-child(even) {
+  transform: rotate(0.45deg) translateY(2px);
+}
+
+.variant-zigzag .grid-item:hover {
+  transform: rotate(0deg) translateY(-3px);
 }
 
 @media (min-width: 700px) {

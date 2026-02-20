@@ -126,6 +126,7 @@ async function runSuggestion(suggestion: AssistantActionSuggestion): Promise<voi
       <div>
         <p class="eyebrow">AI Assistant</p>
         <h3>Guidance Concierge</h3>
+        <p class="brand-mini">Alexander Gill · Power plays.</p>
       </div>
       <button type="button" class="toggle" @click="open = !open">{{ open ? 'Hide' : 'Open' }}</button>
     </header>
@@ -177,7 +178,9 @@ async function runSuggestion(suggestion: AssistantActionSuggestion): Promise<voi
   width: min(380px, calc(100vw - 2rem));
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  background:
+    radial-gradient(circle at 88% -16%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 48%),
+    color-mix(in srgb, var(--surface) 88%, transparent);
   backdrop-filter: blur(calc(var(--panel-blur) + 3px));
   box-shadow: 0 16px 38px color-mix(in srgb, var(--accent) 16%, transparent);
 }
@@ -193,6 +196,12 @@ async function runSuggestion(suggestion: AssistantActionSuggestion): Promise<voi
   gap: 0.6rem;
   padding: 0.8rem 0.9rem;
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+}
+
+.brand-mini {
+  margin: 0.25rem 0 0;
+  font-size: 0.7rem;
+  color: color-mix(in srgb, var(--accent) 75%, var(--text-secondary));
 }
 
 .eyebrow {

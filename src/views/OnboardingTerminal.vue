@@ -267,9 +267,28 @@ onMounted(async () => {
   <main class="onboarding-root">
     <section class="terminal-panel" role="region" aria-label="Onboarding terminal">
       <header class="terminal-header">
-        <span class="dot"></span>
-        <h1>Identity design terminal</h1>
+        <div class="title-row">
+          <span class="dot"></span>
+          <h1>Identity design terminal</h1>
+        </div>
         <p class="build-meta">{{ chatModeLabel }} · {{ BUILD_TAG }}</p>
+        <div class="brand-row">
+          <img
+            class="brand-icon"
+            src="https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png"
+            alt="Alexander Gill icon"
+            loading="lazy"
+          />
+          <p class="brand-copy">
+            <strong>Alexander Gill</strong>
+            <span>Power plays.</span>
+          </p>
+          <span class="brand-chip">Work</span>
+          <span class="brand-chip">Lab</span>
+          <span class="brand-chip">Read</span>
+          <span class="brand-chip">Bio</span>
+          <span class="brand-chip">Markets</span>
+        </div>
       </header>
 
       <div ref="transcriptRef" class="transcript" aria-live="polite">
@@ -324,12 +343,19 @@ onMounted(async () => {
 }
 
 .terminal-header {
-  padding: 0.75rem 1rem;
+  padding: 0.8rem 1rem;
   border-bottom: 1px solid #111827;
+  display: grid;
+  gap: 0.55rem;
+  background:
+    radial-gradient(circle at 92% -30%, rgba(14, 165, 233, 0.16), transparent 45%),
+    linear-gradient(180deg, rgba(5, 12, 24, 0.92), rgba(4, 4, 4, 0.96));
+}
+
+.title-row {
   display: flex;
   align-items: center;
   gap: 0.65rem;
-  flex-wrap: wrap;
 }
 
 .dot {
@@ -342,19 +368,73 @@ onMounted(async () => {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.05rem, 3.8vw, 1.3rem);
+  font-size: clamp(1.05rem, 3.8vw, 1.28rem);
   font-weight: 500;
+  letter-spacing: 0.03em;
 }
 
 .build-meta {
   margin: 0;
-  color: #6b7280;
+  color: #6ee7ff;
   font-size: 0.8rem;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(110, 231, 255, 0.5);
+  object-fit: cover;
+}
+
+.brand-copy {
+  margin: 0;
+  display: grid;
+  line-height: 1.05;
+}
+
+.brand-copy strong {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #d5f3ff;
+}
+
+.brand-copy span {
+  font-size: 0.72rem;
+  color: #6ee7ff;
+}
+
+.brand-chip {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid rgba(110, 231, 255, 0.32);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  color: #a7f3d0;
+  background: rgba(15, 23, 42, 0.48);
 }
 
 .transcript {
   overflow: auto;
   padding: 1rem;
+  background:
+    linear-gradient(transparent, rgba(3, 7, 18, 0.68)),
+    repeating-linear-gradient(
+      0deg,
+      rgba(110, 231, 255, 0.04) 0,
+      rgba(110, 231, 255, 0.04) 1px,
+      transparent 1px,
+      transparent 24px
+    );
 }
 
 .line {
@@ -391,6 +471,8 @@ h1 {
   gap: 0.5rem;
   padding: 0.9rem 1rem;
   border-top: 1px solid #111827;
+  background:
+    linear-gradient(180deg, rgba(2, 6, 23, 0.88), rgba(4, 4, 4, 0.94));
 }
 
 .input-row input {

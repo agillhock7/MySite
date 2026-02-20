@@ -10,6 +10,32 @@ const props = defineProps<{
 }>();
 
 const heroContent = computed(() => props.content as HeroContent);
+const brandName = computed(() => {
+  const fromModule = props.moduleProps.brandName;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  return '';
+});
+
+const brandTagline = computed(() => {
+  const fromModule = props.moduleProps.brandTagline;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  return '';
+});
+
+const brandIconUrl = computed(() => {
+  const fromModule = props.moduleProps.brandIconUrl;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  return '';
+});
 const title = computed(() => {
   const fromModule = props.moduleProps.title;
   if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
@@ -87,6 +113,13 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 <template>
   <section class="hero-module" :class="`variant-${variant}`">
     <div class="hero-copy">
+      <div v-if="brandName || brandTagline" class="brand-lockup">
+        <img v-if="brandIconUrl" :src="brandIconUrl" alt="" loading="lazy" />
+        <p>
+          <strong v-if="brandName">{{ brandName }}</strong>
+          <span v-if="brandTagline">{{ brandTagline }}</span>
+        </p>
+      </div>
       <p class="eyebrow">{{ kicker }}</p>
       <h2>{{ title }}</h2>
       <p class="subtitle">{{ subtitle }}</p>
@@ -114,17 +147,51 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 
 <style scoped>
 .hero-module {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, white), var(--surface));
+  background:
+    radial-gradient(circle at 88% -10%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 44%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, white), var(--surface));
   border-radius: var(--radius);
   border: 1px solid var(--border);
   padding: 1.25rem;
   overflow: hidden;
   display: grid;
   gap: 1rem;
+  box-shadow: 0 18px 38px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .hero-copy {
   min-width: 0;
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.brand-lockup img {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.brand-lockup p {
+  margin: 0;
+  display: grid;
+  line-height: 1.03;
+}
+
+.brand-lockup strong {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.brand-lockup span {
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary));
 }
 
 .hero-visual {
@@ -173,6 +240,32 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
   box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.variant-neon {
+  background:
+    radial-gradient(circle at 18% -5%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 45%),
+    radial-gradient(circle at 100% 100%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 48%),
+    linear-gradient(130deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface));
+  border-width: 2px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 16px 34px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.variant-holo {
+  background:
+    linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--accent) 24%, transparent) 0%,
+      transparent 34%,
+      color-mix(in srgb, var(--accent) 14%, transparent) 34%,
+      transparent 64%,
+      color-mix(in srgb, var(--accent) 20%, transparent) 64%,
+      transparent 100%
+    ),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, white), var(--surface));
+  border-width: 2px;
+}
+
 .eyebrow {
   margin: 0;
   text-transform: uppercase;
@@ -206,9 +299,10 @@ h2 {
   border: 0;
   border-radius: 999px;
   padding: 0.55rem 0.95rem;
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 65%, #ffffff));
   color: #ffffff;
   text-decoration: none;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .shortcut-hint {

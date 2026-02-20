@@ -42,6 +42,27 @@ function firstStringModuleProp(propName: string): string {
   return '';
 }
 
+function firstStringArrayModuleProp(propName: string): string[] {
+  const modules = blueprint.value?.modules ?? [];
+  for (const module of modules) {
+    const value = module.props[propName];
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    const clean = value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (clean.length > 0) {
+      return clean;
+    }
+  }
+
+  return [];
+}
+
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
@@ -144,6 +165,30 @@ const designSignature = computed(() => {
   return signature.padStart(6, '0').slice(0, 6);
 });
 
+const brandName = computed(() => firstStringModuleProp('brandName') || 'Alexander Gill');
+const brandTagline = computed(() => firstStringModuleProp('brandTagline') || 'Power plays.');
+const brandBaseUrl = computed(() => firstStringModuleProp('brandBaseUrl') || 'https://alexanderjgill.com');
+const brandIconUrl = computed(
+  () => firstStringModuleProp('brandIconUrl') || 'https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png'
+);
+const brandSecondaryIconUrl = computed(
+  () =>
+    firstStringModuleProp('brandSecondaryIconUrl') ||
+    'https://alexanderjgill.com/wp-content/uploads/2025/09/cropped-darkhorsevirtueio_icon_1.png'
+);
+const brandSections = computed(() => {
+  const sections = firstStringArrayModuleProp('brandSections');
+  if (sections.length > 0) {
+    return sections.slice(0, 7);
+  }
+
+  return ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
+});
+
+function toBrandSectionUrl(section: string): string {
+  return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
+}
+
 const shellStyle = computed(() => {
   const radius = 12 + (visualSeed.value % 9);
   const panelBlur = 2 + (visualSeed.value % 6);
@@ -245,14 +290,25 @@ onMounted(async () => {
     :style="shellStyle"
   >
     <div class="backdrop-layer" aria-hidden="true">
+      <span class="scan-grid"></span>
+      <span class="noise-overlay"></span>
       <span class="shape shape-a"></span>
       <span class="shape shape-b"></span>
       <span class="shape shape-c"></span>
       <span class="shape shape-d"></span>
+      <span class="shape shape-e"></span>
     </div>
 
     <header class="shell-header">
       <div>
+        <a class="brand-lockup" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
+          <img class="brand-primary-icon" :src="brandIconUrl" alt="" loading="lazy" />
+          <span class="brand-lockup-text">
+            <strong>{{ brandName }}</strong>
+            <em>{{ brandTagline }}</em>
+          </span>
+          <img class="brand-secondary-icon" :src="brandSecondaryIconUrl" alt="" loading="lazy" />
+        </a>
         <p class="eyebrow">
           {{ experienceLabel }} · {{ shellProfile }} profile · Signature {{ designSignature }} · {{ BUILD_TAG }}
         </p>
@@ -266,6 +322,19 @@ onMounted(async () => {
         <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
       </div>
     </header>
+
+    <section class="brand-rail" aria-label="Brand sections">
+      <a
+        v-for="section in brandSections"
+        :key="section"
+        class="brand-section-chip"
+        :href="toBrandSectionUrl(section)"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {{ section }}
+      </a>
+    </section>
 
     <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
       <template v-for="item in navItems" :key="item.action">
@@ -419,11 +488,34 @@ onMounted(async () => {
   z-index: 0;
 }
 
+.scan-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background:
+    linear-gradient(transparent 96%, color-mix(in srgb, var(--accent) 22%, transparent) 100%),
+    linear-gradient(90deg, transparent 96%, color-mix(in srgb, var(--accent) 18%, transparent) 100%);
+  background-size: 100% 34px, 34px 100%;
+  mask-image: radial-gradient(circle at 50% 35%, black, transparent 85%);
+}
+
+.noise-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0.1;
+  background-image:
+    radial-gradient(circle at 16% 22%, rgba(255, 255, 255, 0.18) 0, transparent 1.5px),
+    radial-gradient(circle at 81% 39%, rgba(255, 255, 255, 0.16) 0, transparent 1.5px),
+    radial-gradient(circle at 40% 74%, rgba(255, 255, 255, 0.12) 0, transparent 1.5px);
+  background-size: 170px 170px, 150px 150px, 130px 130px;
+}
+
 .shape {
   position: absolute;
   border-radius: 999px;
   filter: blur(0.5px);
   opacity: 0.35;
+  animation: drift 18s ease-in-out infinite alternate;
 }
 
 .shape-a {
@@ -458,22 +550,40 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.shape-e {
+  width: 520px;
+  height: 220px;
+  top: 32%;
+  left: 18%;
+  border-radius: 30%;
+  background: linear-gradient(
+    95deg,
+    color-mix(in srgb, var(--accent) 24%, transparent),
+    color-mix(in srgb, var(--accent) 8%, transparent)
+  );
+  filter: blur(22px);
+  opacity: 0.35;
+  animation-duration: 22s;
+}
+
 .mode-light {
-  --bg: linear-gradient(160deg, #f6f8fc, #edf2ff 62%, #f6f8fc);
+  --bg: linear-gradient(155deg, #f4f7ff, #e9f3ff 42%, #f4f7ff 100%);
   --surface: #ffffff;
-  --surface-muted: #eef4ff;
+  --surface-muted: #e9f1ff;
   --text-primary: #111827;
   --text-secondary: #4b5563;
   --border: #d1d5db;
 }
 
 .mode-dark {
-  --bg: linear-gradient(155deg, #070d1a, #0a1222 54%, #0f1b31);
-  --surface: #11182d;
-  --surface-muted: #1a2540;
+  --bg:
+    radial-gradient(circle at 84% -12%, rgba(22, 199, 207, 0.25), transparent 38%),
+    linear-gradient(160deg, #050b18, #081225 44%, #0c1a32 100%);
+  --surface: #111a2f;
+  --surface-muted: #16233f;
   --text-primary: #e5e7eb;
   --text-secondary: #94a3b8;
-  --border: #2c3956;
+  --border: #2a3a5f;
 }
 
 .tone-grotesk {
@@ -570,9 +680,49 @@ onMounted(async () => {
   align-items: flex-start;
   padding: 1rem;
   border-radius: calc(var(--radius) + 2px);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  background:
+    linear-gradient(
+      140deg,
+      color-mix(in srgb, var(--accent) 8%, var(--surface)),
+      color-mix(in srgb, var(--surface) 86%, transparent)
+    );
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   backdrop-filter: blur(var(--panel-blur));
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: inherit;
+  text-decoration: none;
+  margin-bottom: 0.45rem;
+}
+
+.brand-primary-icon,
+.brand-secondary-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  object-fit: cover;
+}
+
+.brand-lockup-text {
+  display: grid;
+  line-height: 1.02;
+}
+
+.brand-lockup-text strong {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.brand-lockup-text em {
+  font-style: normal;
+  font-size: 0.72rem;
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-secondary));
 }
 
 .eyebrow {
@@ -608,11 +758,38 @@ h1 {
 
 .secondary-btn,
 .reset-btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--accent) 54%, var(--border));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background:
+    linear-gradient(
+      140deg,
+      color-mix(in srgb, var(--accent) 18%, var(--surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--surface))
+    );
   color: var(--text-primary);
   padding: 0.55rem 0.95rem;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.brand-rail {
+  position: relative;
+  z-index: 2;
+  margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.brand-section-chip {
+  text-decoration: none;
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface));
+  padding: 0.32rem 0.65rem;
 }
 
 .shell-nav {
@@ -627,11 +804,17 @@ h1 {
 .nav-item {
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  background:
+    linear-gradient(
+      140deg,
+      color-mix(in srgb, var(--accent) 11%, var(--surface)),
+      color-mix(in srgb, var(--surface) 88%, transparent)
+    );
   color: var(--text-primary);
   padding: 0.48rem 0.82rem;
   text-decoration: none;
   font-size: 0.86rem;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .experience-scene {
@@ -721,6 +904,15 @@ h1 {
 .experience-0 .shape-a,
 .experience-0 .shape-c {
   opacity: 0.44;
+}
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(0, -12px, 0) scale(1.04);
+  }
 }
 
 @keyframes rise-in {

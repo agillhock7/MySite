@@ -84,10 +84,13 @@ const visibleItems = computed(() => {
 
 <style scoped>
 .module-card {
-  background: var(--surface);
+  background:
+    radial-gradient(circle at 100% -18%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
+    var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.15rem;
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 h3 {
@@ -105,9 +108,14 @@ ul {
 li {
   border-radius: 12px;
   padding: 0.78rem;
-  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  background:
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--accent) 8%, var(--surface-muted)),
+      color-mix(in srgb, var(--surface-muted) 76%, var(--surface))
+    );
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
-  transition: transform 180ms ease, border-color 180ms ease;
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
 .thumb {
@@ -122,6 +130,7 @@ li {
 li:hover {
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 p {
@@ -164,5 +173,21 @@ p {
   border-width: 2px;
   background: var(--surface);
   box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.variant-neon li {
+  border-width: 2px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 14%, var(--surface)),
+      color-mix(in srgb, var(--accent) 4%, var(--surface-muted))
+    );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.variant-river li {
+  border-left: 4px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 </style>

@@ -772,11 +772,23 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     if (isset($snapshot['posts'][0]) && is_array($snapshot['posts'][0])) {
         $heroImageFallback = trim((string) (($snapshot['posts'][0]['imageUrl'] ?? '') ?: ''));
     }
+    $siteInfo = is_array($snapshot['site'] ?? null) ? $snapshot['site'] : [];
+    $brandName = trim((string) ($siteInfo['name'] ?? ''));
+    if ($brandName === '') {
+        $brandName = 'Alexander Gill';
+    }
+    $brandTagline = trim((string) ($siteInfo['description'] ?? ''));
+    if ($brandTagline === '') {
+        $brandTagline = 'Power plays.';
+    }
+    $brandSections = ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
+    $brandIconUrl = 'https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png';
+    $brandSecondaryIconUrl = 'https://alexanderjgill.com/wp-content/uploads/2025/09/cropped-darkhorsevirtueio_icon_1.png';
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
-    $heroVariants = ['default', 'spotlight', 'split', 'poster', 'frame'];
-    $gridVariants = ['default', 'magazine', 'mosaic', 'cards'];
-    $listVariants = ['default', 'timeline', 'checklist', 'stacked'];
+    $heroVariants = ['default', 'spotlight', 'split', 'poster', 'frame', 'neon', 'holo'];
+    $gridVariants = ['default', 'magazine', 'mosaic', 'cards', 'neon', 'zigzag'];
+    $listVariants = ['default', 'timeline', 'checklist', 'stacked', 'neon', 'river'];
     $gridColumns = [2, 2, 3];
     $shellProfiles = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
     $typographyProfiles = ['grotesk', 'literary', 'display', 'mono'];
@@ -798,6 +810,12 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
         $props['typographyProfile'] = trim((string) ($props['typographyProfile'] ?? '')) !== '' ? $props['typographyProfile'] : $typographyProfile;
         $props['motionProfile'] = trim((string) ($props['motionProfile'] ?? '')) !== '' ? $props['motionProfile'] : $motionProfile;
         $props['signature'] = trim((string) ($props['signature'] ?? '')) !== '' ? $props['signature'] : $shellSignature;
+        $props['brandName'] = trim((string) ($props['brandName'] ?? '')) !== '' ? $props['brandName'] : $brandName;
+        $props['brandTagline'] = trim((string) ($props['brandTagline'] ?? '')) !== '' ? $props['brandTagline'] : $brandTagline;
+        $props['brandIconUrl'] = trim((string) ($props['brandIconUrl'] ?? '')) !== '' ? $props['brandIconUrl'] : $brandIconUrl;
+        $props['brandSecondaryIconUrl'] = trim((string) ($props['brandSecondaryIconUrl'] ?? '')) !== '' ? $props['brandSecondaryIconUrl'] : $brandSecondaryIconUrl;
+        $props['brandBaseUrl'] = trim((string) ($props['brandBaseUrl'] ?? '')) !== '' ? $props['brandBaseUrl'] : ((string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'));
+        $props['brandSections'] = is_array($props['brandSections'] ?? null) ? $props['brandSections'] : $brandSections;
 
         if ($type === 'Hero') {
             $props['variant'] = $heroVariants[seeded_value($visitorId, 'hero-variant', count($heroVariants))];
@@ -808,7 +826,7 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
                 $props['title'] = $goal !== '' ? $goal : 'Adaptive experience for alexanderjgill.com';
             }
             if (trim((string) ($props['subtitle'] ?? '')) === '') {
-                $props['subtitle'] = 'This shell prioritizes ' . strtolower((string) ($conversion['primaryActionLabel'] ?? 'the next conversion action')) . '.';
+                $props['subtitle'] = $brandTagline . ' This shell prioritizes ' . strtolower((string) ($conversion['primaryActionLabel'] ?? 'the next conversion action')) . '.';
             }
             $props['ctaUrl'] = sanitize_action_url(
                 (string) ($props['ctaUrl'] ?? ''),
@@ -1189,10 +1207,11 @@ Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
 Design a distinctive front-end site experience, not a dashboard.
 Treat modules as website sections with intentional hierarchy, flow, tone, and high visual impact.
-Design for wow-factor editorial blog feel while staying readable.
+Design for a futuristic wow-factor editorial blog feel while staying readable.
 Use post-driven storytelling; do not frame pages as if they are posts.
 Use onboarding transcript as the primary personalization signal.
 Design around the person (identity, interests, emotional tone), not generic site navigation.
+Reflect brand cues from alexanderjgill.com: signature tone \"Power plays\", and section DNA: Work, Lab, Read, Bio, Markets.
 Design module ordering and shortcut labels around visitor intent and alexanderjgill.com content discovery.
 Prioritize pathways like latest posts, featured stories, Work, Read, Bio, Contact, and Main Site navigation.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.

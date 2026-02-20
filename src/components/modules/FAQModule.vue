@@ -36,10 +36,13 @@ const items = computed(() => {
 
 <style scoped>
 .module-card {
-  background: var(--surface);
+  background:
+    radial-gradient(circle at 90% -26%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 44%),
+    var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1rem;
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
 h3 {
@@ -54,14 +57,20 @@ h3 {
 
 details {
   border-radius: 10px;
-  background: var(--surface-muted);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--accent) 8%, var(--surface-muted)),
+      color-mix(in srgb, var(--surface-muted) 76%, var(--surface))
+    );
   padding: 0.65rem;
   border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--border));
-  transition: border-color 160ms ease;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 details[open] {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  box-shadow: 0 10px 20px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 summary {

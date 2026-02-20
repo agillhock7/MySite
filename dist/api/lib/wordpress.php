@@ -142,6 +142,11 @@ function mysite_wp_fetch_snapshot(array $config): array
         return [
             'available' => false,
             'baseUrl' => $baseUrl,
+            'site' => [
+                'name' => 'Alexander Gill',
+                'description' => 'Power plays.',
+                'home' => $baseUrl
+            ],
             'fetchedAt' => gmdate('c'),
             'posts' => [],
             'categories' => [],
@@ -178,11 +183,39 @@ function mysite_wp_fetch_snapshot(array $config): array
         $apiBase . '/tags?per_page=' . $maxTags . '&_fields=id,name,count',
         $timeout
     );
+    $siteRes = mysite_wp_fetch_json(
+        $baseUrl . '/wp-json',
+        $timeout
+    );
 
     $errors = [];
     foreach ([$postsRes, $categoriesRes, $tagsRes] as $res) {
         if (!$res['ok']) {
             $errors[] = (string) $res['error'];
+        }
+    }
+
+    $siteInfo = [
+        'name' => 'Alexander Gill',
+        'description' => 'Power plays.',
+        'home' => $baseUrl
+    ];
+    if (is_array($siteRes['data'] ?? null)) {
+        $siteData = $siteRes['data'];
+        $siteName = trim(mysite_wp_strip_text((string) ($siteData['name'] ?? '')));
+        $siteDescription = trim(mysite_wp_strip_text((string) ($siteData['description'] ?? '')));
+        $siteHome = trim((string) ($siteData['home'] ?? $baseUrl));
+
+        if ($siteName !== '') {
+            $siteInfo['name'] = $siteName;
+        }
+
+        if ($siteDescription !== '') {
+            $siteInfo['description'] = $siteDescription;
+        }
+
+        if ($siteHome !== '') {
+            $siteInfo['home'] = $siteHome;
         }
     }
 
@@ -235,6 +268,7 @@ function mysite_wp_fetch_snapshot(array $config): array
     return [
         'available' => count($posts) > 0,
         'baseUrl' => $baseUrl,
+        'site' => $siteInfo,
         'fetchedAt' => gmdate('c'),
         'posts' => $posts,
         'categories' => $categories,
@@ -299,7 +333,11 @@ function mysite_wp_gap_suggestions(array $snapshot): array
 
 function mysite_wp_conversion_profile(array $intent, array $snapshot): array
 {
-    $brandName = 'Alexander J Gill';
+    $siteInfo = is_array($snapshot['site'] ?? null) ? $snapshot['site'] : [];
+    $brandName = trim((string) ($siteInfo['name'] ?? ''));
+    if ($brandName === '') {
+        $brandName = 'Alexander Gill';
+    }
     $siteRootUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
     $posts = is_array($snapshot['posts'] ?? null) ? $snapshot['posts'] : [];
 
@@ -441,6 +479,15 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 {
     $posts = $snapshot['posts'] ?? [];
     $conversionProfile = mysite_wp_conversion_profile($intent, $snapshot);
+    $siteInfo = is_array($snapshot['site'] ?? null) ? $snapshot['site'] : [];
+    $brandName = trim((string) ($siteInfo['name'] ?? ''));
+    if ($brandName === '') {
+        $brandName = 'Alexander Gill';
+    }
+    $brandTagline = trim((string) ($siteInfo['description'] ?? 'Power plays.'));
+    if ($brandTagline === '') {
+        $brandTagline = 'Power plays.';
+    }
 
     $heroTitle = (string) ($conversionProfile['heroTitle'] ?? 'Explore tailored content from alexanderjgill.com');
     $heroSubtitle = (string) ($conversionProfile['heroSubtitle'] ?? 'Personalized from your intent and live WordPress content.');
@@ -452,6 +499,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         $heroTitle = $heroTitle . ' · ' . (string) $posts[0]['title'];
         $heroImageUrl = trim((string) (($posts[0]['imageUrl'] ?? '') ?: ''));
     }
+
+    $heroSubtitle = $brandTagline . ' ' . $heroSubtitle;
 
     $gridItems = [];
     foreach (array_slice($posts, 0, 6) as $post) {
@@ -519,6 +568,26 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 
     $actions = [
         [
+            'label' => 'Work',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com') . '/#work'
+        ],
+        [
+            'label' => 'Lab',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com') . '/#lab'
+        ],
+        [
+            'label' => 'Read',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com') . '/#read'
+        ],
+        [
+            'label' => 'Bio',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com') . '/#bio'
+        ],
+        [
+            'label' => 'Markets',
+            'action' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com') . '/#markets'
+        ],
+        [
             'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site'),
             'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://alexanderjgill.com')
         ],
@@ -566,7 +635,9 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
             'subtitle' => $heroSubtitle,
             'ctaLabel' => $heroCtaLabel,
             'ctaUrl' => $heroCtaUrl,
-            'imageUrl' => $heroImageUrl
+            'imageUrl' => $heroImageUrl,
+            'brandName' => $brandName,
+            'brandTagline' => $brandTagline
         ],
         'featuredGrid' => [
             'items' => $gridItems
@@ -579,6 +650,11 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         ],
         'faqGeneral' => [
             'items' => $faqItems
+        ],
+        'brandMeta' => [
+            'name' => $brandName,
+            'tagline' => $brandTagline,
+            'sections' => ['Work', 'Lab', 'Read', 'Bio', 'Markets']
         ]
     ];
 }
@@ -607,6 +683,10 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, ar
 
     return [
         'baseUrl' => (string) ($snapshot['baseUrl'] ?? ''),
+        'site' => $snapshot['site'] ?? [
+            'name' => 'Alexander Gill',
+            'description' => 'Power plays.'
+        ],
         'fetchedAt' => (string) ($snapshot['fetchedAt'] ?? gmdate('c')),
         'postCount' => count($snapshot['posts'] ?? []),
         'categoryCount' => count($snapshot['categories'] ?? []),
