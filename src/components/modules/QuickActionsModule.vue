@@ -56,7 +56,7 @@ function runInlineAction(action: string): void {
   <section class="module-card">
     <h3>{{ title }}</h3>
     <div class="actions-grid">
-      <template v-for="action in actions" :key="action.action">
+      <template v-for="(action, idx) in actions" :key="action.action">
         <a
           v-if="isUrlAction(action.action)"
           class="action-btn"
@@ -64,12 +64,16 @@ function runInlineAction(action: string): void {
           target="_blank"
           rel="noopener noreferrer"
         >
+          <em>{{ (idx + 1).toString().padStart(2, '0') }}</em>
           <span>{{ action.label }}</span>
           <small>{{ formatActionHint(action.action) }}</small>
+          <strong class="arrow">↗</strong>
         </a>
         <button v-else type="button" class="action-btn" @click="runInlineAction(action.action)">
+          <em>{{ (idx + 1).toString().padStart(2, '0') }}</em>
           <span>{{ action.label }}</span>
           <small>{{ formatActionHint(action.action) }}</small>
+          <strong class="arrow">→</strong>
         </button>
       </template>
     </div>
@@ -103,11 +107,36 @@ h3 {
   text-align: left;
   padding: 0.65rem 0.75rem;
   display: grid;
-  gap: 0.2rem;
+  gap: 0.22rem;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
   text-decoration: none;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+
+em {
+  font-style: normal;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+}
+
+span {
+  font-weight: 600;
 }
 
 small {
+  grid-column: 2 / 4;
   color: var(--text-secondary);
+}
+
+.arrow {
+  font-weight: 500;
+  color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
 }
 </style>
