@@ -1,0 +1,7 @@
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/$USER/public_html
+    - /bin/bash -lc 'if [ -f package-lock.json ]; then npm ci; else npm install; fi'
+    - npm run build
+    - /bin/bash -lc 'mkdir -p "$DEPLOYPATH"'
+    - /bin/bash -lc 'if command -v rsync >/dev/null 2>&1; then rsync -av --delete dist/ "$DEPLOYPATH"/; else cp -r dist/* "$DEPLOYPATH"/; fi'
