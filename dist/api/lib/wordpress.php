@@ -73,7 +73,6 @@ function mysite_wp_fetch_snapshot(array $config): array
             'baseUrl' => $baseUrl,
             'fetchedAt' => gmdate('c'),
             'posts' => [],
-            'pages' => [],
             'categories' => [],
             'tags' => [],
             'errors' => ['WordPress integration disabled']
@@ -89,7 +88,6 @@ function mysite_wp_fetch_snapshot(array $config): array
     }
 
     $maxPosts = max(1, min(20, (int) ($wp['max_posts'] ?? 6)));
-    $maxPages = max(1, min(20, (int) ($wp['max_pages'] ?? 6)));
     $maxCategories = max(1, min(50, (int) ($wp['max_categories'] ?? 12)));
     $maxTags = max(1, min(50, (int) ($wp['max_tags'] ?? 12)));
 
@@ -97,11 +95,6 @@ function mysite_wp_fetch_snapshot(array $config): array
 
     $postsRes = mysite_wp_fetch_json(
         $apiBase . '/posts?per_page=' . $maxPosts . '&_fields=id,link,title,excerpt,date,modified,categories,tags',
-        $timeout
-    );
-
-    $pagesRes = mysite_wp_fetch_json(
-        $apiBase . '/pages?per_page=' . $maxPages . '&_fields=id,link,title,excerpt,date,modified',
         $timeout
     );
 
@@ -116,7 +109,7 @@ function mysite_wp_fetch_snapshot(array $config): array
     );
 
     $errors = [];
-    foreach ([$postsRes, $pagesRes, $categoriesRes, $tagsRes] as $res) {
+    foreach ([$postsRes, $categoriesRes, $tagsRes] as $res) {
         if (!$res['ok']) {
             $errors[] = (string) $res['error'];
         }
@@ -138,25 +131,6 @@ function mysite_wp_fetch_snapshot(array $config): array
             'link' => (string) ($post['link'] ?? ''),
             'date' => (string) ($post['date'] ?? ''),
             'modified' => (string) ($post['modified'] ?? '')
-        ];
-    }
-
-    $pages = [];
-    foreach (($pagesRes['data'] ?? []) as $page) {
-        if (!is_array($page)) {
-            continue;
-        }
-
-        $title = mysite_wp_strip_text((string) (($page['title']['rendered'] ?? '') ?: 'Untitled'));
-        $excerpt = mysite_wp_strip_text((string) (($page['excerpt']['rendered'] ?? '') ?: ''));
-
-        $pages[] = [
-            'id' => (int) ($page['id'] ?? 0),
-            'title' => $title,
-            'excerpt' => $excerpt,
-            'link' => (string) ($page['link'] ?? ''),
-            'date' => (string) ($page['date'] ?? ''),
-            'modified' => (string) ($page['modified'] ?? '')
         ];
     }
 
@@ -187,11 +161,10 @@ function mysite_wp_fetch_snapshot(array $config): array
     }
 
     return [
-        'available' => count($posts) > 0 || count($pages) > 0,
+        'available' => count($posts) > 0,
         'baseUrl' => $baseUrl,
         'fetchedAt' => gmdate('c'),
         'posts' => $posts,
-        'pages' => $pages,
         'categories' => $categories,
         'tags' => $tags,
         'errors' => $errors
@@ -205,11 +178,6 @@ function mysite_wp_gap_suggestions(array $snapshot): array
     foreach (($snapshot['posts'] ?? []) as $post) {
         $searchCorpus[] = strtolower((string) ($post['title'] ?? ''));
         $searchCorpus[] = strtolower((string) ($post['excerpt'] ?? ''));
-    }
-
-    foreach (($snapshot['pages'] ?? []) as $page) {
-        $searchCorpus[] = strtolower((string) ($page['title'] ?? ''));
-        $searchCorpus[] = strtolower((string) ($page['excerpt'] ?? ''));
     }
 
     foreach (($snapshot['categories'] ?? []) as $category) {
@@ -321,7 +289,7 @@ function mysite_wp_conversion_profile(array $intent): array
         'content_learning' => [
             'intentType' => 'content_learning',
             'heroTitle' => 'Explore practical guidance from ' . $brandName,
-            'heroSubtitle' => 'Learning-focused visitors can read first, then branch into portfolio and bio pages.',
+            'heroSubtitle' => 'Learning-focused visitors can read first, then branch into related posts and project stories.',
             'heroCtaLabel' => 'Read Latest Insights',
             'heroCtaUrl' => $readUrl,
             'primaryActionLabel' => 'Open Reading Hub',
@@ -357,41 +325,26 @@ function mysite_wp_conversion_profile(array $intent): array
     return $profiles[$intentType] ?? $profiles[$fallbackKey];
 }
 
-function mysite_wp_pick_priority_pages(array $snapshot): array
+function mysite_wp_pick_priority_posts(array $snapshot): array
 {
-    $pages = $snapshot['pages'] ?? [];
-    $priorityKeywords = [
-        'work',
-        'lab',
-        'read',
-        'bio',
-        'market',
-        'service',
-        'pricing',
-        'contact'
-    ];
-
+    $posts = $snapshot['posts'] ?? [];
     $selected = [];
-
-    foreach ($priorityKeywords as $keyword) {
-        foreach ($pages as $page) {
-            $title = strtolower((string) ($page['title'] ?? ''));
-            if (strpos($title, $keyword) === false) {
-                continue;
-            }
-
-            $link = (string) ($page['link'] ?? '');
-            if ($link === '') {
-                continue;
-            }
-
-            $selected[$link] = [
-                'label' => (string) ($page['title'] ?? ucfirst($keyword)),
-                'action' => $link
-            ];
-
-            break;
+    foreach (array_slice($posts, 0, 6) as $post) {
+        $link = (string) ($post['link'] ?? '');
+        if ($link === '') {
+            continue;
         }
+
+        $title = trim((string) ($post['title'] ?? 'Latest post'));
+        if ($title === '') {
+            $title = 'Latest post';
+        }
+
+        $label = strlen($title) > 42 ? substr($title, 0, 39) . '...' : $title;
+        $selected[$link] = [
+            'label' => $label,
+            'action' => $link
+        ];
     }
 
     return array_values($selected);
@@ -400,7 +353,6 @@ function mysite_wp_pick_priority_pages(array $snapshot): array
 function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array $intent): array
 {
     $posts = $snapshot['posts'] ?? [];
-    $pages = $snapshot['pages'] ?? [];
     $conversionProfile = mysite_wp_conversion_profile($intent);
 
     $heroTitle = (string) ($conversionProfile['heroTitle'] ?? 'Explore tailored content from alexanderjgill.com');
@@ -429,22 +381,31 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         ];
     }
 
-    $listItems = [
-        [
-            'title' => 'Primary journey path',
-            'detail' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site')
-        ],
-        [
-            'title' => 'Secondary journey path',
-            'detail' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Read Latest Insights')
-        ]
-    ];
+    $listItems = [];
+    foreach (array_slice($posts, 0, 6) as $post) {
+        $title = (string) ($post['title'] ?? 'Untitled');
+        $excerpt = (string) ($post['excerpt'] ?? '');
+        $dateRaw = (string) ($post['date'] ?? '');
+        $dateLabel = '';
+        if ($dateRaw !== '') {
+            $timestamp = strtotime($dateRaw);
+            if ($timestamp !== false) {
+                $dateLabel = gmdate('M j, Y', $timestamp);
+            }
+        }
 
-    foreach (array_slice($pages, 0, 5) as $page) {
         $listItems[] = [
-            'title' => (string) ($page['title'] ?? 'Untitled'),
-            'detail' => (string) (($page['excerpt'] ?? '') !== '' ? $page['excerpt'] : 'No page summary available.'),
-            'href' => (string) ($page['link'] ?? '')
+            'title' => $title,
+            'detail' => $excerpt !== '' ? $excerpt : ('Published ' . ($dateLabel !== '' ? $dateLabel : 'recently')),
+            'href' => (string) ($post['link'] ?? '')
+        ];
+    }
+
+    if (count($listItems) === 0) {
+        $listItems[] = [
+            'title' => 'No recent posts discovered',
+            'detail' => 'Publish posts in WordPress to populate this editorial list.',
+            'href' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')
         ];
     }
 
@@ -470,8 +431,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         ]
     ];
 
-    foreach (mysite_wp_pick_priority_pages($snapshot) as $pageAction) {
-        $actions[] = $pageAction;
+    foreach (mysite_wp_pick_priority_posts($snapshot) as $postAction) {
+        $actions[] = $postAction;
         if (count($actions) >= 8) {
             break;
         }
@@ -527,11 +488,6 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, ar
         $postTitles[] = (string) ($post['title'] ?? '');
     }
 
-    $pageTitles = [];
-    foreach (array_slice(($snapshot['pages'] ?? []), 0, 8) as $page) {
-        $pageTitles[] = (string) ($page['title'] ?? '');
-    }
-
     $categoryNames = [];
     foreach (array_slice(($snapshot['categories'] ?? []), 0, 12) as $category) {
         $categoryNames[] = (string) ($category['name'] ?? '');
@@ -546,10 +502,8 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, ar
         'baseUrl' => (string) ($snapshot['baseUrl'] ?? ''),
         'fetchedAt' => (string) ($snapshot['fetchedAt'] ?? gmdate('c')),
         'postCount' => count($snapshot['posts'] ?? []),
-        'pageCount' => count($snapshot['pages'] ?? []),
         'categoryCount' => count($snapshot['categories'] ?? []),
         'postTitles' => $postTitles,
-        'pageTitles' => $pageTitles,
         'categoryNames' => $categoryNames,
         'gapTopics' => $gapTopics,
         'conversionProfile' => mysite_wp_conversion_profile($intent),

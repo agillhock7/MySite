@@ -100,6 +100,7 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
   border-radius: var(--radius);
   border: 1px solid var(--border);
   padding: 1.25rem;
+  overflow: hidden;
 }
 
 .variant-spotlight {
@@ -119,6 +120,20 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
     );
 }
 
+.variant-poster {
+  background:
+    radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 40%),
+    radial-gradient(circle at 100% 80%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 38%),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), var(--surface));
+  border-width: 2px;
+}
+
+.variant-frame {
+  background: var(--surface);
+  border-width: 2px;
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .eyebrow {
   margin: 0;
   text-transform: uppercase;
@@ -129,7 +144,8 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 
 h2 {
   margin: 0.5rem 0;
-  font-size: clamp(1.3rem, 4.4vw, 2rem);
+  font-size: clamp(1.5rem, 5vw, 2.45rem);
+  line-height: 1.08;
 }
 
 .subtitle {

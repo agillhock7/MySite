@@ -90,6 +90,8 @@ const modeClass = computed(() => {
 
 const toneClass = computed(() => `tone-${visualSeed.value % 4}`);
 const archetypeClass = computed(() => `archetype-${visualSeed.value % 5}`);
+const layoutClass = computed(() => `layout-${visualSeed.value % 4}`);
+const navStyleClass = computed(() => `navstyle-${visualSeed.value % 3}`);
 const archetypeLabel = computed(() => {
   const labels = ['Editorial', 'Atlas', 'Studio', 'Signal', 'Prism'];
   return labels[visualSeed.value % labels.length];
@@ -177,9 +179,15 @@ onMounted(async () => {
   <main
     v-else-if="blueprint"
     class="shell"
-    :class="[modeClass, toneClass, archetypeClass]"
+    :class="[modeClass, toneClass, archetypeClass, layoutClass, navStyleClass]"
     :style="shellStyle"
   >
+    <div class="backdrop-layer" aria-hidden="true">
+      <span class="shape shape-a"></span>
+      <span class="shape shape-b"></span>
+      <span class="shape shape-c"></span>
+    </div>
+
     <header class="shell-header">
       <div>
         <p class="eyebrow">
@@ -218,6 +226,7 @@ onMounted(async () => {
         :key="item.module.id"
         class="module-slot"
         :class="[`slot-${item.index + 1}`, `slot-type-${item.module.type}`]"
+        :style="{ '--stagger': `${item.index * 70}ms` }"
       >
         <ModuleRenderer :module="item.module" :shortcuts="blueprint.shortcuts" />
       </article>
@@ -243,6 +252,8 @@ onMounted(async () => {
 }
 
 .shell {
+  position: relative;
+  overflow: hidden;
   min-height: 100vh;
   padding: 1rem;
   font-family: var(--shell-font, 'IBM Plex Sans', 'Segoe UI', sans-serif);
@@ -250,6 +261,44 @@ onMounted(async () => {
     radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--accent) 25%, transparent), transparent 38%),
     radial-gradient(circle at 85% 2%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 33%),
     var(--bg);
+}
+
+.backdrop-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.shape {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(0.5px);
+  opacity: 0.35;
+}
+
+.shape-a {
+  width: 420px;
+  height: 420px;
+  top: -140px;
+  left: -80px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.shape-b {
+  width: 320px;
+  height: 320px;
+  top: 12%;
+  right: -120px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.shape-c {
+  width: 280px;
+  height: 280px;
+  bottom: -120px;
+  left: 32%;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 .mode-light {
@@ -295,6 +344,8 @@ onMounted(async () => {
 }
 
 .shell-header {
+  position: relative;
+  z-index: 1;
   display: flex;
   gap: 1rem;
   justify-content: space-between;
@@ -347,6 +398,8 @@ h1 {
 }
 
 .shell-nav {
+  position: relative;
+  z-index: 1;
   margin-top: 1rem;
   display: flex;
   gap: 0.6rem;
@@ -368,7 +421,20 @@ h1 {
   text-decoration: none;
 }
 
+.navstyle-1 .nav-item {
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.navstyle-2 .nav-item {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.78rem;
+}
+
 .module-stack {
+  position: relative;
+  z-index: 1;
   margin-top: 1.1rem;
   display: grid;
   gap: var(--module-gap);
@@ -384,6 +450,8 @@ h1 {
 
 .module-slot {
   position: relative;
+  animation: rise-in 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: var(--stagger, 0ms);
 }
 
 .slot-type-Hero :deep(.hero-module) {
@@ -444,6 +512,17 @@ h1 {
   );
 }
 
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (min-width: 960px) {
   .shell {
     padding: 1.4rem 2.2rem 2.3rem;
@@ -462,12 +541,69 @@ h1 {
   }
 
   .module-stack {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
 
-  .slot-type-Hero,
-  .slot-type-FAQ {
+  .module-slot {
+    grid-column: span 6;
+  }
+
+  .layout-0 .slot-type-Hero,
+  .layout-0 .slot-type-FAQ {
     grid-column: 1 / -1;
+  }
+
+  .layout-1 .slot-1 {
+    grid-column: 1 / -1;
+  }
+
+  .layout-1 .slot-2 {
+    grid-column: 1 / span 8;
+  }
+
+  .layout-1 .slot-3 {
+    grid-column: 9 / -1;
+  }
+
+  .layout-1 .slot-4 {
+    grid-column: 1 / span 5;
+  }
+
+  .layout-1 .slot-5 {
+    grid-column: 6 / -1;
+  }
+
+  .layout-2 .slot-1 {
+    grid-column: 1 / span 7;
+  }
+
+  .layout-2 .slot-2 {
+    grid-column: 8 / -1;
+  }
+
+  .layout-2 .slot-3,
+  .layout-2 .slot-4 {
+    grid-column: span 6;
+  }
+
+  .layout-2 .slot-5 {
+    grid-column: 1 / -1;
+  }
+
+  .layout-3 .slot-1,
+  .layout-3 .slot-4,
+  .layout-3 .slot-7 {
+    grid-column: 1 / -1;
+  }
+
+  .layout-3 .slot-2,
+  .layout-3 .slot-5 {
+    grid-column: span 5;
+  }
+
+  .layout-3 .slot-3,
+  .layout-3 .slot-6 {
+    grid-column: span 7;
   }
 }
 </style>

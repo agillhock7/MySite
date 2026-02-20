@@ -450,7 +450,7 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     $conversion = mysite_wp_conversion_profile($intent);
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
-    $heroVariants = ['default', 'spotlight', 'split'];
+    $heroVariants = ['default', 'spotlight', 'split', 'poster', 'frame'];
     $gridVariants = ['default', 'magazine', 'mosaic', 'cards'];
     $listVariants = ['default', 'timeline', 'checklist', 'stacked'];
     $gridColumns = [2, 2, 3];
@@ -545,7 +545,7 @@ function augment_modules_for_diversity(array $modules, array $intent, string $vi
             'type' => 'ContentList',
             'props' => [
                 'title' => 'Secondary reading path',
-                'intro' => 'An alternate route through related pages and priorities.',
+                'intro' => 'An alternate route through related posts and priorities.',
                 'variant' => 'checklist',
                 'offset' => 1,
                 'limit' => 5
@@ -686,9 +686,11 @@ You generate UI Blueprint JSON only.
 Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
 Design a distinctive front-end site experience, not a dashboard.
-Treat modules as website sections with intentional hierarchy, flow, and tone.
+Treat modules as website sections with intentional hierarchy, flow, tone, and high visual impact.
+Design for wow-factor editorial blog feel while staying readable.
+Use post-driven storytelling; do not frame pages as if they are posts.
 Design module ordering and shortcut labels around visitor intent and alexanderjgill.com content discovery.
-Prioritize pathways like Work, Read, Bio, Contact, and Main Site navigation.
+Prioritize pathways like latest posts, featured stories, Work, Read, Bio, Contact, and Main Site navigation.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
 Each visitor has a design seed. Use it to make the layout feel unique, not generic.
 PROMPT;
@@ -699,6 +701,7 @@ $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES)
     "\nDesign iteration:\n" . (string) $variantNonce .
     "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
     "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
+    "\nTreat posts as primary content stream for sections." .
     "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
 
 $payload = [

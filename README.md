@@ -45,7 +45,6 @@ return [
     'base_url' => 'https://alexanderjgill.com',
     'timeout_seconds' => 12,
     'max_posts' => 6,
-    'max_pages' => 6,
     'max_categories' => 12,
     'max_tags' => 12
   ],
@@ -81,6 +80,7 @@ Output:
 Behavior:
 
 - Intent is classified into journey profiles (site discovery, portfolio review, content learning, bio profile, contact start)
+- Content modules are post-first (pages are not blended in as post feed cards)
 - CTAs are personalized toward alexanderjgill.com page pathways (Work, Read, Bio, Contact, Main Site)
 - Module ordering/variant props are post-processed with visitor seed so the shell is not a generic dashboard clone
 

@@ -17,7 +17,6 @@ return [
         'base_url' => 'https://alexanderjgill.com',
         'timeout_seconds' => 12,
         'max_posts' => 6,
-        'max_pages' => 6,
         'max_categories' => 12,
         'max_tags' => 12
     ],

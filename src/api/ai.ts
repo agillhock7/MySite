@@ -228,7 +228,13 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
     'AI Interface DNA',
     'Conversion Narrative'
   ]);
-  const heroVariant = seededPick(seed, 'hero-variant', ['default', 'spotlight', 'split']);
+  const heroVariant = seededPick(seed, 'hero-variant', [
+    'default',
+    'spotlight',
+    'split',
+    'poster',
+    'frame'
+  ]);
 
   const gridVariant = seededPick(seed, 'grid-variant', ['default', 'magazine', 'mosaic', 'cards']);
   const listVariant = seededPick(seed, 'list-variant', ['default', 'timeline', 'checklist', 'stacked']);
@@ -367,7 +373,7 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         type: 'ContentList',
         props: {
           title: 'Visitor Priorities',
-          intro: 'Top priorities inferred from visitor behavior and page context.',
+          intro: 'Top priorities inferred from visitor behavior and content context.',
           variant: listVariant,
           limit: listLimit,
           offset: listOffset
@@ -622,15 +628,15 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
     return seededPick(seed, 'confusion', [
       'No problem. Should this feel simple and direct, or rich with detail?',
       'All good. Should we prioritize portfolio, insights, or bio content first?',
-      'Clear. Tell me the one page area visitors should hit first, and I will shape the flow.'
+      'Clear. Tell me the one content area visitors should hit first, and I will shape the flow.'
     ]);
   }
 
   if (missingGoal) {
     return seededPick(seed, 'ask-goal', [
       'What outcome should this first-time visitor experience drive?',
-      'In one line, what should visitors accomplish before leaving the page?',
-      'What is the main page journey you want this experience to trigger?'
+      'In one line, what should visitors accomplish before leaving the site?',
+      'What is the main journey you want this experience to trigger?'
     ]);
   }
 
@@ -644,7 +650,7 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
 
   if (!askedDensity) {
     return seededPick(seed, 'ask-density', [
-      'How detailed should the page feel: low, medium, or high density?',
+      'How detailed should the experience feel: low, medium, or high density?',
       'Should I keep it lightweight, balanced, or information-rich?',
       'Choose information density: low, medium, or high.'
     ]);

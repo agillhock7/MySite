@@ -100,6 +100,12 @@ li {
   padding: 0.78rem;
   background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+li:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
 p {
@@ -141,5 +147,6 @@ p {
 .variant-stacked li {
   border-width: 2px;
   background: var(--surface);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 </style>

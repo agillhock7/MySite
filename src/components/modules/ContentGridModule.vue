@@ -112,6 +112,12 @@ h3 {
   background: color-mix(in srgb, var(--surface-muted) 70%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   padding: 0.8rem;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.grid-item:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 h4 {
@@ -142,13 +148,27 @@ p {
   );
 }
 
+.variant-magazine .grid-item:first-child {
+  grid-column: 1 / -1;
+  padding: 1rem;
+  border-width: 2px;
+}
+
 .variant-mosaic .grid-item:nth-child(odd) {
   transform: translateY(-2px);
+}
+
+.variant-mosaic .grid-item:nth-child(3n + 2) {
+  transform: translateY(3px);
 }
 
 .variant-cards .grid-item {
   border-width: 2px;
   background: var(--surface);
+}
+
+.variant-cards .grid-item h4 {
+  font-size: 1.05rem;
 }
 
 @media (min-width: 700px) {
