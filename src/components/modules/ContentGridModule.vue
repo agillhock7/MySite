@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { GridItem } from '@/content/library';
+import { hashText } from '@/utils/seed';
 
 const props = defineProps<{
   moduleProps: Record<string, unknown>;
@@ -25,17 +26,6 @@ function parseNumberProp(value: unknown, fallback: number): number {
   }
 
   return fallback;
-}
-
-function hashText(input: string): number {
-  let hash = 2166136261;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return hash >>> 0;
 }
 
 const title = computed(() => asCleanString(props.moduleProps.title) || 'Content Grid');

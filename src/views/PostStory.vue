@@ -5,6 +5,8 @@ import { fetchWordpressPostDetail, type WordpressPostDetailResponse } from '@/ap
 import { usePersonalizationStore } from '@/stores/personalization';
 import AssistantDock from '@/components/AssistantDock.vue';
 import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
+import { useReducedMotion } from '@/composables/useReducedMotion';
+import { hashText, seededUnit } from '@/utils/seed';
 
 const route = useRoute();
 const personalization = usePersonalizationStore();
@@ -13,6 +15,7 @@ const loading = ref(true);
 const error = ref('');
 const detail = ref<WordpressPostDetailResponse | null>(null);
 const readingProgress = ref(0);
+const { prefersReducedMotion } = useReducedMotion();
 
 const visitorId = getOrCreateVisitorId();
 const assistantVariantNonce = getDesignIteration();
@@ -23,27 +26,13 @@ const modeClass = computed(() => (personalization.blueprint?.theme.mode === 'lig
 const post = computed(() => detail.value?.post ?? null);
 const related = computed(() => detail.value?.related ?? []);
 
-function hashText(input: string): number {
-  let hash = 2166136261;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return hash >>> 0;
-}
-
-function seededUnit(seed: number, salt: string): number {
-  return hashText(`${seed}:${salt}`) / 4294967295;
-}
-
 const storySeed = computed(() => {
   const base = `${post.value?.id ?? 0}|${post.value?.title ?? ''}|${accent.value}`;
   return hashText(base);
 });
 
 const ambientNodes = computed(() => {
+  const count = prefersReducedMotion.value ? 4 : 8;
   const nodes = [] as Array<{
     key: string;
     left: string;
@@ -53,7 +42,7 @@ const ambientNodes = computed(() => {
     duration: string;
   }>;
 
-  for (let index = 0; index < 8; index += 1) {
+  for (let index = 0; index < count; index += 1) {
     nodes.push({
       key: `story-node-${index}`,
       left: `${(seededUnit(storySeed.value, `left-${index}`) * 100).toFixed(2)}%`,
@@ -65,6 +54,33 @@ const ambientNodes = computed(() => {
   }
 
   return nodes;
+});
+
+const ambientRings = computed(() => {
+  const count = prefersReducedMotion.value ? 1 : 3;
+  const rings = [] as Array<{
+    key: string;
+    left: string;
+    top: string;
+    size: string;
+    opacity: string;
+    duration: string;
+    rotate: string;
+  }>;
+
+  for (let index = 0; index < count; index += 1) {
+    rings.push({
+      key: `story-ring-${index}`,
+      left: `${(10 + seededUnit(storySeed.value, `ring-left-${index}`) * 80).toFixed(2)}%`,
+      top: `${(10 + seededUnit(storySeed.value, `ring-top-${index}`) * 76).toFixed(2)}%`,
+      size: `${(180 + seededUnit(storySeed.value, `ring-size-${index}`) * 380).toFixed(0)}px`,
+      opacity: (0.14 + seededUnit(storySeed.value, `ring-opacity-${index}`) * 0.28).toFixed(2),
+      duration: `${(15 + seededUnit(storySeed.value, `ring-duration-${index}`) * 20).toFixed(1)}s`,
+      rotate: `${(seededUnit(storySeed.value, `ring-rotate-${index}`) * 360).toFixed(2)}deg`
+    });
+  }
+
+  return rings;
 });
 
 const shellStyle = computed(() => ({
@@ -148,9 +164,23 @@ watch(
 </script>
 
 <template>
-  <main class="story-root" :class="modeClass" :style="shellStyle">
+  <main class="story-root" :class="[modeClass, prefersReducedMotion ? 'reduced-motion' : '']" :style="shellStyle">
     <div class="ambient-layer" aria-hidden="true">
       <span class="ambient-grid"></span>
+      <span
+        v-for="ring in ambientRings"
+        :key="ring.key"
+        class="ambient-ring"
+        :style="{
+          left: ring.left,
+          top: ring.top,
+          width: ring.size,
+          height: ring.size,
+          opacity: ring.opacity,
+          transform: `translate(-50%, -50%) rotate(${ring.rotate})`,
+          animationDuration: ring.duration
+        }"
+      ></span>
       <span
         v-for="node in ambientNodes"
         :key="node.key"
@@ -282,6 +312,14 @@ watch(
   filter: blur(22px);
   transform: translate(-50%, -50%);
   animation: breathe 14s ease-in-out infinite alternate;
+}
+
+.ambient-ring {
+  position: absolute;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+  animation: spin-slow 22s linear infinite;
 }
 
 .progress-wrap,
@@ -551,12 +589,27 @@ h1 {
   color: #4b5563;
 }
 
+.reduced-motion .ambient-node,
+.reduced-motion .ambient-ring {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
 @keyframes breathe {
   from {
     transform: translate(-50%, -50%) scale(0.92);
   }
   to {
     transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
   }
 }
 

@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import type { BlueprintShortcut } from '@/blueprint/schema';
 import type { HeroContent } from '@/content/library';
+import { hashText } from '@/utils/seed';
 
 const props = defineProps<{
   moduleProps: Record<string, unknown>;
@@ -11,17 +12,6 @@ const props = defineProps<{
 
 function asCleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function hashText(input: string): number {
-  let hash = 2166136261;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return hash >>> 0;
 }
 
 const heroContent = computed(() => props.content as HeroContent);

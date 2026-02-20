@@ -8,6 +8,9 @@ import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
+import { useReducedMotion } from '@/composables/useReducedMotion';
+import { resolveExperienceSystem } from '@/design/experience';
+import { hashText } from '@/utils/seed';
 
 interface VisualCard {
   key: string;
@@ -18,6 +21,7 @@ interface VisualCard {
 
 const router = useRouter();
 const personalization = usePersonalizationStore();
+const { prefersReducedMotion } = useReducedMotion();
 
 const initializing = ref(true);
 const initializationError = ref('');
@@ -28,17 +32,6 @@ const pointerY = ref(36);
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
 const assistantVariantNonce = getDesignIteration();
-
-function hashText(input: string): number {
-  let hash = 2166136261;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return hash >>> 0;
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -81,19 +74,6 @@ function firstStringArrayModuleProp(propName: string): string[] {
   return [];
 }
 
-function seededUnit(seed: number, salt: string): number {
-  return hashText(`${seed}:${salt}`) / 4294967295;
-}
-
-function seededChoice<T>(seed: number, salt: string, options: T[]): T {
-  if (options.length === 0) {
-    throw new Error('seededChoice requires at least one option');
-  }
-
-  const index = Math.floor(seededUnit(seed, salt) * options.length) % options.length;
-  return options[index];
-}
-
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
@@ -126,15 +106,6 @@ async function initializePersonalization(): Promise<void> {
   initializing.value = false;
 }
 
-const baseSeed = computed(() => {
-  if (!blueprint.value) {
-    return 0;
-  }
-
-  const moduleIds = blueprint.value.modules.map((module) => module.id).join('|');
-  return hashText(`${blueprint.value.theme.accent}|${blueprint.value.layout.nav}|${moduleIds}|${blueprint.value.createdAt}`);
-});
-
 const focusTopics = computed(() => {
   const topics = firstStringArrayModuleProp('focusTopics');
   return topics.length > 0 ? topics.slice(0, 7) : ['Identity', 'Interests', 'Intent'];
@@ -146,65 +117,49 @@ const designSignature = computed(() => {
     return fromBlueprint.slice(0, 10).toUpperCase();
   }
 
-  return baseSeed.value.toString(36).toUpperCase().padStart(6, '0').slice(0, 8);
-});
-
-const visualSeed = computed(() => {
   if (!blueprint.value) {
-    return 0;
+    return 'DESIGN00';
   }
 
-  const shellHint = firstStringModuleProp('shellProfile');
-  const topicKey = focusTopics.value.join('|').toLowerCase();
-  return hashText(`${baseSeed.value}|${designSignature.value}|${shellHint}|${topicKey}`);
+  const moduleIds = blueprint.value.modules.map((module) => module.id).join('|');
+  return hashText(`${blueprint.value.createdAt}|${moduleIds}`).toString(36).toUpperCase().padStart(8, '0').slice(0, 8);
+});
+
+const experienceSystem = computed(() => {
+  if (!blueprint.value) {
+    return null;
+  }
+
+  return resolveExperienceSystem({
+    blueprint: blueprint.value,
+    signature: designSignature.value,
+    focusTopics: focusTopics.value,
+    hints: {
+      shellProfile: firstStringModuleProp('shellProfile'),
+      typographyProfile: firstStringModuleProp('typographyProfile'),
+      motionProfile: firstStringModuleProp('motionProfile'),
+      visualFx: firstStringModuleProp('visualFx'),
+      textureFx: firstStringModuleProp('textureFx'),
+      energyFx: firstStringModuleProp('energyFx'),
+      styleMotif: firstStringModuleProp('styleMotif')
+    },
+    reducedMotion: prefersReducedMotion.value
+  });
 });
 
 const modeClass = computed(() => (blueprint.value?.theme.mode === 'dark' ? 'mode-dark' : 'mode-light'));
-
-const shellProfile = computed(() => {
-  const fromBlueprint = firstStringModuleProp('shellProfile').toLowerCase();
-  const allowed = ['orbital', 'editorial', 'kinetic', 'glass', 'neo', 'atlas', 'spectral'];
-
-  if (allowed.includes(fromBlueprint)) {
-    return fromBlueprint;
-  }
-
-  return allowed[visualSeed.value % allowed.length];
-});
-
-const typographyProfile = computed(() => {
-  const fromBlueprint = firstStringModuleProp('typographyProfile').toLowerCase();
-  const allowed = ['grotesk', 'literary', 'display', 'mono'];
-
-  if (allowed.includes(fromBlueprint)) {
-    return fromBlueprint;
-  }
-
-  return allowed[visualSeed.value % allowed.length];
-});
-
-const motionProfile = computed(() => {
-  const fromBlueprint = firstStringModuleProp('motionProfile').toLowerCase();
-  const allowed = ['calm', 'balanced', 'kinetic'];
-
-  if (allowed.includes(fromBlueprint)) {
-    return fromBlueprint;
-  }
-
-  return allowed[(visualSeed.value >> 2) % allowed.length];
-});
-
-const experienceMode = computed(() => visualSeed.value % 4);
-
-const toneClass = computed(() => `tone-${typographyProfile.value}`);
-const motionClass = computed(() => `motion-${motionProfile.value}`);
-const shellProfileClass = computed(() => `profile-${shellProfile.value}`);
-const experienceClass = computed(() => `experience-${experienceMode.value}`);
-const fxClass = computed(() => `fx-${firstStringModuleProp('visualFx') || 'neon'}`);
-const textureClass = computed(() => `texture-${firstStringModuleProp('textureFx') || 'glass'}`);
-const energyClass = computed(() => `energy-${firstStringModuleProp('energyFx') || 'balanced'}`);
-const motifClass = computed(() => `motif-${firstStringModuleProp('styleMotif') || 'editorial'}`);
+const toneClass = computed(() => `tone-${experienceSystem.value?.typographyProfile ?? 'grotesk'}`);
+const motionClass = computed(() => `motion-${experienceSystem.value?.motionProfile ?? 'balanced'}`);
+const shellProfileClass = computed(() => `profile-${experienceSystem.value?.shellProfile ?? 'editorial'}`);
+const experienceClass = computed(() => `experience-${experienceSystem.value?.experienceMode ?? 0}`);
+const fxClass = computed(() => `fx-${experienceSystem.value?.visualFx ?? 'neon'}`);
+const textureClass = computed(() => `texture-${experienceSystem.value?.textureFx ?? 'glass'}`);
+const energyClass = computed(() => `energy-${experienceSystem.value?.energyFx ?? 'balanced'}`);
+const motifClass = computed(() => `motif-${experienceSystem.value?.styleMotif ?? 'editorial'}`);
 const layoutClass = computed(() => `layout-nav-${blueprint.value?.layout.nav ?? 'top'}`);
+
+const ambientNodes = computed(() => experienceSystem.value?.ambientNodes ?? []);
+const ambientRings = computed(() => experienceSystem.value?.ambientRings ?? []);
 
 const brandName = computed(() => firstStringModuleProp('brandName') || 'Alexander Gill');
 const brandTagline = computed(() => firstStringModuleProp('brandTagline') || 'Power plays.');
@@ -223,25 +178,8 @@ const brandSections = computed(() => {
   return sections.length > 0 ? sections.slice(0, 8) : ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
 });
 
-const shellTitle = computed(() => {
-  const labelsByProfile: Record<string, string[]> = {
-    orbital: ['Orbiting Story Field', 'Immersive Orbit Chronicle', 'Future Signal Stories', 'Curated Orbit Atelier'],
-    editorial: ['Editorial Story Engine', 'Feature Narrative Stream', 'Curated Editorial Atlas', 'Signature Story Archive'],
-    kinetic: ['High-Velocity Storyline', 'Kinetic Story Surface', 'Motion-Driven Editorial', 'Pulse Narrative Engine'],
-    glass: ['Prism Story Layer', 'Luminous Story Atelier', 'Translucent Narrative Grid', 'Refraction Editorial Stream'],
-    neo: ['Neo Chronicle System', 'Modern Signal Editorial', 'Neo Atlas Feed', 'Future Blog Interface'],
-    atlas: ['Atlas Story Cartography', 'Map of Living Posts', 'Topographic Narrative Field', 'Explorer Story Grid'],
-    spectral: ['Spectral Story Spectrum', 'Chromatic Narrative Field', 'Lightwave Editorial Surface', 'Prismatic Post Engine']
-  };
-
-  const labels = labelsByProfile[shellProfile.value] ?? labelsByProfile.editorial;
-  return labels[experienceMode.value % labels.length];
-});
-
-const experienceLabel = computed(() => {
-  const labels = ['Chronicle', 'Cinema', 'Atelier', 'Pulse'];
-  return `${shellProfile.value.toUpperCase()} ${labels[experienceMode.value]}`;
-});
+const shellTitle = computed(() => experienceSystem.value?.shellTitle ?? 'Personalized Story Engine');
+const experienceLabel = computed(() => experienceSystem.value?.experienceLabel ?? 'EDITORIAL Chronicle');
 
 const wordpressStatus = computed(() => {
   if (!blueprint.value) {
@@ -252,14 +190,16 @@ const wordpressStatus = computed(() => {
 });
 
 const shellStyle = computed(() => {
-  const radius = 12 + Math.floor(seededUnit(visualSeed.value, 'radius') * 12);
-  const panelBlur = 4 + Math.floor(seededUnit(visualSeed.value, 'blur') * 8);
+  const system = experienceSystem.value;
+  const radius = system?.radius ?? 16;
+  const panelBlur = system?.panelBlur ?? 8;
+  const moduleGapRem = system?.moduleGapRem ?? 1.05;
 
   return {
     '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
     '--radius': `${radius}px`,
     '--panel-blur': `${panelBlur}px`,
-    '--module-gap': `${0.8 + seededUnit(visualSeed.value, 'gap') * 0.75}rem`,
+    '--module-gap': `${moduleGapRem}rem`,
     '--pointer-x': `${pointerX.value}%`,
     '--pointer-y': `${pointerY.value}%`
   };
@@ -335,42 +275,20 @@ const heroVisualCards = computed<VisualCard[]>(() => {
   }));
 });
 
-const ambientNodes = computed(() => {
-  const nodes = [] as Array<{
-    key: string;
-    size: string;
-    left: string;
-    top: string;
-    opacity: string;
-    duration: string;
-    delay: string;
-    blendClass: string;
-  }>;
+const posterTransforms = computed(() => experienceSystem.value?.posterTransforms ?? []);
 
-  const blendModes = ['blend-screen', 'blend-overlay', 'blend-plus'];
-
-  for (let index = 0; index < 11; index += 1) {
-    const size = 130 + seededUnit(visualSeed.value, `node-size-${index}`) * 360;
-    const left = seededUnit(visualSeed.value, `node-left-${index}`) * 100;
-    const top = seededUnit(visualSeed.value, `node-top-${index}`) * 100;
-    const opacity = 0.16 + seededUnit(visualSeed.value, `node-opacity-${index}`) * 0.44;
-    const duration = 11 + seededUnit(visualSeed.value, `node-duration-${index}`) * 18;
-    const delay = seededUnit(visualSeed.value, `node-delay-${index}`) * -8;
-
-    nodes.push({
-      key: `ambient-${index}`,
-      size: `${size.toFixed(0)}px`,
-      left: `${left.toFixed(2)}%`,
-      top: `${top.toFixed(2)}%`,
-      opacity: opacity.toFixed(2),
-      duration: `${duration.toFixed(1)}s`,
-      delay: `${delay.toFixed(1)}s`,
-      blendClass: seededChoice(visualSeed.value, `node-mix-${index}`, blendModes)
-    });
+function posterStyle(index: number): Record<string, string> {
+  const token = posterTransforms.value[index % posterTransforms.value.length];
+  if (!token || prefersReducedMotion.value) {
+    return {};
   }
 
-  return nodes;
-});
+  return {
+    '--poster-rotate': token.rotateDeg,
+    '--poster-lift': token.liftPx,
+    '--poster-scale': token.scale
+  };
+}
 
 function toBrandSectionUrl(section: string): string {
   return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
@@ -381,6 +299,10 @@ function isUrlAction(action: string): boolean {
 }
 
 function handlePointerMove(event: PointerEvent): void {
+  if (prefersReducedMotion.value) {
+    return;
+  }
+
   const target = event.currentTarget;
   if (!(target instanceof HTMLElement)) {
     return;
@@ -434,7 +356,8 @@ onMounted(async () => {
       textureClass,
       energyClass,
       motifClass,
-      layoutClass
+      layoutClass,
+      prefersReducedMotion ? 'reduced-motion' : ''
     ]"
     :style="shellStyle"
     @pointermove="handlePointerMove"
@@ -443,6 +366,20 @@ onMounted(async () => {
     <div class="ambient-layer" aria-hidden="true">
       <span class="ambient-grid"></span>
       <span class="ambient-noise"></span>
+      <span
+        v-for="ring in ambientRings"
+        :key="ring.key"
+        class="ambient-ring"
+        :style="{
+          width: ring.size,
+          height: ring.size,
+          left: ring.left,
+          top: ring.top,
+          opacity: ring.opacity,
+          transform: `translate(-50%, -50%) rotate(${ring.rotate})`,
+          animationDuration: ring.duration
+        }"
+      ></span>
       <span
         v-for="node in ambientNodes"
         :key="node.key"
@@ -515,6 +452,7 @@ onMounted(async () => {
             :key="card.key"
             class="poster-card"
             :class="`poster-${(idx % 5) + 1}`"
+            :style="posterStyle(idx)"
             :href="card.href"
             :target="isUrlAction(card.href) ? '_blank' : '_self'"
             :rel="isUrlAction(card.href) ? 'noopener noreferrer' : undefined"
@@ -649,6 +587,14 @@ onMounted(async () => {
   filter: blur(16px);
   transform: translate(-50%, -50%);
   animation: breathe 15s ease-in-out infinite alternate;
+}
+
+.ambient-ring {
+  position: absolute;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+  animation: spin-slow 24s linear infinite;
 }
 
 .blend-screen {
@@ -893,6 +839,9 @@ h1 {
 }
 
 .poster-card {
+  --poster-rotate: 0deg;
+  --poster-lift: 0px;
+  --poster-scale: 1;
   position: relative;
   border-radius: 12px;
   overflow: hidden;
@@ -901,6 +850,7 @@ h1 {
   text-decoration: none;
   color: inherit;
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  transform: translateY(var(--poster-lift)) rotate(var(--poster-rotate)) scale(var(--poster-scale));
   transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
@@ -948,10 +898,6 @@ h1 {
   background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0));
 }
 
-.poster-1,
-.poster-4 {
-  transform: translateY(-2px);
-}
 
 .shell-nav {
   margin-top: 0.9rem;
@@ -1087,12 +1033,14 @@ h1 {
   border-style: dashed;
 }
 
-.experience-3 .poster-card:nth-child(odd) {
-  transform: rotate(-0.35deg);
-}
-
-.experience-3 .poster-card:nth-child(even) {
-  transform: rotate(0.35deg);
+.reduced-motion .ambient-node,
+.reduced-motion .ambient-ring,
+.reduced-motion .module-slot,
+.reduced-motion .lead-slot,
+.reduced-motion .poster-card {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 @keyframes breathe {
@@ -1112,6 +1060,15 @@ h1 {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
   }
 }
 
