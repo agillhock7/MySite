@@ -705,6 +705,147 @@ function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot
     ];
 }
 
+function build_server_fallback_candidate(array $intent, array $snapshot, string $visitorId): array
+{
+    $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
+    $conversion = mysite_wp_conversion_profile($intent, $snapshot);
+    $posts = is_array($snapshot['posts'] ?? null) ? $snapshot['posts'] : [];
+
+    $primaryUrl = sanitize_action_url(
+        (string) ($conversion['primaryActionUrl'] ?? ''),
+        $snapshot,
+        $baseUrl
+    );
+    $secondaryUrl = sanitize_action_url(
+        (string) ($conversion['secondaryActionUrl'] ?? ''),
+        $snapshot,
+        $primaryUrl !== '' ? $primaryUrl : $baseUrl
+    );
+
+    $heroImage = '';
+    if (isset($posts[0]) && is_array($posts[0])) {
+        $heroImage = trim((string) (($posts[0]['imageUrl'] ?? '') ?: ''));
+    }
+
+    return [
+        'version' => 1,
+        'theme' => infer_theme_from_intent($intent, $visitorId),
+        'layout' => infer_layout_from_intent($intent, $visitorId),
+        'modules' => [
+            [
+                'id' => 'hero-fallback',
+                'type' => 'Hero',
+                'props' => [
+                    'kicker' => 'Server Fallback',
+                    'title' => (string) ($intent['goal'] ?? 'Personalized editorial experience'),
+                    'subtitle' => 'Rendered from live WordPress data while AI generation is unavailable.',
+                    'ctaUrl' => $primaryUrl !== '' ? $primaryUrl : $baseUrl,
+                    'heroImage' => $heroImage
+                ],
+                'contentKey' => 'heroWelcome'
+            ],
+            [
+                'id' => 'grid-fallback',
+                'type' => 'ContentGrid',
+                'props' => [
+                    'title' => 'Latest posts',
+                    'variant' => 'mosaic',
+                    'columns' => 3,
+                    'limit' => 6
+                ],
+                'contentKey' => 'featuredGrid'
+            ],
+            [
+                'id' => 'list-fallback',
+                'type' => 'ContentList',
+                'props' => [
+                    'title' => 'Editorial stream',
+                    'variant' => 'timeline',
+                    'limit' => 6
+                ],
+                'contentKey' => 'nextStepsList'
+            ],
+            [
+                'id' => 'actions-fallback',
+                'type' => 'QuickActions',
+                'props' => ['title' => 'Read next'],
+                'contentKey' => 'quickStartActions'
+            ],
+            [
+                'id' => 'faq-fallback',
+                'type' => 'FAQ',
+                'props' => ['title' => 'About this build'],
+                'contentKey' => 'faqGeneral'
+            ]
+        ],
+        'shortcuts' => [
+            [
+                'label' => (string) ($conversion['primaryActionLabel'] ?? 'Read latest post'),
+                'action' => $primaryUrl !== '' ? $primaryUrl : $baseUrl
+            ],
+            [
+                'label' => (string) ($conversion['secondaryActionLabel'] ?? 'Read next post'),
+                'action' => $secondaryUrl !== '' ? $secondaryUrl : ($primaryUrl !== '' ? $primaryUrl : $baseUrl)
+            ],
+            [
+                'label' => 'Open main site',
+                'action' => sanitize_action_url($baseUrl, $snapshot, $baseUrl)
+            ]
+        ],
+        'createdAt' => gmdate('c'),
+        'updatedAt' => gmdate('c')
+    ];
+}
+
+function send_blueprint_response(
+    array $blueprint,
+    array $contentOverrides,
+    array $gapSuggestions,
+    array $wpSnapshot,
+    string $source,
+    string $aiStatus,
+    string $aiMessage
+): void {
+    send_json(200, [
+        'blueprint' => $blueprint,
+        'contentOverrides' => $contentOverrides,
+        'gapSuggestions' => $gapSuggestions,
+        'wordpress' => [
+            'baseUrl' => (string) ($wpSnapshot['baseUrl'] ?? ''),
+            'available' => (bool) ($wpSnapshot['available'] ?? false),
+            'fetchedAt' => (string) ($wpSnapshot['fetchedAt'] ?? gmdate('c')),
+            'errors' => $wpSnapshot['errors'] ?? []
+        ],
+        'source' => $source,
+        'ai' => [
+            'status' => $aiStatus,
+            'message' => $aiMessage
+        ]
+    ]);
+}
+
+function send_server_fallback_response(
+    array $intent,
+    array $snapshot,
+    array $contentOverrides,
+    array $gapSuggestions,
+    string $visitorId,
+    string $reason
+): void {
+    $candidate = build_server_fallback_candidate($intent, $snapshot, $visitorId);
+    $blueprint = normalize_ai_blueprint($candidate, $intent, $snapshot, $visitorId);
+
+    send_blueprint_response(
+        $blueprint,
+        $contentOverrides,
+        $gapSuggestions,
+        $snapshot,
+        'server_fallback',
+        'fallback',
+        $reason
+    );
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     send_json(405, ['error' => 'Method not allowed']);
 }
@@ -720,25 +861,35 @@ $intent = normalize_intent($decodedBody);
 $visitorId = normalize_visitor_id($decodedBody);
 $variantNonce = normalize_variant_nonce($decodedBody);
 $visitorSeedKey = $visitorId . ':v' . (string) $variantNonce;
-$openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
-
-$enabled = (bool) ($openAiConfig['enabled'] ?? true);
-if (!$enabled) {
-    send_json(503, ['error' => 'AI generation is disabled by server config']);
-}
-
-$apiKey = mysite_resolve_openai_api_key($config);
-if ($apiKey === '') {
-    send_json(503, [
-        'error' => 'OpenAI API key is not configured',
-        'hint' => 'Set in config.php or ~/.config/mysite/<host>.php'
-    ]);
-}
-
 $wpSnapshot = mysite_wp_fetch_snapshot($config);
 $gapSuggestions = mysite_wp_gap_suggestions($wpSnapshot);
 $contentOverrides = mysite_wp_content_bundle($wpSnapshot, $gapSuggestions, $intent);
 $wpSummary = mysite_wp_summary_for_prompt($wpSnapshot, $gapSuggestions, $intent);
+$openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
+
+$enabled = (bool) ($openAiConfig['enabled'] ?? true);
+if (!$enabled) {
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'AI generation disabled by server config'
+    );
+}
+
+$apiKey = mysite_resolve_openai_api_key($config);
+if ($apiKey === '') {
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'OpenAI API key not configured'
+    );
+}
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {
@@ -815,7 +966,14 @@ $result = curl_exec($curl);
 if ($result === false) {
     $error = curl_error($curl);
     curl_close($curl);
-    send_json(502, ['error' => 'OpenAI request failed', 'details' => $error]);
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'OpenAI request failed: ' . $error
+    );
 }
 
 $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
@@ -823,33 +981,48 @@ curl_close($curl);
 
 $responseJson = json_decode((string) $result, true);
 if ($statusCode >= 400) {
-    send_json(502, [
-        'error' => 'OpenAI API error',
-        'status' => $statusCode,
-        'details' => $responseJson
-    ]);
+    $summary = is_array($responseJson) ? json_encode($responseJson, JSON_UNESCAPED_SLASHES) : 'Unknown error';
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'OpenAI API error ' . (string) $statusCode . ': ' . (string) $summary
+    );
 }
 
 $content = $responseJson['choices'][0]['message']['content'] ?? null;
 if (!is_string($content) || trim($content) === '') {
-    send_json(502, ['error' => 'OpenAI returned empty content']);
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'OpenAI returned empty content'
+    );
 }
 
 $blueprint = extract_json_object($content);
 if ($blueprint === null) {
-    send_json(502, ['error' => 'OpenAI output was not valid JSON']);
+    send_server_fallback_response(
+        $intent,
+        $wpSnapshot,
+        $contentOverrides,
+        $gapSuggestions,
+        $visitorSeedKey,
+        'OpenAI output was not valid JSON'
+    );
 }
 
 $blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot, $visitorSeedKey);
-
-send_json(200, [
-    'blueprint' => $blueprint,
-    'contentOverrides' => $contentOverrides,
-    'gapSuggestions' => $gapSuggestions,
-    'wordpress' => [
-        'baseUrl' => (string) ($wpSnapshot['baseUrl'] ?? ''),
-        'available' => (bool) ($wpSnapshot['available'] ?? false),
-        'fetchedAt' => (string) ($wpSnapshot['fetchedAt'] ?? gmdate('c')),
-        'errors' => $wpSnapshot['errors'] ?? []
-    ]
-]);
+send_blueprint_response(
+    $blueprint,
+    $contentOverrides,
+    $gapSuggestions,
+    $wpSnapshot,
+    'backend_ai',
+    'ok',
+    ''
+);
