@@ -8,11 +8,13 @@ export interface HeroContent {
 export interface GridItem {
   title: string;
   description: string;
+  href?: string;
 }
 
 export interface ListItem {
   title: string;
   detail: string;
+  href?: string;
 }
 
 export interface ActionItem {

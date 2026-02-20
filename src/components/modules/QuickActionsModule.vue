@@ -27,6 +27,19 @@ function isUrlAction(action: string): boolean {
   return /^https?:\/\//i.test(action);
 }
 
+function formatActionHint(action: string): string {
+  if (!isUrlAction(action)) {
+    return action;
+  }
+
+  try {
+    const url = new URL(action);
+    return `${url.host}${url.pathname === '/' ? '' : url.pathname}`;
+  } catch {
+    return action;
+  }
+}
+
 function runInlineAction(action: string): void {
   if (action === 'refresh-personalization') {
     window.location.reload();
@@ -47,11 +60,11 @@ function runInlineAction(action: string): void {
           rel="noopener noreferrer"
         >
           <span>{{ action.label }}</span>
-          <small>{{ action.action }}</small>
+          <small>{{ formatActionHint(action.action) }}</small>
         </a>
         <button v-else type="button" class="action-btn" @click="runInlineAction(action.action)">
           <span>{{ action.label }}</span>
-          <small>{{ action.action }}</small>
+          <small>{{ formatActionHint(action.action) }}</small>
         </button>
       </template>
     </div>

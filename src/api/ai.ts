@@ -224,7 +224,8 @@ export async function generateBlueprintFromIntent(
   intentProfile: IntentProfile
 ): Promise<Blueprint> {
   const timestamp = new Date().toISOString();
-  const topicLabel = intentProfile.primaryTopics[0] ?? 'Core Focus';
+  const topicLabel = intentProfile.primaryTopics[0] ?? 'Hosting + Pro Suite';
+  const goal = intentProfile.goal.trim() || 'Start a hosting plan or Pro Suite onboarding';
 
   return {
     version: 1,
@@ -238,19 +239,28 @@ export async function generateBlueprintFromIntent(
     },
     modules: [
       {
-        id: 'hero-intent',
+        id: 'hero-journey',
         type: 'Hero',
         props: {
-          title: intentProfile.goal,
-          subtitle: `Primary topic: ${topicLabel}`
+          title: goal,
+          subtitle: `Journey focus: ${topicLabel}`,
+          ctaUrl: 'https://hiops.darkhorsevirtue.io'
         },
         contentKey: 'heroWelcome'
+      },
+      {
+        id: 'actions-conversion',
+        type: 'QuickActions',
+        props: {
+          title: 'Start Here'
+        },
+        contentKey: 'quickStartActions'
       },
       {
         id: 'grid-featured',
         type: 'ContentGrid',
         props: {
-          title: `${topicLabel} Highlights`
+          title: 'Live Highlights from alexanderjgill.com'
         },
         contentKey: 'featuredGrid'
       },
@@ -258,31 +268,24 @@ export async function generateBlueprintFromIntent(
         id: 'list-plan',
         type: 'ContentList',
         props: {
-          title: 'Execution Checklist'
+          title: 'Recommended Next Steps'
         },
         contentKey: 'nextStepsList'
       },
       {
-        id: 'actions-primary',
-        type: 'QuickActions',
-        props: {
-          title: 'Common Actions'
-        },
-        contentKey: 'quickStartActions'
-      },
-      {
-        id: 'faq-primary',
+        id: 'faq-primary-trust',
         type: 'FAQ',
         props: {
-          title: 'Need-to-Know'
+          title: 'How This Personalization Works'
         },
         contentKey: 'faqGeneral'
       }
     ],
     shortcuts: [
-      { label: 'Goal', action: intentProfile.goal.slice(0, 32) || 'goal' },
-      { label: 'Vibe', action: intentProfile.vibe },
-      { label: 'Density', action: intentProfile.density }
+      { label: 'Start Pro Suite Onboarding', action: 'https://hiops.darkhorsevirtue.io' },
+      { label: 'Start Hosting Plan', action: 'https://alexanderjgill.com' },
+      { label: 'Explore Work', action: 'https://alexanderjgill.com/work/' },
+      { label: 'Read Insights', action: 'https://alexanderjgill.com/read/' }
     ],
     createdAt: timestamp,
     updatedAt: timestamp

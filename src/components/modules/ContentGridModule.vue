@@ -24,7 +24,18 @@ const items = computed(() => {
     <h3>{{ title }}</h3>
     <div class="grid">
       <article v-for="item in items" :key="item.title" class="grid-item">
-        <h4>{{ item.title }}</h4>
+        <h4>
+          <a
+            v-if="item.href && item.href.length > 0"
+            :href="item.href"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="item-link"
+          >
+            {{ item.title }}
+          </a>
+          <template v-else>{{ item.title }}</template>
+        </h4>
         <p>{{ item.description }}</p>
       </article>
     </div>
@@ -58,6 +69,12 @@ h3 {
 
 h4 {
   margin: 0;
+}
+
+.item-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 p {

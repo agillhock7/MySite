@@ -25,7 +25,7 @@ const shellStyle = computed(() => ({
 
 const navItems = computed(() => {
   const shortcuts = blueprint.value?.shortcuts ?? [];
-  return shortcuts.slice(0, 5);
+  return shortcuts.slice(0, 6);
 });
 
 const wordpressStatus = computed(() => {
@@ -35,6 +35,10 @@ const wordpressStatus = computed(() => {
 
   return 'Adaptive visitor journey sourced from alexanderjgill.com';
 });
+
+function isUrlAction(action: string): boolean {
+  return /^https?:\/\//i.test(action);
+}
 
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
@@ -70,9 +74,20 @@ onMounted(async () => {
     </header>
 
     <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
-      <button v-for="item in navItems" :key="item.action" type="button" class="nav-item">
-        {{ item.label }}
-      </button>
+      <template v-for="item in navItems" :key="item.action">
+        <a
+          v-if="isUrlAction(item.action)"
+          :href="item.action"
+          class="nav-item"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {{ item.label }}
+        </a>
+        <button v-else type="button" class="nav-item">
+          {{ item.label }}
+        </button>
+      </template>
     </nav>
 
     <section class="module-stack" :class="`density-${blueprint.layout.density}`">
@@ -117,6 +132,14 @@ onMounted(async () => {
   gap: 0.85rem;
   justify-content: space-between;
   align-items: flex-start;
+  padding: 1rem;
+  border-radius: 14px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 16%, transparent),
+    color-mix(in srgb, var(--surface) 90%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
 }
 
 .eyebrow {
@@ -140,10 +163,10 @@ h1 {
 
 .reset-btn {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: 10px;
+  border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
   color: var(--text-primary);
-  padding: 0.55rem 0.8rem;
+  padding: 0.55rem 0.95rem;
 }
 
 .shell-nav {
@@ -160,10 +183,11 @@ h1 {
 
 .nav-item {
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--surface);
   color: var(--text-primary);
-  padding: 0.45rem 0.7rem;
+  padding: 0.5rem 0.8rem;
+  text-decoration: none;
 }
 
 .module-stack {

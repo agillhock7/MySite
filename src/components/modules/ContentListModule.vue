@@ -24,7 +24,18 @@ const items = computed(() => {
     <h3>{{ title }}</h3>
     <ul>
       <li v-for="item in items" :key="item.title">
-        <strong>{{ item.title }}</strong>
+        <strong>
+          <a
+            v-if="item.href && item.href.length > 0"
+            :href="item.href"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="item-link"
+          >
+            {{ item.title }}
+          </a>
+          <template v-else>{{ item.title }}</template>
+        </strong>
         <p>{{ item.detail }}</p>
       </li>
     </ul>
@@ -60,5 +71,11 @@ li {
 p {
   margin: 0.35rem 0 0;
   color: var(--text-secondary);
+}
+
+.item-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
 }
 </style>

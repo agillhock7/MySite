@@ -1,1 +1,1 @@
-export const BUILD_TAG = 'chat-v3';
+export const BUILD_TAG = 'journey-v4';

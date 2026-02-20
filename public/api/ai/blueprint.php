@@ -162,6 +162,143 @@ function extract_json_object(string $input): ?array
     return is_array($decoded) ? $decoded : null;
 }
 
+function infer_theme_from_intent(array $intent): array
+{
+    $vibe = (string) ($intent['vibe'] ?? 'minimal');
+    $mode = ($vibe === 'visual' || $vibe === 'playful') ? 'light' : 'dark';
+
+    $accentMap = [
+        'minimal' => '#22c55e',
+        'visual' => '#0ea5e9',
+        'dense' => '#f97316',
+        'playful' => '#ec4899'
+    ];
+
+    $accent = $accentMap[$vibe] ?? '#22c55e';
+
+    return [
+        'mode' => $mode,
+        'accent' => $accent
+    ];
+}
+
+function infer_layout_from_intent(array $intent): array
+{
+    $density = (string) ($intent['density'] ?? 'medium');
+    if (!in_array($density, ['low', 'medium', 'high'], true)) {
+        $density = 'medium';
+    }
+
+    $nav = 'top';
+    if ($density === 'high') {
+        $nav = 'side';
+    }
+    if ($density === 'low') {
+        $nav = 'none';
+    }
+
+    return [
+        'nav' => $nav,
+        'density' => $density
+    ];
+}
+
+function apply_experience_blueprint_defaults(array $candidate, array $intent, array $snapshot): array
+{
+    $conversionProfile = mysite_wp_conversion_profile($intent);
+    $theme = infer_theme_from_intent($intent);
+    $layout = infer_layout_from_intent($intent);
+    $now = gmdate('c');
+    $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
+    $goal = trim((string) ($intent['goal'] ?? ''));
+    $topicLabel = (string) (($intent['primaryTopics'][0] ?? '') ?: 'Hosting + Pro Suite');
+
+    if ($goal === '') {
+        $goal = (string) ($conversionProfile['heroTitle'] ?? 'Personalized visitor journey');
+    }
+
+    if (is_array($candidate['theme'] ?? null)) {
+        $candidateMode = (string) ($candidate['theme']['mode'] ?? '');
+        $candidateAccent = (string) ($candidate['theme']['accent'] ?? '');
+
+        if (in_array($candidateMode, ['dark', 'light'], true)) {
+            $theme['mode'] = $candidateMode;
+        }
+
+        if ($candidateAccent !== '') {
+            $theme['accent'] = $candidateAccent;
+        }
+    }
+
+    if (is_array($candidate['layout'] ?? null)) {
+        $candidateNav = (string) ($candidate['layout']['nav'] ?? '');
+        $candidateDensity = (string) ($candidate['layout']['density'] ?? '');
+
+        if (in_array($candidateNav, ['side', 'top', 'none'], true)) {
+            $layout['nav'] = $candidateNav;
+        }
+        if (in_array($candidateDensity, ['low', 'medium', 'high'], true)) {
+            $layout['density'] = $candidateDensity;
+        }
+    }
+
+    return [
+        'version' => 1,
+        'theme' => $theme,
+        'layout' => $layout,
+        'modules' => [
+            [
+                'id' => 'hero-journey',
+                'type' => 'Hero',
+                'props' => [
+                    'title' => $goal,
+                    'subtitle' => 'Journey focus: ' . $topicLabel,
+                    'ctaUrl' => (string) ($conversionProfile['heroCtaUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+                ],
+                'contentKey' => 'heroWelcome'
+            ],
+            [
+                'id' => 'actions-conversion',
+                'type' => 'QuickActions',
+                'props' => ['title' => 'Start Here'],
+                'contentKey' => 'quickStartActions'
+            ],
+            [
+                'id' => 'grid-live-content',
+                'type' => 'ContentGrid',
+                'props' => ['title' => 'Live Highlights from alexanderjgill.com'],
+                'contentKey' => 'featuredGrid'
+            ],
+            [
+                'id' => 'list-next-best',
+                'type' => 'ContentList',
+                'props' => ['title' => 'Recommended Next Steps'],
+                'contentKey' => 'nextStepsList'
+            ],
+            [
+                'id' => 'faq-trust',
+                'type' => 'FAQ',
+                'props' => ['title' => 'How This Personalization Works'],
+                'contentKey' => 'faqGeneral'
+            ]
+        ],
+        'shortcuts' => [
+            [
+                'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
+                'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+            ],
+            [
+                'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
+                'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl)
+            ],
+            ['label' => 'Explore Main Site', 'action' => $baseUrl],
+            ['label' => 'Read Insights', 'action' => 'https://alexanderjgill.com/read/']
+        ],
+        'createdAt' => (string) ($candidate['createdAt'] ?? $now),
+        'updatedAt' => $now
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     send_json(405, ['error' => 'Method not allowed']);
 }
@@ -284,6 +421,8 @@ $blueprint = extract_json_object($content);
 if ($blueprint === null) {
     send_json(502, ['error' => 'OpenAI output was not valid JSON']);
 }
+
+$blueprint = apply_experience_blueprint_defaults($blueprint, $intent, $wpSnapshot);
 
 send_json(200, [
     'blueprint' => $blueprint,

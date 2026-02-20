@@ -129,3 +129,8 @@ Deployment flow:
 1. Build locally: `npm run build`
 2. Commit/push including `dist/`
 3. In cPanel Git Version Control: `Update from Remote`, then `Deploy HEAD Commit`
+
+After deploy:
+
+- Open `/reset` to force-clear personalization cache and restart onboarding.
+- Check onboarding header build tag to confirm latest frontend is live.

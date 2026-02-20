@@ -403,14 +403,16 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
     foreach (array_slice($posts, 0, 6) as $post) {
         $gridItems[] = [
             'title' => (string) ($post['title'] ?? 'Untitled'),
-            'description' => (string) (($post['excerpt'] ?? '') !== '' ? $post['excerpt'] : 'No excerpt available.')
+            'description' => (string) (($post['excerpt'] ?? '') !== '' ? $post['excerpt'] : 'No excerpt available.'),
+            'href' => (string) ($post['link'] ?? '')
         ];
     }
 
     if (count($gridItems) === 0) {
         $gridItems[] = [
             'title' => 'No recent posts discovered',
-            'description' => 'Publish or expose recent posts in WP REST to enrich this personalized experience.'
+            'description' => 'Publish or expose recent posts in WP REST to enrich this personalized experience.',
+            'href' => (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')
         ];
     }
 
@@ -428,7 +430,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
     foreach (array_slice($pages, 0, 5) as $page) {
         $listItems[] = [
             'title' => (string) ($page['title'] ?? 'Untitled'),
-            'detail' => (string) (($page['excerpt'] ?? '') !== '' ? $page['excerpt'] : 'No page summary available.')
+            'detail' => (string) (($page['excerpt'] ?? '') !== '' ? $page['excerpt'] : 'No page summary available.'),
+            'href' => (string) ($page['link'] ?? '')
         ];
     }
 
