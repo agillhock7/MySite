@@ -2,3 +2,5 @@ node_modules
 .vscode
 .DS_Store
 *.local
+config/*.local.php
+config/server-config.php

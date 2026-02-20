@@ -15,22 +15,132 @@ function send_json(int $status, array $payload): void
     exit;
 }
 
-function load_openai_api_key(): string
+function merge_config(array $base, array $override): array
 {
-    $envKey = getenv('OPENAI_API_KEY');
-    if (is_string($envKey) && trim($envKey) !== '') {
-        return trim($envKey);
+    foreach ($override as $key => $value) {
+        if (isset($base[$key]) && is_array($base[$key]) && is_array($value)) {
+            $base[$key] = merge_config($base[$key], $value);
+            continue;
+        }
+
+        $base[$key] = $value;
     }
 
-    $home = $_SERVER['HOME'] ?? '';
-    $candidates = [
-        $home . '/.secrets/mysite_openai_api_key',
-        $home . '/.secrets/openai_api_key'
-    ];
+    return $base;
+}
 
-    foreach ($candidates as $path) {
-        if (is_readable($path)) {
-            $value = trim((string) file_get_contents($path));
+function default_server_config(): array
+{
+    return [
+        'app' => [
+            'name' => 'MySite',
+            'environment' => 'production'
+        ],
+        'openai' => [
+            'enabled' => true,
+            'api_key' => '',
+            'api_key_file' => '',
+            'model' => 'gpt-4o-mini',
+            'api_url' => 'https://api.openai.com/v1/chat/completions',
+            'timeout_seconds' => 30
+        ],
+        'database' => [
+            'driver' => '',
+            'host' => '',
+            'port' => '',
+            'name' => '',
+            'user' => '',
+            'password' => ''
+        ]
+    ];
+}
+
+function sanitize_host_name(string $host): string
+{
+    $clean = strtolower(trim($host));
+    $clean = preg_replace('/[^a-z0-9.\-]/', '', $clean) ?? '';
+    return trim($clean, '.-');
+}
+
+function load_server_config(): array
+{
+    $config = default_server_config();
+
+    $home = rtrim((string) ($_SERVER['HOME'] ?? ''), '/');
+    $host = sanitize_host_name((string) ($_SERVER['HTTP_HOST'] ?? ''));
+
+    $paths = [];
+
+    $explicitPath = getenv('MYSITE_CONFIG_FILE');
+    if (is_string($explicitPath) && trim($explicitPath) !== '') {
+        $paths[] = trim($explicitPath);
+    }
+
+    if ($home !== '') {
+        $paths[] = $home . '/.config/mysite/config.php';
+
+        if ($host !== '') {
+            $paths[] = $home . '/.config/mysite/' . $host . '.php';
+        }
+    }
+
+    foreach ($paths as $path) {
+        if (!is_readable($path)) {
+            continue;
+        }
+
+        $loaded = require $path;
+        if (is_array($loaded)) {
+            $config = merge_config($config, $loaded);
+        }
+    }
+
+    $envApiKey = getenv('OPENAI_API_KEY');
+    if (is_string($envApiKey) && trim($envApiKey) !== '') {
+        $config['openai']['api_key'] = trim($envApiKey);
+    }
+
+    $envModel = getenv('OPENAI_MODEL');
+    if (is_string($envModel) && trim($envModel) !== '') {
+        $config['openai']['model'] = trim($envModel);
+    }
+
+    return $config;
+}
+
+function load_secret_file(string $path): string
+{
+    if ($path === '' || !is_readable($path)) {
+        return '';
+    }
+
+    return trim((string) file_get_contents($path));
+}
+
+function resolve_openai_api_key(array $config): string
+{
+    $directKey = trim((string) ($config['openai']['api_key'] ?? ''));
+    if ($directKey !== '') {
+        return $directKey;
+    }
+
+    $keyFile = trim((string) ($config['openai']['api_key_file'] ?? ''));
+    if ($keyFile !== '') {
+        $fromConfiguredFile = load_secret_file($keyFile);
+        if ($fromConfiguredFile !== '') {
+            return $fromConfiguredFile;
+        }
+    }
+
+    $home = rtrim((string) ($_SERVER['HOME'] ?? ''), '/');
+    if ($home !== '') {
+        $legacyCandidates = [
+            $home . '/.secrets/mysite_openai_api_key',
+            $home . '/.secrets/openai_api_key'
+        ];
+
+        foreach ($legacyCandidates as $path) {
+            $value = load_secret_file($path);
             if ($value !== '') {
                 return $value;
             }
@@ -194,19 +304,39 @@ if (!is_array($decodedBody)) {
     send_json(400, ['error' => 'Invalid JSON request body']);
 }
 
+$config = load_server_config();
 $intent = normalize_intent($decodedBody);
-$apiKey = load_openai_api_key();
+$openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
 
+$enabled = (bool) ($openAiConfig['enabled'] ?? true);
+if (!$enabled) {
+    send_json(503, ['error' => 'AI generation is disabled by server config']);
+}
+
+$apiKey = resolve_openai_api_key($config);
 if ($apiKey === '') {
     send_json(503, [
-        'error' => 'OPENAI_API_KEY is not configured',
-        'hint' => 'Set OPENAI_API_KEY env var or create ~/.secrets/mysite_openai_api_key'
+        'error' => 'OpenAI API key is not configured',
+        'hint' => 'Create ~/.config/mysite/config.php and set openai.api_key or openai.api_key_file'
     ]);
 }
 
-$model = getenv('OPENAI_MODEL');
-if (!is_string($model) || trim($model) === '') {
+$model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
+if ($model === '') {
     $model = 'gpt-4o-mini';
+}
+
+$apiUrl = trim((string) ($openAiConfig['api_url'] ?? 'https://api.openai.com/v1/chat/completions'));
+if ($apiUrl === '') {
+    $apiUrl = 'https://api.openai.com/v1/chat/completions';
+}
+
+$timeoutSeconds = (int) ($openAiConfig['timeout_seconds'] ?? 30);
+if ($timeoutSeconds < 5) {
+    $timeoutSeconds = 5;
+}
+if ($timeoutSeconds > 120) {
+    $timeoutSeconds = 120;
 }
 
 $systemPrompt = <<<PROMPT
@@ -235,7 +365,7 @@ $payload = [
     ]
 ];
 
-$curl = curl_init('https://api.openai.com/v1/chat/completions');
+$curl = curl_init($apiUrl);
 curl_setopt_array($curl, [
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_POST => true,
@@ -244,7 +374,7 @@ curl_setopt_array($curl, [
         'Authorization: Bearer ' . $apiKey
     ],
     CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => 30
+    CURLOPT_TIMEOUT => $timeoutSeconds
 ]);
 
 $result = curl_exec($curl);

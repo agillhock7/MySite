@@ -15,40 +15,67 @@ Build production assets:
 npm run build
 ```
 
-## AI backend wiring (cPanel)
+## AI backend + environment config
 
-This project uses a server-side endpoint at `public/api/ai/blueprint.php` (deployed to `dist/api/ai/blueprint.php`).
+Server endpoint: `public/api/ai/blueprint.php` (deployed as `dist/api/ai/blueprint.php`).
 
-The browser never uses your OpenAI API key directly.
+The browser never uses your OpenAI API key.
 
-### 1) Configure key on server
+### Config-first setup (recommended)
 
-Option A (preferred): set environment variable `OPENAI_API_KEY`.
+This backend reads config from files outside web root, so each environment can be configured without changing code.
 
-Option B (works on shared cPanel): create a key file outside web root:
+Load order:
 
-```bash
-mkdir -p ~/.secrets
-chmod 700 ~/.secrets
-printf '%s\n' 'YOUR_OPENAI_API_KEY' > ~/.secrets/mysite_openai_api_key
-chmod 600 ~/.secrets/mysite_openai_api_key
+1. `MYSITE_CONFIG_FILE` (if set)
+2. `~/.config/mysite/config.php`
+3. `~/.config/mysite/<host>.php` (host-specific override)
+
+Template file in repo:
+
+- `config/server-config.example.php`
+
+For your production host, create this config file in cPanel File Manager:
+
+- `/home/alexande/.config/mysite/my.alexanderjgill.com.php`
+
+Example content:
+
+```php
+<?php
+return [
+  'openai' => [
+    'enabled' => true,
+    'api_key' => 'YOUR_OPENAI_API_KEY',
+    'model' => 'gpt-4o-mini',
+    'timeout_seconds' => 30
+  ],
+  'database' => [
+    'driver' => 'mysql',
+    'host' => 'localhost',
+    'port' => '3306',
+    'name' => 'my_db_name',
+    'user' => 'my_db_user',
+    'password' => 'my_db_password'
+  ]
+];
 ```
 
-Optional model override:
+Notes:
 
-- env var `OPENAI_MODEL`
-- default: `gpt-4o-mini`
+- `database` keys are ready for upcoming backend work.
+- Legacy fallbacks still work (`OPENAI_API_KEY` env var or `~/.secrets/mysite_openai_api_key`).
 
-### 2) Endpoint behavior
+### Endpoint behavior
 
 - `POST /api/ai/blueprint.php`
 - input: `{ "intentProfile": { ... } }`
 - output: blueprint JSON only
-- on backend/key/API failure, frontend falls back to deterministic local generator
+- if backend/key/API fails, frontend falls back to deterministic local generator
 
 ## cPanel deploy
 
-Deploy uses prebuilt `dist` only (no server-side npm build required):
+Deploy uses prebuilt `dist` only (no server-side npm build).
 
 - `.cpanel.yml` copies `dist/` into `/home/alexande/my.alexanderjgill.com/`
 
