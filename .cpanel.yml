@@ -2,3 +2,4 @@ deployment:
   tasks:
     - /bin/mkdir -p /home/alexande/my.alexanderjgill.com
     - /bin/cp -R dist/. /home/alexande/my.alexanderjgill.com/
+    - /bin/cp example.config.php /home/alexande/my.alexanderjgill.com/example.config.php
