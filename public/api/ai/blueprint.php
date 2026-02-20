@@ -68,8 +68,11 @@ function load_server_config(): array
 
     $home = rtrim((string) ($_SERVER['HOME'] ?? ''), '/');
     $host = sanitize_host_name((string) ($_SERVER['HTTP_HOST'] ?? ''));
+    $appRoot = dirname(__DIR__, 2);
 
     $paths = [];
+
+    $paths[] = $appRoot . '/config.php';
 
     $explicitPath = getenv('MYSITE_CONFIG_FILE');
     if (is_string($explicitPath) && trim($explicitPath) !== '') {

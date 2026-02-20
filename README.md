@@ -27,15 +27,19 @@ This backend reads config from files outside web root, so each environment can b
 
 Load order:
 
-1. `MYSITE_CONFIG_FILE` (if set)
-2. `~/.config/mysite/config.php`
-3. `~/.config/mysite/<host>.php` (host-specific override)
+1. `config.php` in app root (easy mode)
+2. `MYSITE_CONFIG_FILE` (if set)
+3. `~/.config/mysite/config.php`
+4. `~/.config/mysite/<host>.php` (host-specific override)
 
-Template file in repo:
+Template files in repo:
 
+- `example.config.php`
 - `config/server-config.example.php`
 
-For your production host, create this config file in cPanel File Manager:
+Quick path for cPanel (recommended): copy `example.config.php` to `config.php` in your deployed app root and fill it in.
+
+Alternative host-specific path:
 
 - `/home/alexande/.config/mysite/my.alexanderjgill.com.php`
 
