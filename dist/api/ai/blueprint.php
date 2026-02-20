@@ -1191,6 +1191,8 @@ Design a distinctive front-end site experience, not a dashboard.
 Treat modules as website sections with intentional hierarchy, flow, tone, and high visual impact.
 Design for wow-factor editorial blog feel while staying readable.
 Use post-driven storytelling; do not frame pages as if they are posts.
+Use onboarding transcript as the primary personalization signal.
+Design around the person (identity, interests, emotional tone), not generic site navigation.
 Design module ordering and shortcut labels around visitor intent and alexanderjgill.com content discovery.
 Prioritize pathways like latest posts, featured stories, Work, Read, Bio, Contact, and Main Site navigation.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
@@ -1216,6 +1218,7 @@ for ($passIndex = 1; $passIndex <= $thoughtPasses; $passIndex++) {
         "\nThought pass:\n" . (string) $passIndex . ' of ' . (string) $thoughtPasses .
         "\nPass style profile:\n" . json_encode($passConfig, JSON_UNESCAPED_SLASHES) .
         "\nOnboarding transcript:\n" . $transcriptPrompt .
+        "\nPersonalization directive:\n" . 'Prioritize unique style expression from transcript identity/interests before generic content navigation.' .
         "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
         "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
         "\nTreat posts as primary content stream for sections." .

@@ -4,13 +4,14 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 
 ## What it does
 
-- Full-screen terminal onboarding captures visitor intent in chat.
+- Full-screen terminal onboarding captures identity, interests, and desired experience tone in chat.
 - Chat transcript + intent profile drive blueprint generation.
 - Blueprint output is strictly JSON and validated against schema.
 - Shell UI is rendered from data-driven module mapping (safe component map, no arbitrary code execution).
 - WordPress is consumed read-only via REST (`posts` as primary content stream).
 - Valid blueprint is cached in `localStorage` for offline-friendly repeat visits.
 - Reset controls clear personalization and restart onboarding.
+- Final personalized shell includes an embedded AI concierge chat for UX guidance, hosting onboarding, and AI access routing.
 
 ## Stack
 
@@ -30,6 +31,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - `src/content/library.ts`: default content + runtime overrides
 - `public/api/ai/onboarding.php`: onboarding turn endpoint
 - `public/api/ai/blueprint.php`: blueprint generation endpoint
+- `public/api/ai/assistant.php`: in-shell assistant endpoint
 - `public/api/content/wp.php`: WordPress content bundle endpoint
 
 ## Local development
@@ -114,6 +116,23 @@ Generation behavior:
 - Candidate scoring and best-candidate selection
 - Strict URL sanitization against discovered WordPress links
 - Server fallback blueprint if AI is unavailable
+
+### `POST /api/ai/assistant.php`
+
+In-shell concierge assistant endpoint.
+
+Input includes:
+
+- `userMessage`
+- `transcript`
+- `visitorId`
+- `variantNonce`
+
+Output returns:
+
+- `assistantMessage`
+- `suggestions` (`label` + `action`)
+- `source`
 
 ### `GET /api/content/wp.php`
 

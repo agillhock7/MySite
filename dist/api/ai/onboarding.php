@@ -257,7 +257,10 @@ Goal: gather enough signal to fill intentProfile:
 Rules:
 - Ask only one concise follow-up question at a time when needed.
 - Mirror the user's language and clarify confusing terms plainly.
-- If the user seems confused, reframe with concrete examples related to pages like Work, Read, Bio, and Contact.
+- Ask about the person first: interests, personality, preferred interaction style, emotional tone.
+- Do not ask the user to choose site navigation or page menus.
+- Translate personal answers into intentProfile fields.
+- If the user seems confused, reframe using plain language and quick examples.
 - If user already provided enough detail, set isComplete=true.
 - Keep assistantMessage under 40 words.
 - Never output code, markdown, or explanations outside the JSON object.

@@ -2,9 +2,11 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
+import AssistantDock from '@/components/AssistantDock.vue';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
+import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 const router = useRouter();
@@ -14,6 +16,8 @@ const initializing = ref(true);
 const initializationError = ref('');
 const wordpressError = ref('');
 const blueprint = computed(() => personalization.blueprint);
+const visitorId = getOrCreateVisitorId();
+const assistantVariantNonce = getDesignIteration();
 
 function hashText(input: string): number {
   let hash = 2166136261;
@@ -373,6 +377,12 @@ onMounted(async () => {
         </aside>
       </div>
     </section>
+
+    <AssistantDock
+      :visitor-id="visitorId"
+      :variant-nonce="assistantVariantNonce"
+      :design-signature="designSignature"
+    />
   </main>
 </template>
 
@@ -397,7 +407,7 @@ onMounted(async () => {
   position: relative;
   overflow: hidden;
   min-height: 100vh;
-  padding: 1rem;
+  padding: 1rem 1rem 16rem;
   font-family: var(--shell-font, 'IBM Plex Sans', 'Segoe UI', sans-serif);
   background: var(--bg);
 }
@@ -726,7 +736,7 @@ h1 {
 
 @media (min-width: 900px) {
   .shell {
-    padding: 1.3rem 2rem 2.3rem;
+    padding: 1.3rem 2rem 6.5rem;
   }
 
   .shell-nav.nav-side {

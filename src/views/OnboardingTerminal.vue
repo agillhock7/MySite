@@ -98,10 +98,12 @@ function resetOnboardingState(): void {
 
 function normalizeIntentForGeneration(intent: IntentProfile): IntentProfile {
   return {
-    goal: intent.goal.trim() || 'Create a custom headless front-end experience for alexanderjgill.com',
+    goal:
+      intent.goal.trim() ||
+      'Design a highly personalized headless front-end experience based on this visitor personality and goals.',
     vibe: intent.vibe,
     density: intent.density,
-    primaryTopics: intent.primaryTopics.length > 0 ? intent.primaryTopics : ['Work', 'Read', 'Bio']
+    primaryTopics: intent.primaryTopics.length > 0 ? intent.primaryTopics : ['Identity', 'Interests', 'Goals']
   };
 }
 
@@ -172,6 +174,7 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
 async function handleCommand(command: string): Promise<void> {
   if (command === '/help') {
     pushLine('system', 'Commands: /help, /reset, /hardreset, /skip');
+    pushLine('system', 'Tip: answer with who you are, your interests, and the experience mood you want.');
     return;
   }
 
@@ -242,7 +245,7 @@ async function handleSubmit(): Promise<void> {
 
   await assistantReply(turn.assistantMessage, 80);
 
-  if ((turn.isComplete && turnsTaken.value >= 2) || turnsTaken.value >= 10) {
+  if ((turn.isComplete && turnsTaken.value >= 3) || turnsTaken.value >= 12) {
     await startBlueprintGeneration(intentDraft.value);
   }
 }
@@ -254,7 +257,8 @@ onMounted(async () => {
     return;
   }
 
-  pushLine('system', 'Refinement chat initialized. Type /help for commands.');
+  pushLine('system', 'Identity-first design chat initialized. Type /help for commands.');
+  pushLine('system', 'I will ask about you first, then generate a unique UX/UI style from that profile.');
   await seedConversation();
 });
 </script>
@@ -264,7 +268,7 @@ onMounted(async () => {
     <section class="terminal-panel" role="region" aria-label="Onboarding terminal">
       <header class="terminal-header">
         <span class="dot"></span>
-        <h1>Welcome terminal</h1>
+        <h1>Identity design terminal</h1>
         <p class="build-meta">{{ chatModeLabel }} · {{ BUILD_TAG }}</p>
       </header>
 

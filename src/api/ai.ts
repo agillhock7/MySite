@@ -21,6 +21,17 @@ export interface OnboardingTurnResult {
   source: 'backend' | 'local';
 }
 
+export interface AssistantActionSuggestion {
+  label: string;
+  action: string;
+}
+
+export interface AssistantTurnResult {
+  assistantMessage: string;
+  suggestions: AssistantActionSuggestion[];
+  source: 'backend' | 'local';
+}
+
 export interface GapSuggestion {
   topic: string;
   priority: 'high' | 'medium' | 'low';
@@ -49,6 +60,7 @@ export interface BlueprintGenerationResult {
 
 const BACKEND_BLUEPRINT_ENDPOINT = '/api/ai/blueprint.php';
 const BACKEND_ONBOARDING_ENDPOINT = '/api/ai/onboarding.php';
+const BACKEND_ASSISTANT_ENDPOINT = '/api/ai/assistant.php';
 
 export function defaultIntentProfile(): IntentProfile {
   return {
@@ -89,6 +101,46 @@ function normalizeDensity(raw: string): IntentProfile['density'] {
   }
 
   return 'medium';
+}
+
+function inferVibeFromLanguage(raw: string): IntentProfile['vibe'] | null {
+  const normalized = raw.toLowerCase();
+
+  if (/playful|fun|quirky|surprise|energetic|whimsical/.test(normalized)) {
+    return 'playful';
+  }
+
+  if (/cinematic|visual|bold|immersive|editorial|gallery|story/.test(normalized)) {
+    return 'visual';
+  }
+
+  if (/dense|detailed|technical|deep|analysis|research|comprehensive/.test(normalized)) {
+    return 'dense';
+  }
+
+  if (/minimal|clean|simple|calm|focused|quiet/.test(normalized)) {
+    return 'minimal';
+  }
+
+  return null;
+}
+
+function inferDensityFromLanguage(raw: string): IntentProfile['density'] | null {
+  const normalized = raw.toLowerCase();
+
+  if (/brief|quick|skim|lightweight|simple|short/.test(normalized)) {
+    return 'low';
+  }
+
+  if (/detailed|deep|thorough|comprehensive|rich|in-depth/.test(normalized)) {
+    return 'high';
+  }
+
+  if (/balanced|medium|moderate/.test(normalized)) {
+    return 'medium';
+  }
+
+  return null;
 }
 
 function parseTopics(raw: string): string[] {
@@ -656,7 +708,12 @@ function inferGoalFromMessage(message: string): string {
   return clean;
 }
 
-function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: string, seed: string): string {
+function composeFollowUpPrompt(
+  nextIntent: IntentProfile,
+  lastUserMessage: string,
+  seed: string,
+  userTurns: number
+): string {
   const missingGoal = nextIntent.goal.trim().length === 0;
   const missingTopics = nextIntent.primaryTopics.length < 2;
   const askedVibe = /minimal|visual|dense|playful/i.test(lastUserMessage);
@@ -670,35 +727,43 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
     ]);
   }
 
+  if (userTurns <= 1) {
+    return seededPick(seed, 'ask-identity', [
+      'Before design: what are you into right now, and what should this experience feel like about you?',
+      'Let me design around you first. What interests, obsessions, or themes should lead your experience?',
+      'Tell me about your style and interests so I can shape a uniquely personal experience.'
+    ]);
+  }
+
   if (missingGoal) {
     return seededPick(seed, 'ask-goal', [
-      'What outcome should this first-time visitor experience drive?',
-      'In one line, what should visitors accomplish before leaving the site?',
-      'What is the main journey you want this experience to trigger?'
+      'What should this experience make the visitor feel or do in the first 20 seconds?',
+      'If this UX worked perfectly, what action would people take first?',
+      'What is the one conversion or behavior this custom experience must drive?'
     ]);
   }
 
   if (!askedVibe) {
     return seededPick(seed, 'ask-vibe', [
-      'What visual tone fits best: minimal, visual, dense, or playful?',
-      'Pick the vibe that should guide the interface: minimal, visual, dense, or playful.',
-      'Should this feel minimal, visual, dense, or playful overall?'
+      'Choose the visual tone: minimal, visual, dense, or playful.',
+      'What design mood fits you best: minimal, visual, dense, or playful?',
+      'Pick your vibe so I can style this around your personality: minimal, visual, dense, or playful.'
     ]);
   }
 
   if (!askedDensity) {
     return seededPick(seed, 'ask-density', [
-      'How detailed should the experience feel: low, medium, or high density?',
-      'Should I keep it lightweight, balanced, or information-rich?',
-      'Choose information density: low, medium, or high.'
+      'Do you want a quick-scan flow or rich detail? Choose low, medium, or high density.',
+      'How much information per screen should I use: low, medium, or high?',
+      'Pick reading density: low, medium, or high.'
     ]);
   }
 
   if (missingTopics) {
     return seededPick(seed, 'ask-topics', [
-      'Name 2-4 topics this visitor should see first.',
-      'List the top topics to highlight first (2-4 is perfect).',
-      'What 2-4 content themes should anchor this experience?'
+      'List 2-4 personal interest themes to anchor the design.',
+      'Name 2-4 topics that represent your voice and should shape this experience.',
+      'What 2-4 themes should this personalized interface revolve around?'
     ]);
   }
 
@@ -718,6 +783,7 @@ function localOnboardingFallback(
   const lastUser = [...transcript].reverse().find((entry) => entry.role === 'user');
   const latestMessage = lastUser?.text ?? '';
   const seed = `${visitorId ?? 'visitor-local'}:v${variantNonce}:${transcript.length}`;
+  const userTurns = transcript.filter((entry) => entry.role === 'user').length;
 
   const nextIntent: IntentProfile = {
     ...currentIntent,
@@ -734,10 +800,20 @@ function localOnboardingFallback(
 
   if (/minimal|visual|dense|playful/i.test(latestMessage)) {
     nextIntent.vibe = normalizeVibe(latestMessage);
+  } else {
+    const inferredVibe = inferVibeFromLanguage(latestMessage);
+    if (inferredVibe) {
+      nextIntent.vibe = inferredVibe;
+    }
   }
 
   if (/\blow\b|\bmedium\b|\bhigh\b/i.test(latestMessage)) {
     nextIntent.density = normalizeDensity(latestMessage);
+  } else {
+    const inferredDensity = inferDensityFromLanguage(latestMessage);
+    if (inferredDensity) {
+      nextIntent.density = inferredDensity;
+    }
   }
 
   const extractedTopics = parseTopics(latestMessage);
@@ -749,11 +825,11 @@ function localOnboardingFallback(
   }
 
   const assistantMessage = lastUser
-    ? composeFollowUpPrompt(nextIntent, latestMessage, seed)
+    ? composeFollowUpPrompt(nextIntent, latestMessage, seed, userTurns)
     : seededPick(seed, 'opening', [
-        'Describe the visitor journey you want to create for this session.',
-        'Tell me what this visitor should accomplish first, and I will design around it.',
-        'What should this personalized experience prioritize first for the visitor?'
+        'Let us make this personal. What are you into, and what should visitors feel about you immediately?',
+        'I will design around your personality first. What interests and tone should define this experience?',
+        'Start with you: what topics, identity, or energy should this interface express?'
       ]);
 
   const complete = isIntentComplete(nextIntent);
@@ -921,4 +997,116 @@ export async function generateBlueprintWithFallback(
     wordpress: null,
     design: null
   };
+}
+
+function normalizeAssistantSuggestions(value: unknown): AssistantActionSuggestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const record = asObject(item);
+      if (!record) {
+        return null;
+      }
+
+      const label = typeof record.label === 'string' ? record.label.trim() : '';
+      const action = typeof record.action === 'string' ? record.action.trim() : '';
+
+      if (!label || !action) {
+        return null;
+      }
+
+      return { label, action };
+    })
+    .filter((item): item is AssistantActionSuggestion => item !== null)
+    .slice(0, 4);
+}
+
+function localAssistantFallback(userMessage: string): AssistantTurnResult {
+  const normalized = userMessage.toLowerCase();
+
+  if (/host|hosting|server|domain|pro suite|dark horse|whmcs/.test(normalized)) {
+    return {
+      assistantMessage:
+        'If you want managed hosting and onboarding, I recommend the Dark Horse Virtue Pro Suite path first. I can guide you through account setup and migration sequence.',
+      suggestions: [
+        { label: 'Open Pro Suite', action: 'https://hiops.darkhorsevirtue.io' },
+        { label: 'View Main Site', action: 'https://alexanderjgill.com' },
+        { label: 'Refine UX Again', action: '/onboarding?force=1' }
+      ],
+      source: 'local'
+    };
+  }
+
+  if (/ai|automation|assistant|agent|prompt/.test(normalized)) {
+    return {
+      assistantMessage:
+        'For AI access, start with your highest-value workflow and I will map a practical stack with rollout steps, guardrails, and cost control.',
+      suggestions: [
+        { label: 'Open Pro Suite', action: 'https://hiops.darkhorsevirtue.io' },
+        { label: 'Ask About Hosting', action: 'ask-hosting' },
+        { label: 'Reset Personalization', action: '/onboarding?force=1&reset=1' }
+      ],
+      source: 'local'
+    };
+  }
+
+  return {
+    assistantMessage:
+      'Tell me your goal and I will guide you to either hosting onboarding, AI access, or a custom UX refinement path.',
+    suggestions: [
+      { label: 'Dark Horse Virtue', action: 'https://hiops.darkhorsevirtue.io' },
+      { label: 'Main Blog', action: 'https://alexanderjgill.com' },
+      { label: 'Refine Experience', action: '/onboarding?force=1' }
+    ],
+    source: 'local'
+  };
+}
+
+export async function generateAssistantTurnWithFallback(params: {
+  transcript: OnboardingTranscriptLine[];
+  userMessage: string;
+  visitorId?: string;
+  variantNonce?: number;
+}): Promise<AssistantTurnResult> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(BACKEND_ASSISTANT_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(params),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return localAssistantFallback(params.userMessage);
+    }
+
+    const payload = (await response.json()) as unknown;
+    const record = asObject(payload);
+    if (!record) {
+      return localAssistantFallback(params.userMessage);
+    }
+
+    const assistantMessage =
+      typeof record.assistantMessage === 'string' && record.assistantMessage.trim().length > 0
+        ? record.assistantMessage.trim()
+        : localAssistantFallback(params.userMessage).assistantMessage;
+
+    return {
+      assistantMessage,
+      suggestions: normalizeAssistantSuggestions(record.suggestions),
+      source: 'backend'
+    };
+  } catch {
+    return localAssistantFallback(params.userMessage);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
