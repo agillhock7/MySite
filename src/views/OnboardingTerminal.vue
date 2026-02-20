@@ -11,6 +11,7 @@ import {
 import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { setRuntimeContentOverrides } from '@/content/library';
+import { BUILD_TAG } from '@/meta/build';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 interface TranscriptEntry {
@@ -19,9 +20,6 @@ interface TranscriptEntry {
   text: string;
 }
 
-const INITIAL_ASSISTANT_MESSAGE =
-  'Tell me what you want this visit to accomplish, and I will tailor the experience for you.';
-
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
@@ -29,6 +27,7 @@ const transcript = ref<TranscriptEntry[]>([]);
 const input = ref('');
 const thinking = ref(false);
 const transcriptRef = ref<HTMLElement | null>(null);
+const chatModeLabel = ref('Live AI chat pending');
 
 const intentDraft = ref<IntentProfile>(defaultIntentProfile());
 const turnsTaken = ref(0);
@@ -64,6 +63,25 @@ async function assistantReply(text: string, delay = 180): Promise<void> {
     await sleep(delay);
   }
   pushLine('assistant', text);
+}
+
+async function seedConversation(): Promise<void> {
+  thinking.value = true;
+  const turn = await generateOnboardingTurnWithFallback({
+    transcript: [],
+    currentIntent: intentDraft.value
+  });
+  thinking.value = false;
+
+  intentDraft.value = turn.intentProfile;
+  chatModeLabel.value = turn.source === 'backend' ? 'Live AI chat active' : 'Fallback chat mode';
+
+  if (turn.source === 'local' && !fallbackNoticeShown.value) {
+    fallbackNoticeShown.value = true;
+    pushLine('system', 'Live chat AI unavailable, continuing with local conversational fallback.');
+  }
+
+  await assistantReply(turn.assistantMessage, 80);
 }
 
 function resetOnboardingState(): void {
@@ -143,7 +161,7 @@ async function handleCommand(command: string): Promise<void> {
     transcript.value = [];
     resetOnboardingState();
     pushLine('system', 'Personalization cache cleared. Starting onboarding again.');
-    await assistantReply(INITIAL_ASSISTANT_MESSAGE, 80);
+    await seedConversation();
     return;
   }
 
@@ -183,6 +201,7 @@ async function handleSubmit(): Promise<void> {
 
   intentDraft.value = turn.intentProfile;
   turnsTaken.value += 1;
+  chatModeLabel.value = turn.source === 'backend' ? 'Live AI chat active' : 'Fallback chat mode';
 
   if (turn.source === 'local' && !fallbackNoticeShown.value) {
     fallbackNoticeShown.value = true;
@@ -198,7 +217,7 @@ async function handleSubmit(): Promise<void> {
 
 onMounted(async () => {
   pushLine('system', 'Terminal onboarding initialized. Type /help for commands.');
-  await assistantReply(INITIAL_ASSISTANT_MESSAGE, 80);
+  await seedConversation();
 });
 </script>
 
@@ -208,6 +227,7 @@ onMounted(async () => {
       <header class="terminal-header">
         <span class="dot"></span>
         <h1>Welcome terminal</h1>
+        <p class="build-meta">{{ chatModeLabel }} · {{ BUILD_TAG }}</p>
       </header>
 
       <div ref="transcriptRef" class="transcript" aria-live="polite">
@@ -267,6 +287,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  flex-wrap: wrap;
 }
 
 .dot {
@@ -281,6 +302,12 @@ h1 {
   margin: 0;
   font-size: clamp(1.05rem, 3.8vw, 1.3rem);
   font-weight: 500;
+}
+
+.build-meta {
+  margin: 0;
+  color: #6b7280;
+  font-size: 0.8rem;
 }
 
 .transcript {

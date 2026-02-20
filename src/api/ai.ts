@@ -307,6 +307,17 @@ function isIntentComplete(intent: IntentProfile): boolean {
   return intent.goal.trim().length > 0 && intent.primaryTopics.length >= 2;
 }
 
+function userLooksConfused(text: string): boolean {
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("don't get it") ||
+    normalized.includes('dont get it') ||
+    normalized.includes('not sure') ||
+    normalized === 'what?' ||
+    normalized === 'what'
+  );
+}
+
 function localOnboardingFallback(
   transcript: OnboardingTranscriptLine[],
   currentIntent: IntentProfile
@@ -341,14 +352,22 @@ function localOnboardingFallback(
 
   let assistantMessage = 'Tell me what you want this visitor experience to accomplish first.';
 
-  if (nextIntent.goal.trim().length === 0) {
+  if (!lastUser) {
+    assistantMessage =
+      'I can tailor this experience fast. What should this visitor journey help you achieve first?';
+  } else if (userLooksConfused(latestMessage)) {
+    assistantMessage =
+      'No problem. In one sentence, what do you want visitors to do first: start hosting, begin Pro Suite onboarding, or explore your work?';
+  } else if (nextIntent.goal.trim().length === 0) {
     assistantMessage = 'What main outcome do you want for this visitor journey?';
   } else if (!/minimal|visual|dense|playful/i.test(latestMessage) && currentIntent.vibe === nextIntent.vibe) {
     assistantMessage = 'What vibe fits best: minimal, visual, dense, or playful?';
   } else if (!/\blow\b|\bmedium\b|\bhigh\b/i.test(latestMessage) && currentIntent.density === nextIntent.density) {
-    assistantMessage = 'How much information density do you want: low, medium, or high?';
+    assistantMessage =
+      'How detailed should it feel: low (simple), medium (balanced), or high (information-rich)?';
   } else if (nextIntent.primaryTopics.length < 2) {
-    assistantMessage = 'Give me 2-4 primary topics separated by commas so I can shape the layout.';
+    assistantMessage =
+      'Give me 2-4 topics to highlight (for example: hosting, Pro Suite onboarding, case studies, contact).';
   } else {
     assistantMessage = 'Perfect. I have enough context to generate your personalized experience.';
   }
