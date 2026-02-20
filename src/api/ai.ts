@@ -125,9 +125,9 @@ function seededPick<T>(seed: string, salt: string, options: T[]): T {
   return options[seededIndex(seed, salt, options.length)];
 }
 
-function seedFromIntent(intentProfile: IntentProfile, visitorId: string): string {
+function seedFromIntent(intentProfile: IntentProfile, visitorId: string, variantNonce: number): string {
   const topics = intentProfile.primaryTopics.join('|').toLowerCase();
-  return `${visitorId}::${intentProfile.goal.toLowerCase()}::${intentProfile.vibe}::${intentProfile.density}::${topics}`;
+  return `${visitorId}::v${variantNonce}::${intentProfile.goal.toLowerCase()}::${intentProfile.vibe}::${intentProfile.density}::${topics}`;
 }
 
 function inferJourneyProfile(intentProfile: IntentProfile): {
@@ -230,9 +230,13 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
   ]);
   const heroVariant = seededPick(seed, 'hero-variant', ['default', 'spotlight', 'split']);
 
-  const gridVariant = seededPick(seed, 'grid-variant', ['default', 'magazine']);
-  const listVariant = seededPick(seed, 'list-variant', ['default', 'timeline']);
+  const gridVariant = seededPick(seed, 'grid-variant', ['default', 'magazine', 'mosaic', 'cards']);
+  const listVariant = seededPick(seed, 'list-variant', ['default', 'timeline', 'checklist', 'stacked']);
   const gridColumns = seededPick(seed, 'grid-columns', [2, 2, 3]);
+  const gridLimit = seededPick(seed, 'grid-limit', [3, 4, 5, 6]);
+  const gridOffset = seededPick(seed, 'grid-offset', [0, 1, 2]);
+  const listLimit = seededPick(seed, 'list-limit', [3, 4, 5, 6]);
+  const listOffset = seededPick(seed, 'list-offset', [0, 1, 2]);
 
   const moduleTemplates: BlueprintModule[][] = [
     [
@@ -263,7 +267,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
           title: `Proof around ${firstTopic}`,
           intro: `Live highlights aligned to ${intentProfile.goal || 'your stated outcome'}.`,
           variant: gridVariant,
-          columns: gridColumns
+          columns: gridColumns,
+          limit: gridLimit,
+          offset: gridOffset
         },
         contentKey: 'featuredGrid'
       },
@@ -273,7 +279,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         props: {
           title: `Editorial path for ${secondTopic}`,
           intro: 'Structured next actions based on content and visitor intent.',
-          variant: listVariant
+          variant: listVariant,
+          limit: listLimit,
+          offset: listOffset
         },
         contentKey: 'nextStepsList'
       },
@@ -306,7 +314,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
           title: 'Story + Signals from WordPress',
           intro: 'Recent content is used as dynamic source material for this visitor shell.',
           variant: gridVariant,
-          columns: gridColumns
+          columns: gridColumns,
+          limit: gridLimit,
+          offset: gridOffset
         },
         contentKey: 'featuredGrid'
       },
@@ -324,7 +334,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         props: {
           title: 'Roadmap to Action',
           intro: 'Move from context to action in fewer steps.',
-          variant: listVariant
+          variant: listVariant,
+          limit: listLimit,
+          offset: listOffset
         },
         contentKey: 'nextStepsList'
       },
@@ -356,7 +368,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
         props: {
           title: 'Visitor Priorities',
           intro: 'Top priorities inferred from visitor behavior and page context.',
-          variant: listVariant
+          variant: listVariant,
+          limit: listLimit,
+          offset: listOffset
         },
         contentKey: 'nextStepsList'
       },
@@ -367,7 +381,9 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
           title: 'Live Context Library',
           intro: 'Source material from alexanderjgill.com used for this shell.',
           variant: gridVariant,
-          columns: gridColumns
+          columns: gridColumns,
+          limit: gridLimit,
+          offset: gridOffset
         },
         contentKey: 'featuredGrid'
       },
@@ -390,7 +406,46 @@ function buildSeededModules(intentProfile: IntentProfile, seed: string): Bluepri
     ]
   ];
 
-  return moduleTemplates[seededIndex(seed, 'module-template', moduleTemplates.length)];
+  const modules = [...moduleTemplates[seededIndex(seed, 'module-template', moduleTemplates.length)]];
+  const extraModuleCandidates: BlueprintModule[] = [
+    {
+      id: `grid-archive-${seededIndex(seed, 'extra-grid-id', 9000)}`,
+      type: 'ContentGrid',
+      props: {
+        title: `Archive slice: ${firstTopic}`,
+        intro: 'Supplemental content slice for this visitor.',
+        variant: 'mosaic',
+        columns: 3,
+        limit: 4,
+        offset: 1
+      },
+      contentKey: 'featuredGrid'
+    },
+    {
+      id: `list-alt-${seededIndex(seed, 'extra-list-id', 9000)}`,
+      type: 'ContentList',
+      props: {
+        title: 'Secondary reading path',
+        intro: 'Alternate sequence based on this design seed.',
+        variant: 'checklist',
+        limit: 5,
+        offset: 1
+      },
+      contentKey: 'nextStepsList'
+    }
+  ];
+
+  for (const extra of extraModuleCandidates) {
+    if (modules.length >= 7) {
+      break;
+    }
+
+    if (seededIndex(seed, `include-${extra.id}`, 2) === 1) {
+      modules.push(extra);
+    }
+  }
+
+  return modules.slice(0, 8);
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -486,10 +541,11 @@ function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['w
 
 export async function generateBlueprintFromIntent(
   intentProfile: IntentProfile,
-  options?: { visitorId?: string }
+  options?: { visitorId?: string; variantNonce?: number }
 ): Promise<Blueprint> {
   const visitorId = options?.visitorId ?? 'visitor-local';
-  const seed = seedFromIntent(intentProfile, visitorId);
+  const variantNonce = options?.variantNonce ?? 0;
+  const seed = seedFromIntent(intentProfile, visitorId, variantNonce);
   const timestamp = new Date().toISOString();
   const journey = inferJourneyProfile(intentProfile);
 
@@ -612,11 +668,12 @@ function composeFollowUpPrompt(nextIntent: IntentProfile, lastUserMessage: strin
 function localOnboardingFallback(
   transcript: OnboardingTranscriptLine[],
   currentIntent: IntentProfile,
-  visitorId?: string
+  visitorId?: string,
+  variantNonce = 0
 ): OnboardingTurnResult {
   const lastUser = [...transcript].reverse().find((entry) => entry.role === 'user');
   const latestMessage = lastUser?.text ?? '';
-  const seed = `${visitorId ?? 'visitor-local'}:${transcript.length}`;
+  const seed = `${visitorId ?? 'visitor-local'}:v${variantNonce}:${transcript.length}`;
 
   const nextIntent: IntentProfile = {
     ...currentIntent,
@@ -669,7 +726,8 @@ function localOnboardingFallback(
 async function requestOnboardingTurnFromBackend(
   transcript: OnboardingTranscriptLine[],
   currentIntent: IntentProfile,
-  visitorId?: string
+  visitorId?: string,
+  variantNonce?: number
 ): Promise<OnboardingTurnResult | null> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -680,7 +738,7 @@ async function requestOnboardingTurnFromBackend(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ transcript, currentIntent, visitorId }),
+      body: JSON.stringify({ transcript, currentIntent, visitorId, variantNonce }),
       signal: controller.signal
     });
 
@@ -718,22 +776,30 @@ export async function generateOnboardingTurnWithFallback(params: {
   transcript: OnboardingTranscriptLine[];
   currentIntent: IntentProfile;
   visitorId?: string;
+  variantNonce?: number;
 }): Promise<OnboardingTurnResult> {
   const backendTurn = await requestOnboardingTurnFromBackend(
     params.transcript,
     params.currentIntent,
-    params.visitorId
+    params.visitorId,
+    params.variantNonce
   );
   if (backendTurn) {
     return backendTurn;
   }
 
-  return localOnboardingFallback(params.transcript, params.currentIntent, params.visitorId);
+  return localOnboardingFallback(
+    params.transcript,
+    params.currentIntent,
+    params.visitorId,
+    params.variantNonce ?? 0
+  );
 }
 
 async function requestBlueprintFromBackend(
   intentProfile: IntentProfile,
-  visitorId?: string
+  visitorId?: string,
+  variantNonce?: number
 ): Promise<BlueprintGenerationResult | null> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
@@ -744,7 +810,7 @@ async function requestBlueprintFromBackend(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ intentProfile, visitorId }),
+      body: JSON.stringify({ intentProfile, visitorId, variantNonce }),
       signal: controller.signal
     });
 
@@ -784,9 +850,13 @@ async function requestBlueprintFromBackend(
 
 export async function generateBlueprintWithFallback(
   intentProfile: IntentProfile,
-  options?: { visitorId?: string }
+  options?: { visitorId?: string; variantNonce?: number }
 ): Promise<BlueprintGenerationResult> {
-  const backendResult = await requestBlueprintFromBackend(intentProfile, options?.visitorId);
+  const backendResult = await requestBlueprintFromBackend(
+    intentProfile,
+    options?.visitorId,
+    options?.variantNonce
+  );
   if (backendResult) {
     return backendResult;
   }

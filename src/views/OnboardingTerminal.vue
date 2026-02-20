@@ -12,7 +12,7 @@ import { defaultBlueprint } from '@/blueprint/defaultBlueprint';
 import { migrateBlueprintIfNeeded, validateBlueprint } from '@/blueprint/engine';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
-import { getOrCreateVisitorId } from '@/personalization/visitor';
+import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 interface TranscriptEntry {
@@ -30,6 +30,7 @@ const thinking = ref(false);
 const transcriptRef = ref<HTMLElement | null>(null);
 const chatModeLabel = ref('Live AI chat pending');
 const visitorId = getOrCreateVisitorId();
+const variantNonce = ref(getDesignIteration());
 
 const intentDraft = ref<IntentProfile>(defaultIntentProfile());
 const turnsTaken = ref(0);
@@ -72,7 +73,8 @@ async function seedConversation(): Promise<void> {
   const turn = await generateOnboardingTurnWithFallback({
     transcript: [],
     currentIntent: intentDraft.value,
-    visitorId
+    visitorId,
+    variantNonce: variantNonce.value
   });
   thinking.value = false;
 
@@ -127,7 +129,8 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
 
   thinking.value = true;
   const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent), {
-    visitorId
+    visitorId,
+    variantNonce: variantNonce.value
   });
   thinking.value = false;
 
@@ -163,6 +166,7 @@ async function handleCommand(command: string): Promise<void> {
 
   if (command === '/reset') {
     personalization.resetPersonalization();
+    variantNonce.value = getDesignIteration();
     transcript.value = [];
     resetOnboardingState();
     pushLine('system', 'Personalization cache cleared. Starting refinement chat again.');
@@ -207,7 +211,8 @@ async function handleSubmit(): Promise<void> {
   const turn = await generateOnboardingTurnWithFallback({
     transcript: toTranscriptLines(transcript.value),
     currentIntent: intentDraft.value,
-    visitorId
+    visitorId,
+    variantNonce: variantNonce.value
   });
   thinking.value = false;
 

@@ -90,6 +90,25 @@ function normalize_visitor_id(array $decoded): string
     return substr($sanitized, 0, 80);
 }
 
+function normalize_variant_nonce(array $decoded): int
+{
+    $raw = $decoded['variantNonce'] ?? 0;
+    if (!is_int($raw) && !is_float($raw) && !is_string($raw)) {
+        return 0;
+    }
+
+    $value = (int) $raw;
+    if ($value < 0) {
+        return 0;
+    }
+
+    if ($value > 1000000) {
+        return 1000000;
+    }
+
+    return $value;
+}
+
 function seeded_value(string $visitorId, string $salt, int $max): int
 {
     if ($max <= 1) {
@@ -318,7 +337,7 @@ function normalize_modules(array $candidateModules): array
     return array_slice($normalized, 0, 8);
 }
 
-function normalize_shortcuts(array $candidateShortcuts, array $intent, array $snapshot): array
+function normalize_shortcuts(array $candidateShortcuts, array $intent, array $snapshot, string $visitorId): array
 {
     $conversionProfile = mysite_wp_conversion_profile($intent);
     $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
@@ -369,7 +388,22 @@ function normalize_shortcuts(array $candidateShortcuts, array $intent, array $sn
         }
     }
 
-    return $normalized;
+    if (count($normalized) <= 2) {
+        return $normalized;
+    }
+
+    $fixed = array_slice($normalized, 0, 2);
+    $remaining = array_slice($normalized, 2);
+
+    usort($remaining, static function (array $left, array $right) use ($visitorId): int {
+        $leftKey = (string) ($left['label'] ?? '') . '|' . (string) ($left['action'] ?? '');
+        $rightKey = (string) ($right['label'] ?? '') . '|' . (string) ($right['action'] ?? '');
+        $leftWeight = seeded_value($visitorId, 'shortcut-weight:' . $leftKey, 1000);
+        $rightWeight = seeded_value($visitorId, 'shortcut-weight:' . $rightKey, 1000);
+        return $leftWeight <=> $rightWeight;
+    });
+
+    return array_merge($fixed, $remaining);
 }
 
 function reorder_modules_for_visitor(array $modules, string $visitorId): array
@@ -417,8 +451,8 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
     $heroVariants = ['default', 'spotlight', 'split'];
-    $gridVariants = ['default', 'magazine'];
-    $listVariants = ['default', 'timeline'];
+    $gridVariants = ['default', 'magazine', 'mosaic', 'cards'];
+    $listVariants = ['default', 'timeline', 'checklist', 'stacked'];
     $gridColumns = [2, 2, 3];
 
     foreach ($modules as $index => $module) {
@@ -453,6 +487,8 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
             }
             $props['variant'] = $gridVariants[seeded_value($visitorId, 'grid-variant:' . $index, count($gridVariants))];
             $props['columns'] = $gridColumns[seeded_value($visitorId, 'grid-columns:' . $index, count($gridColumns))];
+            $props['limit'] = 3 + seeded_value($visitorId, 'grid-limit:' . $index, 4);
+            $props['offset'] = seeded_value($visitorId, 'grid-offset:' . $index, 3);
         }
 
         if ($type === 'ContentList') {
@@ -463,6 +499,8 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
                 $props['intro'] = 'Action sequence generated from visitor + content signals.';
             }
             $props['variant'] = $listVariants[seeded_value($visitorId, 'list-variant:' . $index, count($listVariants))];
+            $props['limit'] = 3 + seeded_value($visitorId, 'list-limit:' . $index, 4);
+            $props['offset'] = seeded_value($visitorId, 'list-offset:' . $index, 2);
         }
 
         if ($type === 'QuickActions' && trim((string) ($props['title'] ?? '')) === '') {
@@ -474,6 +512,68 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
         }
 
         $modules[$index]['props'] = $props;
+    }
+
+    return $modules;
+}
+
+function augment_modules_for_diversity(array $modules, array $intent, string $visitorId): array
+{
+    if (count($modules) >= 7) {
+        return $modules;
+    }
+
+    $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
+    $firstTopic = isset($topics[0]) ? trim((string) $topics[0]) : 'work';
+
+    $extraPool = [
+        [
+            'id' => 'grid-archive-' . seeded_value($visitorId, 'extra-grid-a', 9999),
+            'type' => 'ContentGrid',
+            'props' => [
+                'title' => 'Archive view: ' . $firstTopic,
+                'intro' => 'Secondary content slice for deeper browsing.',
+                'variant' => 'mosaic',
+                'columns' => 3,
+                'offset' => 1,
+                'limit' => 4
+            ],
+            'contentKey' => 'featuredGrid'
+        ],
+        [
+            'id' => 'list-insights-' . seeded_value($visitorId, 'extra-list-b', 9999),
+            'type' => 'ContentList',
+            'props' => [
+                'title' => 'Secondary reading path',
+                'intro' => 'An alternate route through related pages and priorities.',
+                'variant' => 'checklist',
+                'offset' => 1,
+                'limit' => 5
+            ],
+            'contentKey' => 'nextStepsList'
+        ],
+        [
+            'id' => 'actions-alt-' . seeded_value($visitorId, 'extra-actions-c', 9999),
+            'type' => 'QuickActions',
+            'props' => [
+                'title' => 'Navigation shortcuts'
+            ],
+            'contentKey' => 'quickStartActions'
+        ]
+    ];
+
+    usort($extraPool, static function (array $left, array $right) use ($visitorId): int {
+        $leftId = (string) ($left['id'] ?? '');
+        $rightId = (string) ($right['id'] ?? '');
+        return seeded_value($visitorId, 'extra-order:' . $leftId, 1000) <=> seeded_value($visitorId, 'extra-order:' . $rightId, 1000);
+    });
+
+    foreach ($extraPool as $extraModule) {
+        if (count($modules) >= 7) {
+            break;
+        }
+
+        $modules[] = $extraModule;
     }
 
     return $modules;
@@ -512,17 +612,17 @@ function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot
     $candidateModules = is_array($candidate['modules'] ?? null) ? $candidate['modules'] : [];
     $candidateShortcuts = is_array($candidate['shortcuts'] ?? null) ? $candidate['shortcuts'] : [];
 
+    $normalizedModules = normalize_modules($candidateModules);
+    $normalizedModules = augment_modules_for_diversity($normalizedModules, $intent, $visitorId);
+    $normalizedModules = reorder_modules_for_visitor($normalizedModules, $visitorId);
+    $normalizedModules = personalize_module_props($normalizedModules, $intent, $snapshot, $visitorId);
+
     return [
         'version' => 1,
         'theme' => $theme,
         'layout' => $layout,
-        'modules' => personalize_module_props(
-            reorder_modules_for_visitor(normalize_modules($candidateModules), $visitorId),
-            $intent,
-            $snapshot,
-            $visitorId
-        ),
-        'shortcuts' => normalize_shortcuts($candidateShortcuts, $intent, $snapshot),
+        'modules' => $normalizedModules,
+        'shortcuts' => normalize_shortcuts($candidateShortcuts, $intent, $snapshot, $visitorId),
         'createdAt' => (string) ($candidate['createdAt'] ?? $now),
         'updatedAt' => $now
     ];
@@ -541,6 +641,8 @@ if (!is_array($decodedBody)) {
 $config = mysite_load_server_config();
 $intent = normalize_intent($decodedBody);
 $visitorId = normalize_visitor_id($decodedBody);
+$variantNonce = normalize_variant_nonce($decodedBody);
+$visitorSeedKey = $visitorId . ':v' . (string) $variantNonce;
 $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
 
 $enabled = (bool) ($openAiConfig['enabled'] ?? true);
@@ -591,9 +693,10 @@ Use existing WordPress content as source-of-truth context and add guidance to fi
 Each visitor has a design seed. Use it to make the layout feel unique, not generic.
 PROMPT;
 
-$visitorSeed = substr(sha1($visitorId), 0, 12);
+$visitorSeed = substr(sha1($visitorSeedKey), 0, 12);
 $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
     "\nVisitor design seed:\n" . $visitorSeed .
+    "\nDesign iteration:\n" . (string) $variantNonce .
     "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
     "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
     "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
@@ -656,7 +759,7 @@ if ($blueprint === null) {
     send_json(502, ['error' => 'OpenAI output was not valid JSON']);
 }
 
-$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot, $visitorId);
+$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot, $visitorSeedKey);
 
 send_json(200, [
     'blueprint' => $blueprint,

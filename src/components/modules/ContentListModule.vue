@@ -27,6 +27,28 @@ const items = computed(() => {
   const content = props.content as { items?: ListItem[] };
   return Array.isArray(content.items) ? content.items : [];
 });
+
+function parseNumberProp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+
+  return fallback;
+}
+
+const visibleItems = computed(() => {
+  const offset = parseNumberProp(props.moduleProps.offset, 0);
+  const limit = parseNumberProp(props.moduleProps.limit, items.value.length || 6);
+
+  return items.value.slice(offset, offset + Math.max(1, limit));
+});
 </script>
 
 <template>
@@ -34,7 +56,7 @@ const items = computed(() => {
     <h3>{{ title }}</h3>
     <p v-if="intro" class="intro">{{ intro }}</p>
     <ul>
-      <li v-for="item in items" :key="item.title">
+      <li v-for="item in visibleItems" :key="item.title">
         <strong>
           <a
             v-if="item.href && item.href.length > 0"
@@ -98,5 +120,26 @@ p {
 
 .variant-timeline li {
   border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.variant-checklist li {
+  position: relative;
+  padding-left: 1.5rem;
+}
+
+.variant-checklist li::before {
+  content: '';
+  position: absolute;
+  left: 0.55rem;
+  top: 0.98rem;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.variant-stacked li {
+  border-width: 2px;
+  background: var(--surface);
 }
 </style>

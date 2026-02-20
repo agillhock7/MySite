@@ -6,7 +6,7 @@ import { defaultIntentProfile, generateBlueprintWithFallback, type IntentProfile
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
-import { getOrCreateVisitorId } from '@/personalization/visitor';
+import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 const router = useRouter();
@@ -51,7 +51,10 @@ async function initializePersonalization(): Promise<void> {
 
   if (!personalization.blueprint) {
     const visitorId = getOrCreateVisitorId();
-    const generated = await generateBlueprintWithFallback(deriveAutoIntent(), { visitorId });
+    const generated = await generateBlueprintWithFallback(deriveAutoIntent(), {
+      visitorId,
+      variantNonce: getDesignIteration()
+    });
 
     if (Object.keys(generated.contentOverrides).length > 0) {
       setRuntimeContentOverrides(generated.contentOverrides);
@@ -86,6 +89,11 @@ const modeClass = computed(() => {
 });
 
 const toneClass = computed(() => `tone-${visualSeed.value % 4}`);
+const archetypeClass = computed(() => `archetype-${visualSeed.value % 5}`);
+const archetypeLabel = computed(() => {
+  const labels = ['Editorial', 'Atlas', 'Studio', 'Signal', 'Prism'];
+  return labels[visualSeed.value % labels.length];
+});
 
 const designSignature = computed(() => {
   const signature = visualSeed.value.toString(36).toUpperCase();
@@ -99,7 +107,8 @@ const shellStyle = computed(() => {
   return {
     '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
     '--radius': `${radius}px`,
-    '--panel-blur': `${panelBlur}px`
+    '--panel-blur': `${panelBlur}px`,
+    '--module-gap': `${0.6 + (visualSeed.value % 5) * 0.12}rem`
   };
 });
 
@@ -165,10 +174,17 @@ onMounted(async () => {
     </section>
   </main>
 
-  <main v-else-if="blueprint" class="shell" :class="[modeClass, toneClass]" :style="shellStyle">
+  <main
+    v-else-if="blueprint"
+    class="shell"
+    :class="[modeClass, toneClass, archetypeClass]"
+    :style="shellStyle"
+  >
     <header class="shell-header">
       <div>
-        <p class="eyebrow">Visitor Signature {{ designSignature }} · {{ BUILD_TAG }}</p>
+        <p class="eyebrow">
+          {{ archetypeLabel }} · Visitor Signature {{ designSignature }} · {{ BUILD_TAG }}
+        </p>
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
         <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
@@ -229,6 +245,7 @@ onMounted(async () => {
 .shell {
   min-height: 100vh;
   padding: 1rem;
+  font-family: var(--shell-font, 'IBM Plex Sans', 'Segoe UI', sans-serif);
   background:
     radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--accent) 25%, transparent), transparent 38%),
     radial-gradient(circle at 85% 2%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 33%),
@@ -354,7 +371,7 @@ h1 {
 .module-stack {
   margin-top: 1.1rem;
   display: grid;
-  gap: 1rem;
+  gap: var(--module-gap);
 }
 
 .module-stack.density-low {
@@ -372,6 +389,59 @@ h1 {
 .slot-type-Hero :deep(.hero-module) {
   padding: 1.35rem;
   border-radius: calc(var(--radius) + 4px);
+}
+
+.archetype-0 {
+  --shell-font: 'Georgia', 'Times New Roman', serif;
+}
+
+.archetype-0 :deep(.module-card),
+.archetype-0 :deep(.hero-module) {
+  border-radius: 8px;
+  border-width: 1px;
+}
+
+.archetype-1 {
+  --shell-font: 'Trebuchet MS', 'Segoe UI', sans-serif;
+}
+
+.archetype-1 :deep(.module-card),
+.archetype-1 :deep(.hero-module) {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(calc(var(--panel-blur) + 2px));
+}
+
+.archetype-2 {
+  --shell-font: 'Verdana', 'Segoe UI', sans-serif;
+}
+
+.archetype-2 :deep(.module-card),
+.archetype-2 :deep(.hero-module) {
+  border-width: 2px;
+  box-shadow: 6px 6px 0 color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.archetype-3 {
+  --shell-font: 'Palatino', 'Book Antiqua', serif;
+}
+
+.archetype-3 :deep(.module-card),
+.archetype-3 :deep(.hero-module) {
+  border-radius: 2px;
+}
+
+.archetype-4 {
+  --shell-font: 'Tahoma', 'Segoe UI', sans-serif;
+}
+
+.archetype-4 :deep(.module-card),
+.archetype-4 :deep(.hero-module) {
+  border-width: 1px;
+  background: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--accent) 10%, var(--surface)),
+    var(--surface)
+  );
 }
 
 @media (min-width: 960px) {

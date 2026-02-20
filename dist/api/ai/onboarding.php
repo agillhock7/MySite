@@ -89,6 +89,25 @@ function normalize_visitor_id(array $decoded): string
     return substr($sanitized, 0, 80);
 }
 
+function normalize_variant_nonce(array $decoded): int
+{
+    $raw = $decoded['variantNonce'] ?? 0;
+    if (!is_int($raw) && !is_float($raw) && !is_string($raw)) {
+        return 0;
+    }
+
+    $value = (int) $raw;
+    if ($value < 0) {
+        return 0;
+    }
+
+    if ($value > 1000000) {
+        return 1000000;
+    }
+
+    return $value;
+}
+
 function normalize_transcript($value): array
 {
     if (!is_array($value)) {
@@ -205,7 +224,8 @@ if ($apiKey === '') {
 $transcript = normalize_transcript($decodedBody['transcript'] ?? []);
 $currentIntent = normalize_intent_profile($decodedBody['currentIntent'] ?? []);
 $visitorId = normalize_visitor_id($decodedBody);
-$visitorSeed = substr(sha1($visitorId), 0, 10);
+$variantNonce = normalize_variant_nonce($decodedBody);
+$visitorSeed = substr(sha1($visitorId . ':v' . (string) $variantNonce), 0, 10);
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
 if ($model === '') {
@@ -246,6 +266,7 @@ PROMPT;
 
 $userPrompt = "Current intent draft:\n" . json_encode($currentIntent, JSON_UNESCAPED_SLASHES) .
     "\nVisitor seed:\n" . $visitorSeed .
+    "\nDesign iteration:\n" . (string) $variantNonce .
     "\nRecent transcript:\n" . json_encode($transcript, JSON_UNESCAPED_SLASHES);
 
 $payload = [

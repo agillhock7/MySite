@@ -40,6 +40,28 @@ const items = computed(() => {
   const content = props.content as { items?: GridItem[] };
   return Array.isArray(content.items) ? content.items : [];
 });
+
+function parseNumberProp(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.floor(value));
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+
+  return fallback;
+}
+
+const visibleItems = computed(() => {
+  const offset = parseNumberProp(props.moduleProps.offset, 0);
+  const limit = parseNumberProp(props.moduleProps.limit, items.value.length || 6);
+
+  return items.value.slice(offset, offset + Math.max(1, limit));
+});
 </script>
 
 <template>
@@ -47,7 +69,7 @@ const items = computed(() => {
     <h3>{{ title }}</h3>
     <p v-if="intro" class="intro">{{ intro }}</p>
     <div class="grid" :class="gridColumnsClass">
-      <article v-for="item in items" :key="item.title" class="grid-item">
+      <article v-for="item in visibleItems" :key="item.title" class="grid-item">
         <h4>
           <a
             v-if="item.href && item.href.length > 0"
@@ -118,6 +140,15 @@ p {
     color-mix(in srgb, var(--accent) 8%, var(--surface)),
     var(--surface)
   );
+}
+
+.variant-mosaic .grid-item:nth-child(odd) {
+  transform: translateY(-2px);
+}
+
+.variant-cards .grid-item {
+  border-width: 2px;
+  background: var(--surface);
 }
 
 @media (min-width: 700px) {

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { clearBlueprint, loadBlueprint, saveBlueprint } from '@/blueprint/engine';
 import type { Blueprint } from '@/blueprint/schema';
 import { clearRuntimeContentOverrides } from '@/content/library';
+import { bumpDesignIteration } from '@/personalization/visitor';
 
 interface PersonalizationState {
   blueprint: Blueprint | null;
@@ -28,6 +29,7 @@ export const usePersonalizationStore = defineStore('personalization', {
       this.blueprint = null;
       clearBlueprint();
       clearRuntimeContentOverrides();
+      bumpDesignIteration();
     }
   }
 });

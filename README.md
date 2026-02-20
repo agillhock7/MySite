@@ -135,5 +135,5 @@ Deployment flow:
 
 After deploy:
 
-- Open `/reset` to force-clear personalization cache and regenerate a fresh shell.
+- Open `/reset` to force-clear personalization cache and regenerate a fresh shell (design iteration increments each reset).
 - Check shell header build tag to confirm latest frontend is live.
