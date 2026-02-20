@@ -152,7 +152,7 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
 
 async function handleCommand(command: string): Promise<void> {
   if (command === '/help') {
-    pushLine('system', 'Commands: /help, /reset, /skip');
+    pushLine('system', 'Commands: /help, /reset, /hardreset, /skip');
     return;
   }
 
@@ -168,6 +168,12 @@ async function handleCommand(command: string): Promise<void> {
   if (command === '/skip') {
     pushLine('system', 'Skipping onboarding. Using default blueprint.');
     await finalizeBlueprint(defaultBlueprint());
+    return;
+  }
+
+  if (command === '/hardreset') {
+    pushLine('system', 'Performing hard reset via router.');
+    await router.replace('/reset');
     return;
   }
 

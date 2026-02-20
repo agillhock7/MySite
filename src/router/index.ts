@@ -11,6 +11,11 @@ const routes = [
     redirect: () => (loadBlueprint() ? '/app' : '/onboarding')
   },
   {
+    path: '/reset',
+    name: 'reset',
+    redirect: '/onboarding?force=1&reset=1'
+  },
+  {
     path: '/onboarding',
     name: 'onboarding',
     component: OnboardingTerminal
@@ -40,9 +45,20 @@ export function installRouterGuards(pinia: Pinia): void {
 
   router.beforeEach((to) => {
     const personalization = usePersonalizationStore(pinia);
+    const shouldForceOnboarding = to.path === '/onboarding' && to.query.force === '1';
+    const shouldResetOnboardingState =
+      to.path === '/onboarding' && (to.query.reset === '1' || to.query.clear === '1');
 
     if (!personalization.blueprint) {
       personalization.loadFromStorage();
+    }
+
+    if (shouldResetOnboardingState) {
+      personalization.resetPersonalization();
+    }
+
+    if (shouldForceOnboarding) {
+      return true;
     }
 
     if (to.path === '/app' && !personalization.hasBlueprint) {
