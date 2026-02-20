@@ -203,28 +203,149 @@ function infer_layout_from_intent(array $intent): array
     ];
 }
 
-function apply_experience_blueprint_defaults(array $candidate, array $intent, array $snapshot): array
+function normalize_module_content_key(string $type, string $contentKey): string
+{
+    if ($contentKey !== '') {
+        return $contentKey;
+    }
+
+    if ($type === 'Hero') {
+        return 'heroWelcome';
+    }
+    if ($type === 'ContentGrid') {
+        return 'featuredGrid';
+    }
+    if ($type === 'ContentList') {
+        return 'nextStepsList';
+    }
+    if ($type === 'QuickActions') {
+        return 'quickStartActions';
+    }
+
+    return 'faqGeneral';
+}
+
+function normalize_modules(array $candidateModules): array
+{
+    $allowedTypes = ['Hero', 'ContentGrid', 'ContentList', 'QuickActions', 'FAQ'];
+    $normalized = [];
+    $seenIds = [];
+
+    foreach ($candidateModules as $index => $module) {
+        if (!is_array($module)) {
+            continue;
+        }
+
+        $type = (string) ($module['type'] ?? '');
+        if (!in_array($type, $allowedTypes, true)) {
+            continue;
+        }
+
+        $id = trim((string) ($module['id'] ?? ''));
+        if ($id === '') {
+            $id = strtolower($type) . '-' . ($index + 1);
+        }
+        if (isset($seenIds[$id])) {
+            $id = $id . '-' . ($index + 1);
+        }
+        $seenIds[$id] = true;
+
+        $props = $module['props'] ?? [];
+        if (!is_array($props)) {
+            $props = [];
+        }
+
+        $contentKeyRaw = trim((string) ($module['contentKey'] ?? ''));
+        $contentKey = normalize_module_content_key($type, $contentKeyRaw);
+
+        $normalized[] = [
+            'id' => $id,
+            'type' => $type,
+            'props' => $props,
+            'contentKey' => $contentKey
+        ];
+    }
+
+    if (count($normalized) === 0) {
+        return [
+            ['id' => 'hero-journey', 'type' => 'Hero', 'props' => [], 'contentKey' => 'heroWelcome'],
+            ['id' => 'actions-start', 'type' => 'QuickActions', 'props' => [], 'contentKey' => 'quickStartActions'],
+            ['id' => 'grid-highlights', 'type' => 'ContentGrid', 'props' => [], 'contentKey' => 'featuredGrid'],
+            ['id' => 'list-next', 'type' => 'ContentList', 'props' => [], 'contentKey' => 'nextStepsList'],
+            ['id' => 'faq-trust', 'type' => 'FAQ', 'props' => [], 'contentKey' => 'faqGeneral']
+        ];
+    }
+
+    return array_slice($normalized, 0, 8);
+}
+
+function normalize_shortcuts(array $candidateShortcuts, array $intent, array $snapshot): array
 {
     $conversionProfile = mysite_wp_conversion_profile($intent);
+    $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
+
+    $defaults = [
+        [
+            'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
+            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
+        ],
+        [
+            'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
+            'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl)
+        ],
+        ['label' => 'Explore Main Site', 'action' => $baseUrl]
+    ];
+
+    $normalized = [];
+    foreach ($candidateShortcuts as $shortcut) {
+        if (!is_array($shortcut)) {
+            continue;
+        }
+
+        $label = trim((string) ($shortcut['label'] ?? ''));
+        $action = trim((string) ($shortcut['action'] ?? ''));
+        if ($label === '' || $action === '') {
+            continue;
+        }
+
+        $normalized[] = ['label' => $label, 'action' => $action];
+        if (count($normalized) >= 6) {
+            break;
+        }
+    }
+
+    foreach ($defaults as $defaultShortcut) {
+        $found = false;
+        foreach ($normalized as $existing) {
+            if ($existing['action'] === $defaultShortcut['action']) {
+                $found = true;
+                break;
+            }
+        }
+        if (!$found) {
+            $normalized[] = $defaultShortcut;
+        }
+        if (count($normalized) >= 6) {
+            break;
+        }
+    }
+
+    return $normalized;
+}
+
+function normalize_ai_blueprint(array $candidate, array $intent, array $snapshot): array
+{
     $theme = infer_theme_from_intent($intent);
     $layout = infer_layout_from_intent($intent);
     $now = gmdate('c');
-    $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
-    $goal = trim((string) ($intent['goal'] ?? ''));
-    $topicLabel = (string) (($intent['primaryTopics'][0] ?? '') ?: 'Hosting + Pro Suite');
-
-    if ($goal === '') {
-        $goal = (string) ($conversionProfile['heroTitle'] ?? 'Personalized visitor journey');
-    }
 
     if (is_array($candidate['theme'] ?? null)) {
         $candidateMode = (string) ($candidate['theme']['mode'] ?? '');
-        $candidateAccent = (string) ($candidate['theme']['accent'] ?? '');
+        $candidateAccent = trim((string) ($candidate['theme']['accent'] ?? ''));
 
         if (in_array($candidateMode, ['dark', 'light'], true)) {
             $theme['mode'] = $candidateMode;
         }
-
         if ($candidateAccent !== '') {
             $theme['accent'] = $candidateAccent;
         }
@@ -242,58 +363,15 @@ function apply_experience_blueprint_defaults(array $candidate, array $intent, ar
         }
     }
 
+    $candidateModules = is_array($candidate['modules'] ?? null) ? $candidate['modules'] : [];
+    $candidateShortcuts = is_array($candidate['shortcuts'] ?? null) ? $candidate['shortcuts'] : [];
+
     return [
         'version' => 1,
         'theme' => $theme,
         'layout' => $layout,
-        'modules' => [
-            [
-                'id' => 'hero-journey',
-                'type' => 'Hero',
-                'props' => [
-                    'title' => $goal,
-                    'subtitle' => 'Journey focus: ' . $topicLabel,
-                    'ctaUrl' => (string) ($conversionProfile['heroCtaUrl'] ?? 'https://hiops.darkhorsevirtue.io')
-                ],
-                'contentKey' => 'heroWelcome'
-            ],
-            [
-                'id' => 'actions-conversion',
-                'type' => 'QuickActions',
-                'props' => ['title' => 'Start Here'],
-                'contentKey' => 'quickStartActions'
-            ],
-            [
-                'id' => 'grid-live-content',
-                'type' => 'ContentGrid',
-                'props' => ['title' => 'Live Highlights from alexanderjgill.com'],
-                'contentKey' => 'featuredGrid'
-            ],
-            [
-                'id' => 'list-next-best',
-                'type' => 'ContentList',
-                'props' => ['title' => 'Recommended Next Steps'],
-                'contentKey' => 'nextStepsList'
-            ],
-            [
-                'id' => 'faq-trust',
-                'type' => 'FAQ',
-                'props' => ['title' => 'How This Personalization Works'],
-                'contentKey' => 'faqGeneral'
-            ]
-        ],
-        'shortcuts' => [
-            [
-                'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Start Pro Suite Onboarding'),
-                'action' => (string) ($conversionProfile['primaryActionUrl'] ?? 'https://hiops.darkhorsevirtue.io')
-            ],
-            [
-                'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Start Hosting Plan'),
-                'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl)
-            ],
-            ['label' => 'Explore Main Site', 'action' => $baseUrl],
-            ['label' => 'Read Insights', 'action' => 'https://alexanderjgill.com/read/']
-        ],
+        'modules' => normalize_modules($candidateModules),
+        'shortcuts' => normalize_shortcuts($candidateShortcuts, $intent, $snapshot),
         'createdAt' => (string) ($candidate['createdAt'] ?? $now),
         'updatedAt' => $now
     ];
@@ -353,6 +431,8 @@ $systemPrompt = <<<PROMPT
 You generate UI Blueprint JSON only.
 Never return executable code, HTML, markdown, explanations, or prose.
 Output must match the provided JSON schema exactly.
+Design a distinctive front-end site experience, not a dashboard.
+Treat modules as website sections with intentional hierarchy, flow, and tone.
 Primary conversion priorities are:
 1) Start a hosting plan
 2) Onboard into a Pro Suite hosting account via Dark Horse Virtue HiOps.
@@ -362,6 +442,7 @@ PROMPT;
 
 $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
     "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
+    "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
     "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
 
 $payload = [
@@ -422,7 +503,7 @@ if ($blueprint === null) {
     send_json(502, ['error' => 'OpenAI output was not valid JSON']);
 }
 
-$blueprint = apply_experience_blueprint_defaults($blueprint, $intent, $wpSnapshot);
+$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot);
 
 send_json(200, [
     'blueprint' => $blueprint,

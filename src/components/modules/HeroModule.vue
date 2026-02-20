@@ -19,6 +19,15 @@ const title = computed(() => {
   return heroContent.value.title;
 });
 
+const kicker = computed(() => {
+  const fromModule = props.moduleProps.kicker;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule;
+  }
+
+  return 'Personalized Journey';
+});
+
 const subtitle = computed(() => {
   const fromModule = props.moduleProps.subtitle;
   if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
@@ -46,7 +55,7 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 
 <template>
   <section class="hero-module">
-    <p class="eyebrow">Personalized Blueprint</p>
+    <p class="eyebrow">{{ kicker }}</p>
     <h2>{{ title }}</h2>
     <p class="subtitle">{{ subtitle }}</p>
     <div class="actions">

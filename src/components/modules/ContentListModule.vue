@@ -13,6 +13,16 @@ const title = computed(() => {
   return typeof value === 'string' && value.trim().length > 0 ? value : 'Content List';
 });
 
+const intro = computed(() => {
+  const value = props.moduleProps.intro;
+  return typeof value === 'string' ? value : '';
+});
+
+const variant = computed(() => {
+  const value = props.moduleProps.variant;
+  return typeof value === 'string' && value.trim().length > 0 ? value : 'default';
+});
+
 const items = computed(() => {
   const content = props.content as { items?: ListItem[] };
   return Array.isArray(content.items) ? content.items : [];
@@ -20,8 +30,9 @@ const items = computed(() => {
 </script>
 
 <template>
-  <section class="module-card">
+  <section class="module-card" :class="`variant-${variant}`">
     <h3>{{ title }}</h3>
+    <p v-if="intro" class="intro">{{ intro }}</p>
     <ul>
       <li v-for="item in items" :key="item.title">
         <strong>
@@ -47,7 +58,7 @@ const items = computed(() => {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem;
+  padding: 1.15rem;
 }
 
 h3 {
@@ -63,9 +74,10 @@ ul {
 }
 
 li {
-  border-radius: 10px;
-  padding: 0.7rem;
-  background: var(--surface-muted);
+  border-radius: 12px;
+  padding: 0.78rem;
+  background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
 }
 
 p {
@@ -77,5 +89,14 @@ p {
   color: inherit;
   text-decoration: none;
   border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.intro {
+  margin: 0.55rem 0 0;
+  color: var(--text-secondary);
+}
+
+.variant-timeline li {
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
 }
 </style>

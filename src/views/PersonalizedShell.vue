@@ -5,6 +5,7 @@ import ModuleRenderer from '@/components/ModuleRenderer.vue';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { usePersonalizationStore } from '@/stores/personalization';
+import { BUILD_TAG } from '@/meta/build';
 
 const router = useRouter();
 const personalization = usePersonalizationStore();
@@ -26,6 +27,14 @@ const shellStyle = computed(() => ({
 const navItems = computed(() => {
   const shortcuts = blueprint.value?.shortcuts ?? [];
   return shortcuts.slice(0, 6);
+});
+
+const orderedModules = computed(() => {
+  const modules = blueprint.value?.modules ?? [];
+  return modules.map((module, index) => ({
+    module,
+    index
+  }));
 });
 
 const wordpressStatus = computed(() => {
@@ -66,7 +75,7 @@ onMounted(async () => {
   <main v-if="blueprint" class="shell" :class="modeClass" :style="shellStyle">
     <header class="shell-header">
       <div>
-        <p class="eyebrow">Personalized Theme Layer</p>
+        <p class="eyebrow">Adaptive Theme Layer · {{ BUILD_TAG }}</p>
         <h1>{{ blueprint.layout.nav === 'none' ? 'Focused Visitor Journey' : 'Adaptive Site Experience' }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
       </div>
@@ -91,12 +100,14 @@ onMounted(async () => {
     </nav>
 
     <section class="module-stack" :class="`density-${blueprint.layout.density}`">
-      <ModuleRenderer
-        v-for="module in blueprint.modules"
-        :key="module.id"
-        :module="module"
-        :shortcuts="blueprint.shortcuts"
-      />
+      <article
+        v-for="item in orderedModules"
+        :key="item.module.id"
+        class="module-slot"
+        :class="[`slot-${item.index + 1}`, `slot-type-${item.module.type}`]"
+      >
+        <ModuleRenderer :module="item.module" :shortcuts="blueprint.shortcuts" />
+      </article>
     </section>
   </main>
 </template>
@@ -105,7 +116,9 @@ onMounted(async () => {
 .shell {
   min-height: 100vh;
   padding: 1rem;
-  background: radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 38%),
+  background:
+    radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 32%),
+    radial-gradient(circle at 85% 2%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 28%),
     var(--bg);
 }
 
@@ -174,6 +187,7 @@ h1 {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+  padding-bottom: 0.35rem;
 }
 
 .shell-nav.nav-side {
@@ -191,9 +205,9 @@ h1 {
 }
 
 .module-stack {
-  margin-top: 1rem;
+  margin-top: 1.1rem;
   display: grid;
-  gap: 0.8rem;
+  gap: 1rem;
 }
 
 .module-stack.density-low {
@@ -204,9 +218,23 @@ h1 {
   gap: 0.6rem;
 }
 
+.module-slot {
+  position: relative;
+}
+
+.slot-type-Hero :deep(.hero-module) {
+  padding: 1.35rem;
+  border-radius: 18px;
+}
+
+.slot-2,
+.slot-3 {
+  align-self: start;
+}
+
 @media (min-width: 960px) {
   .shell {
-    padding: 1.25rem 2rem 2rem;
+    padding: 1.4rem 2.2rem 2.3rem;
   }
 
   .shell-nav.nav-side {
@@ -219,6 +247,15 @@ h1 {
 
   .shell-nav.nav-side + .module-stack {
     margin-left: 340px;
+  }
+
+  .module-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .slot-type-Hero,
+  .slot-type-FAQ {
+    grid-column: 1 / -1;
   }
 }
 </style>
