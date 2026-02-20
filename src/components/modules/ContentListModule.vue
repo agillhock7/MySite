@@ -57,6 +57,13 @@ const visibleItems = computed(() => {
     <p v-if="intro" class="intro">{{ intro }}</p>
     <ul>
       <li v-for="item in visibleItems" :key="item.title">
+        <img
+          v-if="item.imageUrl && item.imageUrl.length > 0"
+          class="thumb"
+          :src="item.imageUrl"
+          alt=""
+          loading="lazy"
+        />
         <strong>
           <a
             v-if="item.href && item.href.length > 0"
@@ -101,6 +108,15 @@ li {
   background: color-mix(in srgb, var(--surface-muted) 72%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
   transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.thumb {
+  width: 100%;
+  max-height: 170px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
 }
 
 li:hover {

@@ -138,42 +138,43 @@ function inferJourneyProfile(intentProfile: IntentProfile): {
   narrative: string;
 } {
   const source = `${intentProfile.goal} ${intentProfile.primaryTopics.join(' ')}`.toLowerCase();
+  const baseUrl = 'https://alexanderjgill.com';
 
   if (/work|portfolio|case|project|build/.test(source)) {
     return {
-      primaryLabel: 'Explore Work',
-      primaryUrl: 'https://alexanderjgill.com/work/',
-      secondaryLabel: 'Read Insights',
-      secondaryUrl: 'https://alexanderjgill.com/read/',
+      primaryLabel: 'Read Featured Posts',
+      primaryUrl: baseUrl,
+      secondaryLabel: 'Browse Post Archive',
+      secondaryUrl: baseUrl,
       narrative: 'Lead with proof-first storytelling, then guide visitors to deeper content.'
     };
   }
 
   if (/read|learn|article|insight|blog/.test(source)) {
     return {
-      primaryLabel: 'Read Insights',
-      primaryUrl: 'https://alexanderjgill.com/read/',
-      secondaryLabel: 'Explore Work',
-      secondaryUrl: 'https://alexanderjgill.com/work/',
+      primaryLabel: 'Read Latest Posts',
+      primaryUrl: baseUrl,
+      secondaryLabel: 'Browse More Posts',
+      secondaryUrl: baseUrl,
       narrative: 'Prioritize educational flow with contextual links into portfolio and bio.'
     };
   }
 
   if (/bio|about|alexander|profile/.test(source)) {
     return {
-      primaryLabel: 'Read Bio',
-      primaryUrl: 'https://alexanderjgill.com/bio/',
-      secondaryLabel: 'Explore Work',
-      secondaryUrl: 'https://alexanderjgill.com/work/',
+      primaryLabel: 'Read Intro Post',
+      primaryUrl: baseUrl,
+      secondaryLabel: 'Continue Reading',
+      secondaryUrl: baseUrl,
       narrative: 'Center narrative and credibility, then branch to projects and insights.'
     };
   }
 
   return {
-    primaryLabel: 'Explore Main Site',
-    primaryUrl: 'https://alexanderjgill.com',
-    secondaryLabel: 'Explore Work',
-    secondaryUrl: 'https://alexanderjgill.com/work/',
+    primaryLabel: 'Read Latest Post',
+    primaryUrl: baseUrl,
+    secondaryLabel: 'Browse Archive',
+    secondaryUrl: baseUrl,
     narrative: 'Guide visitors through core site sections with clear editorial hierarchy.'
   };
 }
@@ -569,10 +570,7 @@ export async function generateBlueprintFromIntent(
     shortcuts: [
       { label: journey.primaryLabel, action: journey.primaryUrl },
       { label: journey.secondaryLabel, action: journey.secondaryUrl },
-      { label: 'Explore Main Site', action: 'https://alexanderjgill.com' },
-      { label: 'Read Insights', action: 'https://alexanderjgill.com/read/' },
-      { label: 'Open Work Archive', action: 'https://alexanderjgill.com/work/' },
-      { label: 'Read Bio', action: 'https://alexanderjgill.com/bio/' }
+      { label: 'Open Main Site', action: 'https://alexanderjgill.com' }
     ],
     createdAt: timestamp,
     updatedAt: timestamp

@@ -24,6 +24,77 @@ function mysite_wp_contains_any(string $haystack, array $needles): bool
     return false;
 }
 
+function mysite_wp_normalize_url(string $url): string
+{
+    $trimmed = trim($url);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    $parts = parse_url($trimmed);
+    if (!is_array($parts)) {
+        return '';
+    }
+
+    $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+    if ($scheme !== 'http' && $scheme !== 'https') {
+        return '';
+    }
+
+    $host = strtolower((string) ($parts['host'] ?? ''));
+    if ($host === '') {
+        return '';
+    }
+
+    $path = (string) ($parts['path'] ?? '/');
+    if ($path === '') {
+        $path = '/';
+    }
+
+    $normalized = $scheme . '://' . $host . rtrim($path, '/');
+    if ($normalized === $scheme . '://' . $host) {
+        $normalized .= '/';
+    }
+
+    return $normalized;
+}
+
+function mysite_wp_extract_post_image(array $post): string
+{
+    $embeddedMedia = $post['_embedded']['wp:featuredmedia'][0] ?? null;
+    if (is_array($embeddedMedia)) {
+        $sourceUrl = trim((string) ($embeddedMedia['source_url'] ?? ''));
+        if ($sourceUrl !== '') {
+            return $sourceUrl;
+        }
+
+        $sizes = $embeddedMedia['media_details']['sizes'] ?? null;
+        if (is_array($sizes)) {
+            foreach (['large', 'medium_large', 'medium'] as $sizeKey) {
+                $candidate = trim((string) (($sizes[$sizeKey]['source_url'] ?? '') ?: ''));
+                if ($candidate !== '') {
+                    return $candidate;
+                }
+            }
+        }
+    }
+
+    $yoastOgImage = $post['yoast_head_json']['og_image'][0]['url'] ?? null;
+    if (is_string($yoastOgImage) && trim($yoastOgImage) !== '') {
+        return trim($yoastOgImage);
+    }
+
+    $contentRendered = (string) (($post['content']['rendered'] ?? '') ?: '');
+    if ($contentRendered !== '' && preg_match('/<img[^>]+src=[\"\']([^\"\']+)[\"\']/i', $contentRendered, $matches) === 1) {
+        $candidate = trim((string) ($matches[1] ?? ''));
+        if ($candidate !== '') {
+            return $candidate;
+        }
+    }
+
+    return '';
+}
+
 function mysite_wp_fetch_json(string $url, int $timeoutSeconds): array
 {
     $curl = curl_init($url);
@@ -94,7 +165,7 @@ function mysite_wp_fetch_snapshot(array $config): array
     $apiBase = $baseUrl . '/wp-json/wp/v2';
 
     $postsRes = mysite_wp_fetch_json(
-        $apiBase . '/posts?per_page=' . $maxPosts . '&_fields=id,link,title,excerpt,date,modified,categories,tags',
+        $apiBase . '/posts?per_page=' . $maxPosts . '&_embed=wp:featuredmedia',
         $timeout
     );
 
@@ -130,7 +201,8 @@ function mysite_wp_fetch_snapshot(array $config): array
             'excerpt' => $excerpt,
             'link' => (string) ($post['link'] ?? ''),
             'date' => (string) ($post['date'] ?? ''),
-            'modified' => (string) ($post['modified'] ?? '')
+            'modified' => (string) ($post['modified'] ?? ''),
+            'imageUrl' => mysite_wp_extract_post_image($post)
         ];
     }
 
@@ -225,14 +297,29 @@ function mysite_wp_gap_suggestions(array $snapshot): array
     return $missing;
 }
 
-function mysite_wp_conversion_profile(array $intent): array
+function mysite_wp_conversion_profile(array $intent, array $snapshot): array
 {
     $brandName = 'Alexander J Gill';
-    $siteRootUrl = 'https://alexanderjgill.com';
-    $workUrl = 'https://alexanderjgill.com/work/';
-    $readUrl = 'https://alexanderjgill.com/read/';
-    $bioUrl = 'https://alexanderjgill.com/bio/';
-    $contactUrl = 'https://alexanderjgill.com/contact/';
+    $siteRootUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
+    $posts = is_array($snapshot['posts'] ?? null) ? $snapshot['posts'] : [];
+
+    $latestPostUrl = $siteRootUrl;
+    $secondPostUrl = $siteRootUrl;
+    $thirdPostUrl = $siteRootUrl;
+
+    if (isset($posts[0]) && is_array($posts[0])) {
+        $latestPostUrl = (string) (($posts[0]['link'] ?? '') ?: $siteRootUrl);
+    }
+    if (isset($posts[1]) && is_array($posts[1])) {
+        $secondPostUrl = (string) (($posts[1]['link'] ?? '') ?: $latestPostUrl);
+    } else {
+        $secondPostUrl = $latestPostUrl;
+    }
+    if (isset($posts[2]) && is_array($posts[2])) {
+        $thirdPostUrl = (string) (($posts[2]['link'] ?? '') ?: $secondPostUrl);
+    } else {
+        $thirdPostUrl = $secondPostUrl;
+    }
 
     $goalText = strtolower((string) ($intent['goal'] ?? ''));
     $topics = $intent['primaryTopics'] ?? [];
@@ -268,56 +355,56 @@ function mysite_wp_conversion_profile(array $intent): array
             'intentType' => 'site_discovery',
             'heroTitle' => 'Explore the latest from ' . $brandName,
             'heroSubtitle' => 'A personalized front-end view generated from live WordPress content.',
-            'heroCtaLabel' => 'Explore Main Site',
-            'heroCtaUrl' => $siteRootUrl,
-            'primaryActionLabel' => 'Explore Main Site',
-            'primaryActionUrl' => $siteRootUrl,
-            'secondaryActionLabel' => 'Read Latest Insights',
-            'secondaryActionUrl' => $readUrl
+            'heroCtaLabel' => 'Read Latest Post',
+            'heroCtaUrl' => $latestPostUrl,
+            'primaryActionLabel' => 'Read Latest Post',
+            'primaryActionUrl' => $latestPostUrl,
+            'secondaryActionLabel' => 'Explore Main Site',
+            'secondaryActionUrl' => $siteRootUrl
         ],
         'portfolio_review' => [
             'intentType' => 'portfolio_review',
-            'heroTitle' => 'See how ' . $brandName . ' executes across strategy, systems, and delivery',
-            'heroSubtitle' => 'Portfolio-focused visitors can review recent project signals and related writing.',
-            'heroCtaLabel' => 'Explore Work',
-            'heroCtaUrl' => $workUrl,
-            'primaryActionLabel' => 'Explore Work',
-            'primaryActionUrl' => $workUrl,
-            'secondaryActionLabel' => 'Read Latest Insights',
-            'secondaryActionUrl' => $readUrl
+            'heroTitle' => 'Featured stories from ' . $brandName,
+            'heroSubtitle' => 'Proof-focused visitors can start with highlighted posts and continue through related stories.',
+            'heroCtaLabel' => 'Read Featured Story',
+            'heroCtaUrl' => $latestPostUrl,
+            'primaryActionLabel' => 'Read Featured Story',
+            'primaryActionUrl' => $latestPostUrl,
+            'secondaryActionLabel' => 'Read Next Story',
+            'secondaryActionUrl' => $secondPostUrl
         ],
         'content_learning' => [
             'intentType' => 'content_learning',
             'heroTitle' => 'Explore practical guidance from ' . $brandName,
-            'heroSubtitle' => 'Learning-focused visitors can read first, then branch into related posts and project stories.',
+            'heroSubtitle' => 'Learning-focused visitors can read in sequence with a curated editorial path.',
             'heroCtaLabel' => 'Read Latest Insights',
-            'heroCtaUrl' => $readUrl,
-            'primaryActionLabel' => 'Open Reading Hub',
-            'primaryActionUrl' => $readUrl,
-            'secondaryActionLabel' => 'Explore Work',
-            'secondaryActionUrl' => $workUrl
+            'heroCtaUrl' => $latestPostUrl,
+            'primaryActionLabel' => 'Read Latest Insights',
+            'primaryActionUrl' => $latestPostUrl,
+            'secondaryActionLabel' => 'Read Another Insight',
+            'secondaryActionUrl' => $secondPostUrl
         ],
         'bio_profile' => [
             'intentType' => 'bio_profile',
             'heroTitle' => 'Get to know ' . $brandName,
-            'heroSubtitle' => 'Narrative-first visitors can start with bio, then explore work and articles.',
-            'heroCtaLabel' => 'Read Bio',
-            'heroCtaUrl' => $bioUrl,
-            'primaryActionLabel' => 'Read Bio',
-            'primaryActionUrl' => $bioUrl,
-            'secondaryActionLabel' => 'Explore Work',
-            'secondaryActionUrl' => $workUrl
+            'heroSubtitle' => 'Narrative-first visitors can start with a key story and then browse the broader archive.',
+            'heroCtaLabel' => 'Read Intro Story',
+            'heroCtaUrl' => $latestPostUrl,
+            'primaryActionLabel' => 'Read Intro Story',
+            'primaryActionUrl' => $latestPostUrl,
+            'secondaryActionLabel' => 'Read Follow-up Story',
+            'secondaryActionUrl' => $secondPostUrl
         ],
         'contact_start' => [
             'intentType' => 'contact_start',
-            'heroTitle' => 'Start a conversation with ' . $brandName,
-            'heroSubtitle' => 'This path prioritizes fast context and clear contact options.',
-            'heroCtaLabel' => 'Contact',
-            'heroCtaUrl' => $contactUrl,
-            'primaryActionLabel' => 'Open Contact',
-            'primaryActionUrl' => $contactUrl,
-            'secondaryActionLabel' => 'Read Bio',
-            'secondaryActionUrl' => $bioUrl
+            'heroTitle' => 'Start with context from ' . $brandName,
+            'heroSubtitle' => 'This path prioritizes key reading context before direct outreach.',
+            'heroCtaLabel' => 'Read Context Post',
+            'heroCtaUrl' => $latestPostUrl,
+            'primaryActionLabel' => 'Read Context Post',
+            'primaryActionUrl' => $latestPostUrl,
+            'secondaryActionLabel' => 'Read More Context',
+            'secondaryActionUrl' => $thirdPostUrl
         ]
     ];
 
@@ -353,23 +440,36 @@ function mysite_wp_pick_priority_posts(array $snapshot): array
 function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array $intent): array
 {
     $posts = $snapshot['posts'] ?? [];
-    $conversionProfile = mysite_wp_conversion_profile($intent);
+    $conversionProfile = mysite_wp_conversion_profile($intent, $snapshot);
 
     $heroTitle = (string) ($conversionProfile['heroTitle'] ?? 'Explore tailored content from alexanderjgill.com');
     $heroSubtitle = (string) ($conversionProfile['heroSubtitle'] ?? 'Personalized from your intent and live WordPress content.');
     $heroCtaLabel = (string) ($conversionProfile['heroCtaLabel'] ?? 'Visit Source Site');
     $heroCtaUrl = (string) ($conversionProfile['heroCtaUrl'] ?? ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'));
+    $heroImageUrl = '';
 
     if (count($posts) > 0 && (string) ($posts[0]['title'] ?? '') !== '') {
         $heroTitle = $heroTitle . ' · ' . (string) $posts[0]['title'];
+        $heroImageUrl = trim((string) (($posts[0]['imageUrl'] ?? '') ?: ''));
     }
 
     $gridItems = [];
     foreach (array_slice($posts, 0, 6) as $post) {
+        $dateRaw = (string) ($post['date'] ?? '');
+        $dateLabel = '';
+        if ($dateRaw !== '') {
+            $timestamp = strtotime($dateRaw);
+            if ($timestamp !== false) {
+                $dateLabel = gmdate('M j, Y', $timestamp);
+            }
+        }
+
         $gridItems[] = [
             'title' => (string) ($post['title'] ?? 'Untitled'),
             'description' => (string) (($post['excerpt'] ?? '') !== '' ? $post['excerpt'] : 'No excerpt available.'),
-            'href' => (string) ($post['link'] ?? '')
+            'href' => (string) ($post['link'] ?? ''),
+            'imageUrl' => (string) (($post['imageUrl'] ?? '') ?: ''),
+            'meta' => $dateLabel !== '' ? $dateLabel : 'Latest post'
         ];
     }
 
@@ -397,7 +497,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
         $listItems[] = [
             'title' => $title,
             'detail' => $excerpt !== '' ? $excerpt : ('Published ' . ($dateLabel !== '' ? $dateLabel : 'recently')),
-            'href' => (string) ($post['link'] ?? '')
+            'href' => (string) ($post['link'] ?? ''),
+            'imageUrl' => (string) (($post['imageUrl'] ?? '') ?: '')
         ];
     }
 
@@ -464,7 +565,8 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
             'title' => $heroTitle,
             'subtitle' => $heroSubtitle,
             'ctaLabel' => $heroCtaLabel,
-            'ctaUrl' => $heroCtaUrl
+            'ctaUrl' => $heroCtaUrl,
+            'imageUrl' => $heroImageUrl
         ],
         'featuredGrid' => [
             'items' => $gridItems
@@ -484,8 +586,13 @@ function mysite_wp_content_bundle(array $snapshot, array $gapSuggestions, array 
 function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, array $intent): array
 {
     $postTitles = [];
+    $postLinks = [];
     foreach (array_slice(($snapshot['posts'] ?? []), 0, 8) as $post) {
         $postTitles[] = (string) ($post['title'] ?? '');
+        $link = trim((string) ($post['link'] ?? ''));
+        if ($link !== '') {
+            $postLinks[] = $link;
+        }
     }
 
     $categoryNames = [];
@@ -504,9 +611,10 @@ function mysite_wp_summary_for_prompt(array $snapshot, array $gapSuggestions, ar
         'postCount' => count($snapshot['posts'] ?? []),
         'categoryCount' => count($snapshot['categories'] ?? []),
         'postTitles' => $postTitles,
+        'postLinks' => $postLinks,
         'categoryNames' => $categoryNames,
         'gapTopics' => $gapTopics,
-        'conversionProfile' => mysite_wp_conversion_profile($intent),
+        'conversionProfile' => mysite_wp_conversion_profile($intent, $snapshot),
         'errors' => $snapshot['errors'] ?? []
     ];
 }

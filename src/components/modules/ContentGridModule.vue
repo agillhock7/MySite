@@ -70,6 +70,13 @@ const visibleItems = computed(() => {
     <p v-if="intro" class="intro">{{ intro }}</p>
     <div class="grid" :class="gridColumnsClass">
       <article v-for="item in visibleItems" :key="item.title" class="grid-item">
+        <img
+          v-if="item.imageUrl && item.imageUrl.length > 0"
+          class="cover"
+          :src="item.imageUrl"
+          alt=""
+          loading="lazy"
+        />
         <h4>
           <a
             v-if="item.href && item.href.length > 0"
@@ -82,6 +89,7 @@ const visibleItems = computed(() => {
           </a>
           <template v-else>{{ item.title }}</template>
         </h4>
+        <p v-if="item.meta" class="meta">{{ item.meta }}</p>
         <p>{{ item.description }}</p>
       </article>
     </div>
@@ -115,6 +123,15 @@ h3 {
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
 }
 
+.cover {
+  width: 100%;
+  height: 148px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  margin-bottom: 0.6rem;
+}
+
 .grid-item:hover {
   transform: translateY(-2px);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -133,6 +150,13 @@ h4 {
 p {
   margin: 0.4rem 0 0;
   color: var(--text-secondary);
+}
+
+.meta {
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .intro {

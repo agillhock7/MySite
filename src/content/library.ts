@@ -3,18 +3,22 @@ export interface HeroContent {
   subtitle: string;
   ctaLabel: string;
   ctaUrl?: string;
+  imageUrl?: string;
 }
 
 export interface GridItem {
   title: string;
   description: string;
   href?: string;
+  imageUrl?: string;
+  meta?: string;
 }
 
 export interface ListItem {
   title: string;
   detail: string;
   href?: string;
+  imageUrl?: string;
 }
 
 export interface ActionItem {

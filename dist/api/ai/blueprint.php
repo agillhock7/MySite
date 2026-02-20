@@ -337,21 +337,80 @@ function normalize_modules(array $candidateModules): array
     return array_slice($normalized, 0, 8);
 }
 
+function known_action_urls(array $snapshot): array
+{
+    $known = [];
+
+    $baseUrl = mysite_wp_normalize_url((string) ($snapshot['baseUrl'] ?? ''));
+    if ($baseUrl !== '') {
+        $known[$baseUrl] = $baseUrl;
+    }
+
+    $posts = $snapshot['posts'] ?? [];
+    if (is_array($posts)) {
+        foreach ($posts as $post) {
+            if (!is_array($post)) {
+                continue;
+            }
+
+            $link = mysite_wp_normalize_url((string) ($post['link'] ?? ''));
+            if ($link !== '') {
+                $known[$link] = $link;
+            }
+        }
+    }
+
+    return $known;
+}
+
+function sanitize_action_url(string $candidate, array $snapshot, string $fallback): string
+{
+    $known = known_action_urls($snapshot);
+
+    $normalizedCandidate = mysite_wp_normalize_url($candidate);
+    if ($normalizedCandidate !== '' && isset($known[$normalizedCandidate])) {
+        return $known[$normalizedCandidate];
+    }
+
+    $normalizedFallback = mysite_wp_normalize_url($fallback);
+    if ($normalizedFallback !== '' && isset($known[$normalizedFallback])) {
+        return $known[$normalizedFallback];
+    }
+
+    if ($normalizedFallback !== '') {
+        return $normalizedFallback;
+    }
+
+    foreach ($known as $url) {
+        return $url;
+    }
+
+    return '';
+}
+
 function normalize_shortcuts(array $candidateShortcuts, array $intent, array $snapshot, string $visitorId): array
 {
-    $conversionProfile = mysite_wp_conversion_profile($intent);
+    $conversionProfile = mysite_wp_conversion_profile($intent, $snapshot);
     $baseUrl = (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com');
 
     $defaults = [
         [
             'label' => (string) ($conversionProfile['primaryActionLabel'] ?? 'Explore Main Site'),
-            'action' => (string) ($conversionProfile['primaryActionUrl'] ?? $baseUrl)
+            'action' => sanitize_action_url(
+                (string) ($conversionProfile['primaryActionUrl'] ?? $baseUrl),
+                $snapshot,
+                $baseUrl
+            )
         ],
         [
             'label' => (string) ($conversionProfile['secondaryActionLabel'] ?? 'Read Latest Insights'),
-            'action' => (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl)
+            'action' => sanitize_action_url(
+                (string) ($conversionProfile['secondaryActionUrl'] ?? $baseUrl),
+                $snapshot,
+                $baseUrl
+            )
         ],
-        ['label' => 'Explore Main Site', 'action' => $baseUrl]
+        ['label' => 'Explore Main Site', 'action' => sanitize_action_url($baseUrl, $snapshot, $baseUrl)]
     ];
 
     $normalized = [];
@@ -361,7 +420,11 @@ function normalize_shortcuts(array $candidateShortcuts, array $intent, array $sn
         }
 
         $label = trim((string) ($shortcut['label'] ?? ''));
-        $action = trim((string) ($shortcut['action'] ?? ''));
+        $action = sanitize_action_url(
+            (string) ($shortcut['action'] ?? ''),
+            $snapshot,
+            (string) ($conversionProfile['primaryActionUrl'] ?? $baseUrl)
+        );
         if ($label === '' || $action === '') {
             continue;
         }
@@ -447,7 +510,16 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
     $firstTopic = isset($topics[0]) ? trim((string) $topics[0]) : 'work';
     $secondTopic = isset($topics[1]) ? trim((string) $topics[1]) : 'insights';
-    $conversion = mysite_wp_conversion_profile($intent);
+    $conversion = mysite_wp_conversion_profile($intent, $snapshot);
+    $primaryActionFallback = sanitize_action_url(
+        (string) ($conversion['primaryActionUrl'] ?? ''),
+        $snapshot,
+        (string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com')
+    );
+    $heroImageFallback = '';
+    if (isset($snapshot['posts'][0]) && is_array($snapshot['posts'][0])) {
+        $heroImageFallback = trim((string) (($snapshot['posts'][0]['imageUrl'] ?? '') ?: ''));
+    }
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
     $heroVariants = ['default', 'spotlight', 'split', 'poster', 'frame'];
@@ -473,8 +545,13 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
             if (trim((string) ($props['subtitle'] ?? '')) === '') {
                 $props['subtitle'] = 'This shell prioritizes ' . strtolower((string) ($conversion['primaryActionLabel'] ?? 'the next conversion action')) . '.';
             }
-            if (trim((string) ($props['ctaUrl'] ?? '')) === '') {
-                $props['ctaUrl'] = (string) ($conversion['primaryActionUrl'] ?? 'https://alexanderjgill.com');
+            $props['ctaUrl'] = sanitize_action_url(
+                (string) ($props['ctaUrl'] ?? ''),
+                $snapshot,
+                $primaryActionFallback
+            );
+            if (trim((string) ($props['heroImage'] ?? '')) === '' && $heroImageFallback !== '') {
+                $props['heroImage'] = $heroImageFallback;
             }
         }
 
@@ -702,6 +779,7 @@ $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES)
     "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
     "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
     "\nTreat posts as primary content stream for sections." .
+    "\nDo not invent URLs. Use only baseUrl and postLinks from snapshot." .
     "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
 
 $payload = [

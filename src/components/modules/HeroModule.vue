@@ -37,6 +37,19 @@ const subtitle = computed(() => {
   return heroContent.value.subtitle;
 });
 
+const heroImageUrl = computed(() => {
+  const fromModule = props.moduleProps.heroImage;
+  if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
+    return fromModule.trim();
+  }
+
+  if (typeof heroContent.value.imageUrl === 'string' && heroContent.value.imageUrl.trim().length > 0) {
+    return heroContent.value.imageUrl.trim();
+  }
+
+  return '';
+});
+
 const variant = computed(() => {
   const fromModule = props.moduleProps.variant;
   if (typeof fromModule === 'string' && fromModule.trim().length > 0) {
@@ -73,24 +86,29 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
 
 <template>
   <section class="hero-module" :class="`variant-${variant}`">
-    <p class="eyebrow">{{ kicker }}</p>
-    <h2>{{ title }}</h2>
-    <p class="subtitle">{{ subtitle }}</p>
-    <div class="actions">
-      <a
-        v-if="ctaUrl"
-        class="primary-btn"
-        :href="ctaUrl"
-        :target="isExternalCta ? '_blank' : '_self'"
-        :rel="isExternalCta ? 'noopener noreferrer' : undefined"
-      >
-        {{ ctaLabel }}
-      </a>
-      <button v-else type="button" class="primary-btn">{{ ctaLabel }}</button>
-      <span class="shortcut-hint" v-if="shortcuts.length > 0">
-        {{ shortcuts[0]?.label }}: {{ shortcuts[0]?.action }}
-      </span>
+    <div class="hero-copy">
+      <p class="eyebrow">{{ kicker }}</p>
+      <h2>{{ title }}</h2>
+      <p class="subtitle">{{ subtitle }}</p>
+      <div class="actions">
+        <a
+          v-if="ctaUrl"
+          class="primary-btn"
+          :href="ctaUrl"
+          :target="isExternalCta ? '_blank' : '_self'"
+          :rel="isExternalCta ? 'noopener noreferrer' : undefined"
+        >
+          {{ ctaLabel }}
+        </a>
+        <button v-else type="button" class="primary-btn">{{ ctaLabel }}</button>
+        <span class="shortcut-hint" v-if="shortcuts.length > 0">
+          {{ shortcuts[0]?.label }}: {{ shortcuts[0]?.action }}
+        </span>
+      </div>
     </div>
+    <figure v-if="heroImageUrl" class="hero-visual">
+      <img :src="heroImageUrl" alt="" loading="lazy" />
+    </figure>
   </section>
 </template>
 
@@ -101,6 +119,27 @@ const isExternalCta = computed(() => /^https?:\/\//i.test(ctaUrl.value));
   border: 1px solid var(--border);
   padding: 1.25rem;
   overflow: hidden;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero-copy {
+  min-width: 0;
+}
+
+.hero-visual {
+  margin: 0;
+  border-radius: calc(var(--radius) - 2px);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  min-height: 180px;
+}
+
+.hero-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .variant-spotlight {
@@ -175,5 +214,16 @@ h2 {
 .shortcut-hint {
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+@media (min-width: 900px) {
+  .hero-module {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .hero-visual {
+    min-height: 220px;
+  }
 }
 </style>

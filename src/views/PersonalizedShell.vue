@@ -14,6 +14,7 @@ const personalization = usePersonalizationStore();
 
 const initializing = ref(true);
 const initializationError = ref('');
+const wordpressError = ref('');
 const blueprint = computed(() => personalization.blueprint);
 
 function hashText(input: string): number {
@@ -39,6 +40,7 @@ function deriveAutoIntent(): IntentProfile {
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
+  wordpressError.value = '';
 
   if (!personalization.blueprint) {
     personalization.loadFromStorage();
@@ -47,6 +49,12 @@ async function initializePersonalization(): Promise<void> {
   const wpBundle = await fetchWordpressContentBundle();
   if (wpBundle && Object.keys(wpBundle.contentOverrides).length > 0) {
     setRuntimeContentOverrides(wpBundle.contentOverrides);
+  }
+  if (wpBundle?.wordpress && !wpBundle.wordpress.available) {
+    const firstError = wpBundle.wordpress.errors[0] ?? '';
+    wordpressError.value = firstError
+      ? `WordPress REST fetch warning: ${firstError}`
+      : 'WordPress REST fetch warning: no posts returned.';
   }
 
   if (!personalization.blueprint) {
@@ -196,6 +204,7 @@ onMounted(async () => {
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
         <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
+        <p v-if="wordpressError" class="fallback-note">{{ wordpressError }}</p>
       </div>
       <div class="header-actions">
         <button type="button" class="secondary-btn" @click="openChatRefinement">Refine With Chat</button>
