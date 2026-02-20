@@ -107,6 +107,10 @@ function normalizeIntentForGeneration(intent: IntentProfile): IntentProfile {
   };
 }
 
+function hasEnoughIntent(intent: IntentProfile): boolean {
+  return intent.goal.trim().length > 0 && intent.primaryTopics.length >= 1;
+}
+
 function toTranscriptLines(entries: TranscriptEntry[]): OnboardingTranscriptLine[] {
   return entries.map((entry) => ({
     role: entry.speaker,
@@ -245,7 +249,7 @@ async function handleSubmit(): Promise<void> {
 
   await assistantReply(turn.assistantMessage, 80);
 
-  if ((turn.isComplete && turnsTaken.value >= 3) || turnsTaken.value >= 12) {
+  if ((turn.isComplete && turnsTaken.value >= 2) || (hasEnoughIntent(intentDraft.value) && turnsTaken.value >= 3) || turnsTaken.value >= 6) {
     await startBlueprintGeneration(intentDraft.value);
   }
 }

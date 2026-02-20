@@ -260,6 +260,7 @@ Rules:
 - Ask about the person first: interests, personality, preferred interaction style, emotional tone.
 - Do not ask the user to choose site navigation or page menus.
 - Translate personal answers into intentProfile fields.
+- Keep this short. Ask at most 2-3 follow-up questions before completion.
 - If the user seems confused, reframe using plain language and quick examples.
 - If user already provided enough detail, set isComplete=true.
 - Keep assistantMessage under 40 words.
@@ -343,6 +344,41 @@ if ($confidence < 0) {
 }
 if ($confidence > 1) {
     $confidence = 1.0;
+}
+
+$userTurns = 0;
+foreach ($transcript as $entry) {
+    if ((string) ($entry['role'] ?? '') === 'user') {
+        $userTurns += 1;
+    }
+}
+
+if (!$isComplete && $userTurns >= 3) {
+    $goalReady = trim((string) ($intentProfile['goal'] ?? '')) !== '';
+    $topicsReady = is_array($intentProfile['primaryTopics'] ?? null) && count($intentProfile['primaryTopics']) >= 1;
+
+    if ($goalReady && $topicsReady) {
+        $isComplete = true;
+        if ($confidence < 0.78) {
+            $confidence = 0.78;
+        }
+    }
+}
+
+if (!$isComplete && $userTurns >= 4) {
+    if (trim((string) ($intentProfile['goal'] ?? '')) === '') {
+        $fallbackGoal = trim((string) ($currentIntent['goal'] ?? ''));
+        $intentProfile['goal'] = $fallbackGoal !== '' ? $fallbackGoal : 'Create a personalized futuristic blog experience tied to my interests.';
+    }
+
+    if (!is_array($intentProfile['primaryTopics'] ?? null) || count($intentProfile['primaryTopics']) === 0) {
+        $intentProfile['primaryTopics'] = ['Personal brand', 'Insights'];
+    }
+
+    $isComplete = true;
+    if ($confidence < 0.72) {
+        $confidence = 0.72;
+    }
 }
 
 send_json(200, [

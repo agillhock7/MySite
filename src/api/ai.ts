@@ -684,7 +684,7 @@ interface BackendOnboardingResponse {
 }
 
 function isIntentComplete(intent: IntentProfile): boolean {
-  return intent.goal.trim().length > 0 && intent.primaryTopics.length >= 2;
+  return intent.goal.trim().length > 0 && intent.primaryTopics.length >= 1;
 }
 
 function userLooksConfused(text: string): boolean {
@@ -715,9 +715,7 @@ function composeFollowUpPrompt(
   userTurns: number
 ): string {
   const missingGoal = nextIntent.goal.trim().length === 0;
-  const missingTopics = nextIntent.primaryTopics.length < 2;
-  const askedVibe = /minimal|visual|dense|playful/i.test(lastUserMessage);
-  const askedDensity = /\blow\b|\bmedium\b|\bhigh\b/i.test(lastUserMessage);
+  const missingTopics = nextIntent.primaryTopics.length < 1;
 
   if (userLooksConfused(lastUserMessage)) {
     return seededPick(seed, 'confusion', [
@@ -743,27 +741,19 @@ function composeFollowUpPrompt(
     ]);
   }
 
-  if (!askedVibe) {
-    return seededPick(seed, 'ask-vibe', [
-      'Choose the visual tone: minimal, visual, dense, or playful.',
-      'What design mood fits you best: minimal, visual, dense, or playful?',
-      'Pick your vibe so I can style this around your personality: minimal, visual, dense, or playful.'
-    ]);
-  }
-
-  if (!askedDensity) {
-    return seededPick(seed, 'ask-density', [
-      'Do you want a quick-scan flow or rich detail? Choose low, medium, or high density.',
-      'How much information per screen should I use: low, medium, or high?',
-      'Pick reading density: low, medium, or high.'
-    ]);
-  }
-
   if (missingTopics) {
     return seededPick(seed, 'ask-topics', [
       'List 2-4 personal interest themes to anchor the design.',
       'Name 2-4 topics that represent your voice and should shape this experience.',
       'What 2-4 themes should this personalized interface revolve around?'
+    ]);
+  }
+
+  if (userTurns <= 3) {
+    return seededPick(seed, 'ask-style-finish', [
+      'Last thing: should the interface feel calm, cinematic, or high-energy?',
+      'Final calibration: do you want clean minimalism, bold visual storytelling, or dense technical depth?',
+      'Quick final tune: should this feel lightweight, balanced, or information-rich?'
     ]);
   }
 

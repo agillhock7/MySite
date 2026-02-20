@@ -185,6 +185,21 @@ const brandSections = computed(() => {
   return ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
 });
 
+const focusTopics = computed(() => {
+  const topics = firstStringArrayModuleProp('focusTopics');
+  return topics.length > 0 ? topics.slice(0, 6) : ['Personal brand', 'Future web'];
+});
+
+const visualFx = computed(() => firstStringModuleProp('visualFx') || 'neon');
+const textureFx = computed(() => firstStringModuleProp('textureFx') || 'glass');
+const energyFx = computed(() => firstStringModuleProp('energyFx') || 'balanced');
+const styleMotif = computed(() => firstStringModuleProp('styleMotif') || 'editorial');
+
+const fxClass = computed(() => `fx-${visualFx.value}`);
+const textureClass = computed(() => `texture-${textureFx.value}`);
+const energyClass = computed(() => `energy-${energyFx.value}`);
+const motifClass = computed(() => `motif-${styleMotif.value}`);
+
 function toBrandSectionUrl(section: string): string {
   return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
 }
@@ -286,7 +301,17 @@ onMounted(async () => {
   <main
     v-else-if="blueprint"
     class="shell"
-    :class="[modeClass, toneClass, experienceClass, shellProfileClass, motionClass]"
+    :class="[
+      modeClass,
+      toneClass,
+      experienceClass,
+      shellProfileClass,
+      motionClass,
+      fxClass,
+      textureClass,
+      energyClass,
+      motifClass
+    ]"
     :style="shellStyle"
   >
     <div class="backdrop-layer" aria-hidden="true">
@@ -314,6 +339,7 @@ onMounted(async () => {
         </p>
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
+        <p class="persona-note">Designed around: {{ focusTopics.join(' · ') }}</p>
         <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
         <p v-if="wordpressError" class="fallback-note">{{ wordpressError }}</p>
       </div>
@@ -334,6 +360,10 @@ onMounted(async () => {
       >
         {{ section }}
       </a>
+    </section>
+
+    <section class="persona-rail" aria-label="Personalization topics">
+      <span v-for="topic in focusTopics" :key="topic" class="persona-chip">{{ topic }}</span>
     </section>
 
     <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
@@ -744,6 +774,13 @@ h1 {
   font-size: 0.9rem;
 }
 
+.persona-note {
+  margin: 0.35rem 0 0;
+  color: color-mix(in srgb, var(--accent) 76%, var(--text-secondary));
+  font-size: 0.84rem;
+  letter-spacing: 0.03em;
+}
+
 .fallback-note {
   margin: 0.45rem 0 0;
   color: color-mix(in srgb, var(--accent) 70%, var(--text-secondary));
@@ -790,6 +827,24 @@ h1 {
   border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
   background: color-mix(in srgb, var(--accent) 11%, var(--surface));
   padding: 0.32rem 0.65rem;
+}
+
+.persona-rail {
+  position: relative;
+  z-index: 2;
+  margin-top: 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.persona-chip {
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  padding: 0.25rem 0.58rem;
+  letter-spacing: 0.06em;
 }
 
 .shell-nav {
@@ -904,6 +959,86 @@ h1 {
 .experience-0 .shape-a,
 .experience-0 .shape-c {
   opacity: 0.44;
+}
+
+.fx-neon .shape-a,
+.fx-neon .shape-b {
+  opacity: 0.56;
+}
+
+.fx-signal .shape-e {
+  opacity: 0.5;
+  filter: blur(16px);
+}
+
+.fx-prism .shape-a,
+.fx-prism .shape-c {
+  border-radius: 34% 66% 58% 42%;
+}
+
+.fx-matrix .scan-grid {
+  opacity: 0.4;
+}
+
+.fx-zen .shape-a,
+.fx-zen .shape-b,
+.fx-zen .shape-c,
+.fx-zen .shape-d,
+.fx-zen .shape-e {
+  opacity: 0.24;
+}
+
+.texture-grid .scan-grid {
+  opacity: 0.42;
+}
+
+.texture-scan .noise-overlay {
+  opacity: 0.04;
+}
+
+.texture-grain .noise-overlay {
+  opacity: 0.18;
+}
+
+.texture-soft .scan-grid {
+  opacity: 0.14;
+}
+
+.energy-high .module-slot,
+.energy-high .lead-slot {
+  animation-duration: 390ms;
+}
+
+.energy-high .shape {
+  animation-duration: 12s;
+}
+
+.energy-low .module-slot,
+.energy-low .lead-slot {
+  animation-duration: 760ms;
+}
+
+.energy-low .shape {
+  animation-duration: 24s;
+}
+
+.motif-cinematic .shell-header {
+  border-width: 2px;
+}
+
+.motif-holographic .brand-section-chip,
+.motif-holographic .persona-chip {
+  background:
+    linear-gradient(
+      130deg,
+      color-mix(in srgb, var(--accent) 20%, var(--surface)),
+      color-mix(in srgb, var(--accent) 5%, var(--surface))
+    );
+}
+
+.motif-signal-driven .shell-nav .nav-item {
+  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+  letter-spacing: 0.04em;
 }
 
 @keyframes drift {

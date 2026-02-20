@@ -756,6 +756,87 @@ function reorder_modules_for_visitor(array $modules, string $visitorId): array
     return array_merge($hero, $middle, $faq);
 }
 
+function infer_persona_design_profile(array $intent, string $visitorId): array
+{
+    $goal = strtolower(trim((string) ($intent['goal'] ?? '')));
+    $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
+    $topicText = strtolower(implode(' ', array_map(static function ($topic): string {
+        return is_string($topic) ? trim($topic) : '';
+    }, $topics)));
+    $vibe = (string) ($intent['vibe'] ?? 'minimal');
+    $density = (string) ($intent['density'] ?? 'medium');
+    $signal = trim($goal . ' ' . $topicText);
+
+    $visualFx = 'neon';
+    $textureFx = 'glass';
+    $energyFx = 'balanced';
+
+    if (preg_match('/market|trading|finance|alpha|macro|signal/', $signal) === 1) {
+        $visualFx = 'signal';
+        $textureFx = 'grid';
+        $energyFx = 'high';
+    } elseif (preg_match('/music|design|art|creative|story|film|cinema/', $signal) === 1) {
+        $visualFx = 'prism';
+        $textureFx = 'grain';
+        $energyFx = 'balanced';
+    } elseif (preg_match('/code|engineering|technical|systems|build/', $signal) === 1) {
+        $visualFx = 'matrix';
+        $textureFx = 'scan';
+        $energyFx = 'high';
+    } elseif (preg_match('/calm|focus|mindful|minimal|quiet/', $signal) === 1) {
+        $visualFx = 'zen';
+        $textureFx = 'soft';
+        $energyFx = 'low';
+    }
+
+    if ($vibe === 'playful') {
+        $visualFx = 'prism';
+        $energyFx = 'high';
+    }
+    if ($vibe === 'dense') {
+        $visualFx = 'matrix';
+    }
+    if ($vibe === 'minimal') {
+        $textureFx = 'soft';
+    }
+
+    if ($density === 'high') {
+        $energyFx = 'high';
+    } elseif ($density === 'low') {
+        $energyFx = 'low';
+    }
+
+    $focusTopics = [];
+    foreach ($topics as $topic) {
+        if (!is_string($topic)) {
+            continue;
+        }
+        $clean = trim($topic);
+        if ($clean === '') {
+            continue;
+        }
+        $focusTopics[] = $clean;
+        if (count($focusTopics) >= 5) {
+            break;
+        }
+    }
+
+    if (count($focusTopics) === 0) {
+        $focusTopics = ['Personal brand', 'Future of web'];
+    }
+
+    $styleMotifs = ['holographic', 'cinematic', 'signal-driven', 'editorial', 'ambient'];
+    $motif = $styleMotifs[seeded_value($visitorId, 'style-motif', count($styleMotifs))];
+
+    return [
+        'visualFx' => $visualFx,
+        'textureFx' => $textureFx,
+        'energyFx' => $energyFx,
+        'focusTopics' => $focusTopics,
+        'styleMotif' => $motif
+    ];
+}
+
 function personalize_module_props(array $modules, array $intent, array $snapshot, string $visitorId): array
 {
     $goal = trim((string) ($intent['goal'] ?? ''));
@@ -784,6 +865,7 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     $brandSections = ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
     $brandIconUrl = 'https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png';
     $brandSecondaryIconUrl = 'https://alexanderjgill.com/wp-content/uploads/2025/09/cropped-darkhorsevirtueio_icon_1.png';
+    $personaDesign = infer_persona_design_profile($intent, $visitorId);
 
     $heroKickers = ['Visitor Blueprint', 'Adaptive Journey', 'AI Interface DNA', 'Conversion Narrative'];
     $heroVariants = ['default', 'spotlight', 'split', 'poster', 'frame', 'neon', 'holo'];
@@ -816,6 +898,11 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
         $props['brandSecondaryIconUrl'] = trim((string) ($props['brandSecondaryIconUrl'] ?? '')) !== '' ? $props['brandSecondaryIconUrl'] : $brandSecondaryIconUrl;
         $props['brandBaseUrl'] = trim((string) ($props['brandBaseUrl'] ?? '')) !== '' ? $props['brandBaseUrl'] : ((string) ($snapshot['baseUrl'] ?? 'https://alexanderjgill.com'));
         $props['brandSections'] = is_array($props['brandSections'] ?? null) ? $props['brandSections'] : $brandSections;
+        $props['visualFx'] = trim((string) ($props['visualFx'] ?? '')) !== '' ? $props['visualFx'] : (string) ($personaDesign['visualFx'] ?? 'neon');
+        $props['textureFx'] = trim((string) ($props['textureFx'] ?? '')) !== '' ? $props['textureFx'] : (string) ($personaDesign['textureFx'] ?? 'glass');
+        $props['energyFx'] = trim((string) ($props['energyFx'] ?? '')) !== '' ? $props['energyFx'] : (string) ($personaDesign['energyFx'] ?? 'balanced');
+        $props['styleMotif'] = trim((string) ($props['styleMotif'] ?? '')) !== '' ? $props['styleMotif'] : (string) ($personaDesign['styleMotif'] ?? 'editorial');
+        $props['focusTopics'] = is_array($props['focusTopics'] ?? null) ? $props['focusTopics'] : ($personaDesign['focusTopics'] ?? ['Personal brand']);
 
         if ($type === 'Hero') {
             $props['variant'] = $heroVariants[seeded_value($visitorId, 'hero-variant', count($heroVariants))];
