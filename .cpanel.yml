@@ -1,6 +1,6 @@
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/$USER/public_html
+    - export DEPLOYPATH=/home/alexande/my.alexanderjgill.com
     - /bin/bash -lc 'if [ -f package-lock.json ]; then npm ci; else npm install; fi'
     - npm run build
     - /bin/bash -lc 'mkdir -p "$DEPLOYPATH"'
