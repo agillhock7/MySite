@@ -2,11 +2,9 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import ModuleRenderer from '@/components/ModuleRenderer.vue';
-import { defaultIntentProfile, generateBlueprintWithFallback, type IntentProfile } from '@/api/ai';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
-import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
 
 const router = useRouter();
@@ -28,13 +26,16 @@ function hashText(input: string): number {
   return hash >>> 0;
 }
 
-function deriveAutoIntent(): IntentProfile {
-  const intent = defaultIntentProfile();
-  intent.goal = 'Create a unique headless front-end experience for alexanderjgill.com visitors.';
-  intent.vibe = 'visual';
-  intent.density = 'medium';
-  intent.primaryTopics = ['Work', 'Read', 'Bio', 'Markets'];
-  return intent;
+function firstStringModuleProp(propName: string): string {
+  const modules = blueprint.value?.modules ?? [];
+  for (const module of modules) {
+    const value = module.props[propName];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return '';
 }
 
 async function initializePersonalization(): Promise<void> {
@@ -59,22 +60,9 @@ async function initializePersonalization(): Promise<void> {
   }
 
   if (!personalization.blueprint) {
-    const visitorId = getOrCreateVisitorId();
-    const generated = await generateBlueprintWithFallback(deriveAutoIntent(), {
-      visitorId,
-      variantNonce: getDesignIteration()
-    });
-
-    if (Object.keys(generated.contentOverrides).length > 0) {
-      setRuntimeContentOverrides(generated.contentOverrides);
-    }
-
-    personalization.setBlueprint(generated.blueprint);
-
-    if (generated.source === 'stub') {
-      initializationError.value =
-        'AI endpoint is currently unavailable. Running local personalization fallback.';
-    }
+    initializing.value = false;
+    await router.replace('/onboarding');
+    return;
   }
 
   initializing.value = false;
@@ -90,16 +78,64 @@ const visualSeed = computed(() => {
 });
 
 const modeClass = computed(() => (blueprint.value?.theme.mode === 'dark' ? 'mode-dark' : 'mode-light'));
-const toneClass = computed(() => `tone-${visualSeed.value % 5}`);
-const experienceMode = computed(() => visualSeed.value % 3);
+const shellProfile = computed(() => {
+  const fromBlueprint = firstStringModuleProp('shellProfile').toLowerCase();
+  const allowed = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
+
+  if (allowed.includes(fromBlueprint)) {
+    return fromBlueprint;
+  }
+
+  return allowed[visualSeed.value % allowed.length];
+});
+const shellProfileClass = computed(() => `profile-${shellProfile.value}`);
+
+const typographyProfile = computed(() => {
+  const fromBlueprint = firstStringModuleProp('typographyProfile').toLowerCase();
+  const allowed = ['grotesk', 'literary', 'display', 'mono'];
+
+  if (allowed.includes(fromBlueprint)) {
+    return fromBlueprint;
+  }
+
+  return allowed[visualSeed.value % allowed.length];
+});
+
+const motionProfile = computed(() => {
+  const fromBlueprint = firstStringModuleProp('motionProfile').toLowerCase();
+  const allowed = ['calm', 'balanced', 'kinetic'];
+
+  if (allowed.includes(fromBlueprint)) {
+    return fromBlueprint;
+  }
+
+  return allowed[visualSeed.value % allowed.length];
+});
+
+const toneClass = computed(() => `tone-${typographyProfile.value}`);
+const motionClass = computed(() => `motion-${motionProfile.value}`);
+const experienceMode = computed(() => (visualSeed.value + shellProfile.value.length) % 3);
 const experienceClass = computed(() => `experience-${experienceMode.value}`);
 
 const experienceLabel = computed(() => {
-  const labels = ['Chronicle', 'Cinematic', 'Atelier'];
+  const labelsByProfile: Record<string, string[]> = {
+    orbital: ['Orbit Chronicle', 'Orbit Cinema', 'Orbit Atelier'],
+    editorial: ['Editorial Chronicle', 'Feature Cinema', 'Archive Atelier'],
+    kinetic: ['Pulse Chronicle', 'Motion Cinema', 'Kinetic Atelier'],
+    glass: ['Glass Chronicle', 'Prism Cinema', 'Halo Atelier'],
+    neo: ['Neo Chronicle', 'Neo Cinema', 'Neo Atelier']
+  };
+
+  const labels = labelsByProfile[shellProfile.value] ?? labelsByProfile.editorial;
   return labels[experienceMode.value];
 });
 
 const designSignature = computed(() => {
+  const fromBlueprint = firstStringModuleProp('signature');
+  if (fromBlueprint) {
+    return fromBlueprint.slice(0, 10).toUpperCase();
+  }
+
   const signature = visualSeed.value.toString(36).toUpperCase();
   return signature.padStart(6, '0').slice(0, 6);
 });
@@ -154,12 +190,15 @@ const storyModules = computed(() =>
 
 const shellTitle = computed(() => {
   const labelByMode = {
-    0: 'Editorial Chronicle',
-    1: 'Immersive Story Stream',
-    2: 'Curated Atelier Feed'
-  } as Record<number, string>;
+    orbital: ['Orbiting Story Field', 'Immersive Signal Field', 'Curated Orbit Atelier'],
+    editorial: ['Editorial Chronicle', 'Immersive Story Stream', 'Curated Atelier Feed'],
+    kinetic: ['Kinetic Narrative Surface', 'Momentum Story Stream', 'High-Tempo Atelier Feed'],
+    glass: ['Prism Narrative Layer', 'Glass Story Stream', 'Luminous Atelier Feed'],
+    neo: ['Neo Editorial Grid', 'Neo Story Stream', 'Neo Atelier Feed']
+  } as Record<string, string[]>;
 
-  return labelByMode[experienceMode.value] ?? 'Headless WordPress Experience';
+  const titles = labelByMode[shellProfile.value] ?? labelByMode.editorial;
+  return titles[experienceMode.value] ?? 'Headless WordPress Experience';
 });
 
 const wordpressStatus = computed(() => {
@@ -176,7 +215,7 @@ function isUrlAction(action: string): boolean {
 
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
-  await initializePersonalization();
+  await router.push('/onboarding?force=1&reset=1');
 }
 
 async function openChatRefinement(): Promise<void> {
@@ -195,7 +234,12 @@ onMounted(async () => {
     </section>
   </main>
 
-  <main v-else-if="blueprint" class="shell" :class="[modeClass, toneClass, experienceClass]" :style="shellStyle">
+  <main
+    v-else-if="blueprint"
+    class="shell"
+    :class="[modeClass, toneClass, experienceClass, shellProfileClass, motionClass]"
+    :style="shellStyle"
+  >
     <div class="backdrop-layer" aria-hidden="true">
       <span class="shape shape-a"></span>
       <span class="shape shape-b"></span>
@@ -206,7 +250,7 @@ onMounted(async () => {
     <header class="shell-header">
       <div>
         <p class="eyebrow">
-          {{ experienceLabel }} · Signature {{ designSignature }} · {{ BUILD_TAG }}
+          {{ experienceLabel }} · {{ shellProfile }} profile · Signature {{ designSignature }} · {{ BUILD_TAG }}
         </p>
         <h1>{{ shellTitle }}</h1>
         <p class="source-note">{{ wordpressStatus }}</p>
@@ -422,24 +466,89 @@ onMounted(async () => {
   --border: #2c3956;
 }
 
-.tone-0 {
+.tone-grotesk {
+  --shell-font: 'Avenir Next', 'Trebuchet MS', sans-serif;
+}
+
+.tone-literary {
   --shell-font: 'Baskerville', 'Palatino Linotype', serif;
 }
 
-.tone-1 {
-  --shell-font: 'Franklin Gothic Medium', 'Trebuchet MS', sans-serif;
+.tone-display {
+  --shell-font: 'Franklin Gothic Medium', 'Arial Narrow', sans-serif;
 }
 
-.tone-2 {
-  --shell-font: 'Garamond', 'Book Antiqua', serif;
+.tone-mono {
+  --shell-font: 'IBM Plex Mono', 'Fira Code', monospace;
 }
 
-.tone-3 {
-  --shell-font: 'Gill Sans', 'Trebuchet MS', sans-serif;
+.profile-orbital .shape-a {
+  transform: rotate(18deg) scale(1.08);
 }
 
-.tone-4 {
-  --shell-font: 'Segoe UI', 'Tahoma', sans-serif;
+.profile-orbital .shape-c {
+  opacity: 0.5;
+}
+
+.profile-editorial .shell-header {
+  border-left-width: 4px;
+  border-left-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+}
+
+.profile-editorial .shape-b {
+  border-radius: 32% 68% 42% 58%;
+}
+
+.profile-kinetic .shape-b,
+.profile-kinetic .shape-d {
+  opacity: 0.58;
+}
+
+.profile-kinetic .panel-left {
+  margin-right: 2%;
+}
+
+.profile-kinetic .panel-right {
+  margin-left: 2%;
+}
+
+.profile-glass .shell-header,
+.profile-glass .nav-item {
+  background: color-mix(in srgb, var(--surface) 68%, transparent);
+  backdrop-filter: blur(calc(var(--panel-blur) + 2px));
+}
+
+.profile-glass .shape-a,
+.profile-glass .shape-d {
+  opacity: 0.56;
+}
+
+.profile-neo .shell-header {
+  border-width: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.profile-neo .shape-b {
+  border-radius: 16px;
+}
+
+.profile-neo .shape-c {
+  border-radius: 22px;
+}
+
+.motion-calm .module-slot,
+.motion-calm .lead-slot {
+  animation-duration: 760ms;
+}
+
+.motion-balanced .module-slot,
+.motion-balanced .lead-slot {
+  animation-duration: 620ms;
+}
+
+.motion-kinetic .module-slot,
+.motion-kinetic .lead-slot {
+  animation-duration: 460ms;
 }
 
 .shell-header {

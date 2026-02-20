@@ -7,18 +7,12 @@ import { usePersonalizationStore } from '@/stores/personalization';
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: (to) => {
-      if (to.query.reset === '1' || to.query.clear === '1') {
-        return '/app?reset=1';
-      }
-
-      return '/app';
-    }
+    redirect: '/app'
   },
   {
     path: '/reset',
     name: 'reset',
-    redirect: '/app?reset=1'
+    redirect: '/onboarding?force=1&reset=1'
   },
   {
     path: '/onboarding',
@@ -51,6 +45,7 @@ export function installRouterGuards(pinia: Pinia): void {
   router.beforeEach((to) => {
     const personalization = usePersonalizationStore(pinia);
     const shouldResetPersonalization = to.query.reset === '1' || to.query.clear === '1';
+    const forceOnboarding = to.query.force === '1';
 
     if (!personalization.blueprint) {
       personalization.loadFromStorage();
@@ -58,6 +53,21 @@ export function installRouterGuards(pinia: Pinia): void {
 
     if (shouldResetPersonalization) {
       personalization.resetPersonalization();
+
+      if (to.path !== '/onboarding') {
+        return {
+          path: '/onboarding',
+          query: { force: '1', reset: '1' }
+        };
+      }
+    }
+
+    if (to.path === '/app' && !personalization.blueprint) {
+      return '/onboarding';
+    }
+
+    if (to.path === '/onboarding' && personalization.blueprint && !forceOnboarding) {
+      return '/app';
     }
 
     return true;

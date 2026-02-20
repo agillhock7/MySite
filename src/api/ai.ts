@@ -30,7 +30,7 @@ export interface GapSuggestion {
 
 export interface BlueprintGenerationResult {
   blueprint: Blueprint;
-  source: 'backend' | 'stub';
+  source: 'backend' | 'stub' | 'server_fallback';
   contentOverrides: Record<string, unknown>;
   gapSuggestions: GapSuggestion[];
   wordpress: {
@@ -38,6 +38,12 @@ export interface BlueprintGenerationResult {
     available: boolean;
     fetchedAt: string;
     errors: string[];
+  } | null;
+  design: {
+    signature: string;
+    profile: string;
+    thoughtPasses: number;
+    selectedPass: number;
   } | null;
 }
 
@@ -546,6 +552,38 @@ function normalizeWordpressContext(value: unknown): BlueprintGenerationResult['w
   };
 }
 
+function normalizeDesignContext(value: unknown): BlueprintGenerationResult['design'] {
+  const record = asObject(value);
+  if (!record) {
+    return null;
+  }
+
+  const signature = typeof record.signature === 'string' ? record.signature : '';
+  const profile = typeof record.profile === 'string' ? record.profile : '';
+  const thoughtPassesRaw =
+    typeof record.thoughtPasses === 'number'
+      ? record.thoughtPasses
+      : Number.parseInt(String(record.thoughtPasses ?? 0), 10);
+  const selectedPassRaw =
+    typeof record.selectedPass === 'number'
+      ? record.selectedPass
+      : Number.parseInt(String(record.selectedPass ?? 0), 10);
+
+  const thoughtPasses = Number.isFinite(thoughtPassesRaw) ? Math.max(0, Math.floor(thoughtPassesRaw)) : 0;
+  const selectedPass = Number.isFinite(selectedPassRaw) ? Math.max(0, Math.floor(selectedPassRaw)) : 0;
+
+  if (!signature && !profile && thoughtPasses === 0) {
+    return null;
+  }
+
+  return {
+    signature,
+    profile,
+    thoughtPasses,
+    selectedPass
+  };
+}
+
 export async function generateBlueprintFromIntent(
   intentProfile: IntentProfile,
   options?: { visitorId?: string; variantNonce?: number }
@@ -582,6 +620,8 @@ interface BackendBlueprintResponse {
   contentOverrides?: unknown;
   gapSuggestions?: unknown;
   wordpress?: unknown;
+  source?: unknown;
+  design?: unknown;
 }
 
 interface BackendOnboardingResponse {
@@ -802,6 +842,7 @@ export async function generateOnboardingTurnWithFallback(params: {
 
 async function requestBlueprintFromBackend(
   intentProfile: IntentProfile,
+  transcript: OnboardingTranscriptLine[],
   visitorId?: string,
   variantNonce?: number
 ): Promise<BlueprintGenerationResult | null> {
@@ -814,7 +855,7 @@ async function requestBlueprintFromBackend(
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ intentProfile, visitorId, variantNonce }),
+      body: JSON.stringify({ intentProfile, transcript, visitorId, variantNonce }),
       signal: controller.signal
     });
 
@@ -829,7 +870,9 @@ async function requestBlueprintFromBackend(
           blueprint: rawResponse.blueprint ?? rawResponse,
           contentOverrides: rawResponse.contentOverrides,
           gapSuggestions: rawResponse.gapSuggestions,
-          wordpress: rawResponse.wordpress
+          wordpress: rawResponse.wordpress,
+          source: rawResponse.source,
+          design: rawResponse.design
         }
       : { blueprint: payload };
 
@@ -838,12 +881,16 @@ async function requestBlueprintFromBackend(
       return null;
     }
 
+    const sourceRaw = typeof normalizedPayload.source === 'string' ? normalizedPayload.source : 'backend_ai';
+    const source: BlueprintGenerationResult['source'] = sourceRaw === 'server_fallback' ? 'server_fallback' : 'backend';
+
     return {
       blueprint: validBlueprint,
-      source: 'backend',
+      source,
       contentOverrides: asObject(normalizedPayload.contentOverrides) ?? {},
       gapSuggestions: normalizeGapSuggestions(normalizedPayload.gapSuggestions),
-      wordpress: normalizeWordpressContext(normalizedPayload.wordpress)
+      wordpress: normalizeWordpressContext(normalizedPayload.wordpress),
+      design: normalizeDesignContext(normalizedPayload.design)
     };
   } catch {
     return null;
@@ -854,10 +901,11 @@ async function requestBlueprintFromBackend(
 
 export async function generateBlueprintWithFallback(
   intentProfile: IntentProfile,
-  options?: { visitorId?: string; variantNonce?: number }
+  options?: { visitorId?: string; variantNonce?: number; transcript?: OnboardingTranscriptLine[] }
 ): Promise<BlueprintGenerationResult> {
   const backendResult = await requestBlueprintFromBackend(
     intentProfile,
+    options?.transcript ?? [],
     options?.visitorId,
     options?.variantNonce
   );
@@ -870,6 +918,7 @@ export async function generateBlueprintWithFallback(
     source: 'stub',
     contentOverrides: {},
     gapSuggestions: [],
-    wordpress: null
+    wordpress: null,
+    design: null
   };
 }

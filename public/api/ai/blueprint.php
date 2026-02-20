@@ -109,6 +109,66 @@ function normalize_variant_nonce(array $decoded): int
     return $value;
 }
 
+function normalize_transcript(array $decoded): array
+{
+    $value = $decoded['transcript'] ?? [];
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $entries = [];
+    foreach ($value as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $role = (string) ($item['role'] ?? 'user');
+        if (!in_array($role, ['system', 'assistant', 'user'], true)) {
+            $role = 'user';
+        }
+
+        $text = trim((string) ($item['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+
+        $entries[] = [
+            'role' => $role,
+            'text' => $text
+        ];
+    }
+
+    if (count($entries) > 24) {
+        $entries = array_slice($entries, -24);
+    }
+
+    return $entries;
+}
+
+function transcript_prompt_lines(array $transcript): string
+{
+    if (count($transcript) === 0) {
+        return 'No transcript provided.';
+    }
+
+    $lines = [];
+    foreach ($transcript as $entry) {
+        $role = strtoupper((string) ($entry['role'] ?? 'user'));
+        $text = trim((string) ($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+
+        $lines[] = $role . ': ' . $text;
+    }
+
+    if (count($lines) === 0) {
+        return 'No transcript provided.';
+    }
+
+    return implode("\n", $lines);
+}
+
 function seeded_value(string $visitorId, string $salt, int $max): int
 {
     if ($max <= 1) {
@@ -206,6 +266,198 @@ function extract_json_object(string $input): ?array
     $slice = substr($trimmed, $start, $end - $start + 1);
     $decoded = json_decode($slice, true);
     return is_array($decoded) ? $decoded : null;
+}
+
+function thought_loop_pass_config(string $visitorSeedKey, int $passIndex): array
+{
+    $profilePool = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
+    $structurePool = ['narrative-arc', 'feature-led', 'mosaic-flow', 'gallery-path', 'signal-first'];
+    $tempoPool = ['calm', 'balanced', 'energetic', 'punchy'];
+    $contrastPool = ['soft-contrast', 'balanced-contrast', 'high-contrast'];
+
+    $passSeed = $visitorSeedKey . ':thought-pass:' . (string) $passIndex;
+    $profile = $profilePool[seeded_value($passSeed, 'profile', count($profilePool))];
+    $structure = $structurePool[seeded_value($passSeed, 'structure', count($structurePool))];
+    $tempo = $tempoPool[seeded_value($passSeed, 'tempo', count($tempoPool))];
+    $contrast = $contrastPool[seeded_value($passSeed, 'contrast', count($contrastPool))];
+    $temperature = 0.28 + (seeded_value($passSeed, 'temperature', 40) / 100.0);
+
+    return [
+        'passIndex' => $passIndex,
+        'seed' => substr(sha1($passSeed), 0, 10),
+        'profile' => $profile,
+        'structure' => $structure,
+        'tempo' => $tempo,
+        'contrast' => $contrast,
+        'temperature' => $temperature
+    ];
+}
+
+function design_signature(string $visitorSeedKey, int $passIndex, string $profile): string
+{
+    return strtoupper(substr(sha1($visitorSeedKey . ':pass:' . (string) $passIndex . ':' . $profile), 0, 8));
+}
+
+function score_blueprint_candidate(array $blueprint, array $intent, array $transcript): float
+{
+    $modules = is_array($blueprint['modules'] ?? null) ? $blueprint['modules'] : [];
+    $shortcuts = is_array($blueprint['shortcuts'] ?? null) ? $blueprint['shortcuts'] : [];
+    $moduleCount = count($modules);
+    $typeSet = [];
+    $variantCount = 0;
+    $topicMatches = 0;
+
+    $topics = is_array($intent['primaryTopics'] ?? null) ? $intent['primaryTopics'] : [];
+    $topicTerms = [];
+    foreach ($topics as $topic) {
+        if (!is_string($topic)) {
+            continue;
+        }
+        $term = strtolower(trim($topic));
+        if ($term !== '') {
+            $topicTerms[] = $term;
+        }
+    }
+
+    foreach ($modules as $module) {
+        if (!is_array($module)) {
+            continue;
+        }
+
+        $type = (string) ($module['type'] ?? '');
+        if ($type !== '') {
+            $typeSet[$type] = true;
+        }
+
+        $props = is_array($module['props'] ?? null) ? $module['props'] : [];
+        $variant = trim((string) ($props['variant'] ?? ''));
+        if ($variant !== '' && $variant !== 'default') {
+            $variantCount += 1;
+        }
+
+        $textBlob = strtolower(
+            trim((string) ($props['title'] ?? '')) . ' ' .
+            trim((string) ($props['subtitle'] ?? '')) . ' ' .
+            trim((string) ($props['intro'] ?? ''))
+        );
+
+        foreach ($topicTerms as $term) {
+            if ($term !== '' && strpos($textBlob, $term) !== false) {
+                $topicMatches += 1;
+            }
+        }
+    }
+
+    $transcriptSignal = 0;
+    foreach ($transcript as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $role = (string) ($entry['role'] ?? '');
+        if ($role !== 'user') {
+            continue;
+        }
+        $text = trim((string) ($entry['text'] ?? ''));
+        if ($text !== '') {
+            $transcriptSignal += 1;
+        }
+    }
+
+    $typeDiversity = (float) count($typeSet);
+    $shortcutsScore = min(6, count($shortcuts));
+    $moduleDepth = min(8, $moduleCount);
+    $topicAlignment = min(8, $topicMatches);
+    $conversationDepth = min(6, $transcriptSignal);
+
+    return
+        ($moduleDepth * 1.8) +
+        ($typeDiversity * 2.1) +
+        ($variantCount * 1.3) +
+        ($shortcutsScore * 0.6) +
+        ($topicAlignment * 1.2) +
+        ($conversationDepth * 0.4);
+}
+
+function request_openai_blueprint(
+    string $apiUrl,
+    string $apiKey,
+    string $model,
+    int $timeoutSeconds,
+    string $systemPrompt,
+    string $userPrompt,
+    float $temperature
+): array {
+    $payload = [
+        'model' => $model,
+        'messages' => [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $userPrompt]
+        ],
+        'temperature' => $temperature,
+        'response_format' => [
+            'type' => 'json_schema',
+            'json_schema' => [
+                'name' => 'ui_blueprint',
+                'strict' => true,
+                'schema' => blueprint_schema()
+            ]
+        ]
+    ];
+
+    $curl = curl_init($apiUrl);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => $timeoutSeconds
+    ]);
+
+    $result = curl_exec($curl);
+    if ($result === false) {
+        $error = curl_error($curl);
+        curl_close($curl);
+        return [
+            'ok' => false,
+            'error' => 'OpenAI request failed: ' . $error
+        ];
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+
+    $responseJson = json_decode((string) $result, true);
+    if ($statusCode >= 400) {
+        $summary = is_array($responseJson) ? json_encode($responseJson, JSON_UNESCAPED_SLASHES) : 'Unknown error';
+        return [
+            'ok' => false,
+            'error' => 'OpenAI API error ' . (string) $statusCode . ': ' . (string) $summary
+        ];
+    }
+
+    $content = $responseJson['choices'][0]['message']['content'] ?? null;
+    if (!is_string($content) || trim($content) === '') {
+        return [
+            'ok' => false,
+            'error' => 'OpenAI returned empty content'
+        ];
+    }
+
+    $blueprint = extract_json_object($content);
+    if (!is_array($blueprint)) {
+        return [
+            'ok' => false,
+            'error' => 'OpenAI output was not valid JSON'
+        ];
+    }
+
+    return [
+        'ok' => true,
+        'blueprint' => $blueprint
+    ];
 }
 
 function infer_theme_from_intent(array $intent, string $visitorId): array
@@ -526,6 +778,14 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
     $gridVariants = ['default', 'magazine', 'mosaic', 'cards'];
     $listVariants = ['default', 'timeline', 'checklist', 'stacked'];
     $gridColumns = [2, 2, 3];
+    $shellProfiles = ['orbital', 'editorial', 'kinetic', 'glass', 'neo'];
+    $typographyProfiles = ['grotesk', 'literary', 'display', 'mono'];
+    $motionProfiles = ['calm', 'balanced', 'kinetic'];
+
+    $shellProfile = $shellProfiles[seeded_value($visitorId, 'shell-profile', count($shellProfiles))];
+    $typographyProfile = $typographyProfiles[seeded_value($visitorId, 'typography-profile', count($typographyProfiles))];
+    $motionProfile = $motionProfiles[seeded_value($visitorId, 'motion-profile', count($motionProfiles))];
+    $shellSignature = strtoupper(substr(sha1($visitorId . ':' . $shellProfile), 0, 8));
 
     foreach ($modules as $index => $module) {
         $type = (string) ($module['type'] ?? '');
@@ -533,6 +793,11 @@ function personalize_module_props(array $modules, array $intent, array $snapshot
         if (!is_array($props)) {
             $props = [];
         }
+
+        $props['shellProfile'] = trim((string) ($props['shellProfile'] ?? '')) !== '' ? $props['shellProfile'] : $shellProfile;
+        $props['typographyProfile'] = trim((string) ($props['typographyProfile'] ?? '')) !== '' ? $props['typographyProfile'] : $typographyProfile;
+        $props['motionProfile'] = trim((string) ($props['motionProfile'] ?? '')) !== '' ? $props['motionProfile'] : $motionProfile;
+        $props['signature'] = trim((string) ($props['signature'] ?? '')) !== '' ? $props['signature'] : $shellSignature;
 
         if ($type === 'Hero') {
             $props['variant'] = $heroVariants[seeded_value($visitorId, 'hero-variant', count($heroVariants))];
@@ -804,7 +1069,8 @@ function send_blueprint_response(
     array $wpSnapshot,
     string $source,
     string $aiStatus,
-    string $aiMessage
+    string $aiMessage,
+    array $designMeta = []
 ): void {
     send_json(200, [
         'blueprint' => $blueprint,
@@ -820,7 +1086,8 @@ function send_blueprint_response(
         'ai' => [
             'status' => $aiStatus,
             'message' => $aiMessage
-        ]
+        ],
+        'design' => $designMeta
     ]);
 }
 
@@ -842,7 +1109,13 @@ function send_server_fallback_response(
         $snapshot,
         'server_fallback',
         'fallback',
-        $reason
+        $reason,
+        [
+            'signature' => strtoupper(substr(sha1($visitorId . ':fallback'), 0, 8)),
+            'profile' => 'fallback',
+            'thoughtPasses' => 0,
+            'selectedPass' => 0
+        ]
     );
 }
 
@@ -858,6 +1131,7 @@ if (!is_array($decodedBody)) {
 
 $config = mysite_load_server_config();
 $intent = normalize_intent($decodedBody);
+$transcript = normalize_transcript($decodedBody);
 $visitorId = normalize_visitor_id($decodedBody);
 $variantNonce = normalize_variant_nonce($decodedBody);
 $visitorSeedKey = $visitorId . ':v' . (string) $variantNonce;
@@ -921,108 +1195,93 @@ Design module ordering and shortcut labels around visitor intent and alexanderjg
 Prioritize pathways like latest posts, featured stories, Work, Read, Bio, Contact, and Main Site navigation.
 Use existing WordPress content as source-of-truth context and add guidance to fill content gaps.
 Each visitor has a design seed. Use it to make the layout feel unique, not generic.
+Always set explicit module.props.variant values where useful so the renderer can create clearly distinct visual outcomes.
 PROMPT;
 
 $visitorSeed = substr(sha1($visitorSeedKey), 0, 12);
-$userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
-    "\nVisitor design seed:\n" . $visitorSeed .
-    "\nDesign iteration:\n" . (string) $variantNonce .
-    "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
-    "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
-    "\nTreat posts as primary content stream for sections." .
-    "\nDo not invent URLs. Use only baseUrl and postLinks from snapshot." .
-    "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral.";
+$transcriptPrompt = transcript_prompt_lines($transcript);
+$thoughtPasses = 3 + seeded_value($visitorSeedKey, 'thought-loop-length', 2);
+$bestBlueprint = null;
+$bestScore = -1000000.0;
+$bestDesignMeta = null;
+$lastError = 'No candidate response';
 
-$payload = [
-    'model' => $model,
-    'messages' => [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $userPrompt]
-    ],
-    'temperature' => 0.2,
-    'response_format' => [
-        'type' => 'json_schema',
-        'json_schema' => [
-            'name' => 'ui_blueprint',
-            'strict' => true,
-            'schema' => blueprint_schema()
-        ]
-    ]
-];
+for ($passIndex = 1; $passIndex <= $thoughtPasses; $passIndex++) {
+    $passConfig = thought_loop_pass_config($visitorSeedKey, $passIndex);
+    $passSeedKey = $visitorSeedKey . ':p' . (string) $passIndex;
 
-$curl = curl_init($apiUrl);
-curl_setopt_array($curl, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_HTTPHEADER => [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $apiKey
-    ],
-    CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => $timeoutSeconds
-]);
+    $userPrompt = "Intent profile:\n" . json_encode($intent, JSON_UNESCAPED_SLASHES) .
+        "\nVisitor design seed:\n" . $visitorSeed .
+        "\nDesign iteration:\n" . (string) $variantNonce .
+        "\nThought pass:\n" . (string) $passIndex . ' of ' . (string) $thoughtPasses .
+        "\nPass style profile:\n" . json_encode($passConfig, JSON_UNESCAPED_SLASHES) .
+        "\nOnboarding transcript:\n" . $transcriptPrompt .
+        "\nWordPress snapshot:\n" . json_encode($wpSummary, JSON_UNESCAPED_SLASHES) .
+        "\nKnown IA signals include: Home, Work, Lab, Read, Bio, Markets." .
+        "\nTreat posts as primary content stream for sections." .
+        "\nDo not invent URLs. Use only baseUrl and postLinks from snapshot." .
+        "\nUse contentKey values only from: heroWelcome, featuredGrid, nextStepsList, quickStartActions, faqGeneral." .
+        "\nEmbed profile hints in module.props: shellProfile, typographyProfile, motionProfile, signature.";
 
-$result = curl_exec($curl);
-if ($result === false) {
-    $error = curl_error($curl);
-    curl_close($curl);
+    $aiResponse = request_openai_blueprint(
+        $apiUrl,
+        $apiKey,
+        $model,
+        $timeoutSeconds,
+        $systemPrompt,
+        $userPrompt,
+        (float) ($passConfig['temperature'] ?? 0.3)
+    );
+
+    if (!(bool) ($aiResponse['ok'] ?? false)) {
+        $lastError = (string) ($aiResponse['error'] ?? 'Unknown AI error');
+        continue;
+    }
+
+    $candidateRaw = $aiResponse['blueprint'] ?? null;
+    if (!is_array($candidateRaw)) {
+        $lastError = 'AI candidate payload was invalid';
+        continue;
+    }
+
+    $candidate = normalize_ai_blueprint($candidateRaw, $intent, $wpSnapshot, $passSeedKey);
+    $score = score_blueprint_candidate($candidate, $intent, $transcript);
+
+    if ($score > $bestScore) {
+        $bestScore = $score;
+        $bestBlueprint = $candidate;
+        $bestDesignMeta = [
+            'signature' => design_signature($visitorSeedKey, $passIndex, (string) ($passConfig['profile'] ?? '')),
+            'profile' => (string) ($passConfig['profile'] ?? 'adaptive'),
+            'thoughtPasses' => $thoughtPasses,
+            'selectedPass' => $passIndex
+        ];
+    }
+}
+
+if (!is_array($bestBlueprint)) {
     send_server_fallback_response(
         $intent,
         $wpSnapshot,
         $contentOverrides,
         $gapSuggestions,
         $visitorSeedKey,
-        'OpenAI request failed: ' . $error
+        'AI thought loop failed: ' . $lastError
     );
 }
 
-$statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-curl_close($curl);
-
-$responseJson = json_decode((string) $result, true);
-if ($statusCode >= 400) {
-    $summary = is_array($responseJson) ? json_encode($responseJson, JSON_UNESCAPED_SLASHES) : 'Unknown error';
-    send_server_fallback_response(
-        $intent,
-        $wpSnapshot,
-        $contentOverrides,
-        $gapSuggestions,
-        $visitorSeedKey,
-        'OpenAI API error ' . (string) $statusCode . ': ' . (string) $summary
-    );
-}
-
-$content = $responseJson['choices'][0]['message']['content'] ?? null;
-if (!is_string($content) || trim($content) === '') {
-    send_server_fallback_response(
-        $intent,
-        $wpSnapshot,
-        $contentOverrides,
-        $gapSuggestions,
-        $visitorSeedKey,
-        'OpenAI returned empty content'
-    );
-}
-
-$blueprint = extract_json_object($content);
-if ($blueprint === null) {
-    send_server_fallback_response(
-        $intent,
-        $wpSnapshot,
-        $contentOverrides,
-        $gapSuggestions,
-        $visitorSeedKey,
-        'OpenAI output was not valid JSON'
-    );
-}
-
-$blueprint = normalize_ai_blueprint($blueprint, $intent, $wpSnapshot, $visitorSeedKey);
 send_blueprint_response(
-    $blueprint,
+    $bestBlueprint,
     $contentOverrides,
     $gapSuggestions,
     $wpSnapshot,
     'backend_ai',
     'ok',
-    ''
+    '',
+    is_array($bestDesignMeta) ? $bestDesignMeta : [
+        'signature' => strtoupper(substr(sha1($visitorSeedKey . ':ai'), 0, 8)),
+        'profile' => 'adaptive',
+        'thoughtPasses' => $thoughtPasses,
+        'selectedPass' => 1
+    ]
 );

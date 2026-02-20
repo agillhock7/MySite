@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   defaultIntentProfile,
   generateBlueprintWithFallback,
@@ -22,6 +22,7 @@ interface TranscriptEntry {
 }
 
 const router = useRouter();
+const route = useRoute();
 const personalization = usePersonalizationStore();
 
 const transcript = ref<TranscriptEntry[]>([]);
@@ -130,7 +131,8 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
   thinking.value = true;
   const generationResult = await generateBlueprintWithFallback(normalizeIntentForGeneration(intent), {
     visitorId,
-    variantNonce: variantNonce.value
+    variantNonce: variantNonce.value,
+    transcript: toTranscriptLines(transcript.value)
   });
   thinking.value = false;
 
@@ -138,14 +140,23 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
     setRuntimeContentOverrides(generationResult.contentOverrides);
   }
 
-  if (generationResult.source === 'backend') {
+  if (generationResult.source === 'backend' || generationResult.source === 'server_fallback') {
     const hasWordpress = generationResult.wordpress?.available ?? false;
     await assistantReply(
-      hasWordpress
-        ? 'AI blueprint generated from backend + live WordPress content.'
-        : 'AI blueprint generated from backend. WordPress data was limited.',
+      generationResult.source === 'server_fallback'
+        ? 'AI service degraded. Loaded a server-generated fallback from live WordPress content.'
+        : hasWordpress
+          ? 'AI blueprint generated from backend + live WordPress content.'
+          : 'AI blueprint generated from backend. WordPress data was limited.',
       80
     );
+
+    if (generationResult.design?.signature) {
+      await assistantReply(
+        `Design signature ${generationResult.design.signature} selected after ${generationResult.design.thoughtPasses} thought passes.`,
+        80
+      );
+    }
 
     if (generationResult.gapSuggestions.length > 0) {
       const topGap = generationResult.gapSuggestions[0];
@@ -181,8 +192,12 @@ async function handleCommand(command: string): Promise<void> {
   }
 
   if (command === '/hardreset') {
-    pushLine('system', 'Performing hard reset via router.');
-    await router.replace('/reset');
+    pushLine('system', 'Performing hard reset and restarting onboarding.');
+    personalization.resetPersonalization();
+    variantNonce.value = getDesignIteration();
+    transcript.value = [];
+    resetOnboardingState();
+    await seedConversation();
     return;
   }
 
@@ -227,12 +242,18 @@ async function handleSubmit(): Promise<void> {
 
   await assistantReply(turn.assistantMessage, 80);
 
-  if (turn.isComplete || turnsTaken.value >= 8) {
+  if ((turn.isComplete && turnsTaken.value >= 2) || turnsTaken.value >= 10) {
     await startBlueprintGeneration(intentDraft.value);
   }
 }
 
 onMounted(async () => {
+  const hasForceFlag = route.query.force === '1' || route.query.reset === '1';
+  if (personalization.blueprint && !hasForceFlag) {
+    await router.replace('/app');
+    return;
+  }
+
   pushLine('system', 'Refinement chat initialized. Type /help for commands.');
   await seedConversation();
 });
