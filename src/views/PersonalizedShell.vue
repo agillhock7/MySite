@@ -92,6 +92,8 @@ const assistantStreamPhase = ref('');
 const assistantSuggestions = ref<Array<{ label: string; action: string }>>([]);
 const conversationThreads = ref<SavedConversation[]>([]);
 const activeConversationId = ref('');
+const terminalExpanded = ref(false);
+const transcriptHeight = ref(320);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -1307,6 +1309,22 @@ const commandPlaceholder = computed(() =>
 );
 
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
+const terminalShellStyle = computed<Record<string, string>>(() => ({
+  '--terminal-transcript-height': `${transcriptHeight.value}px`
+}));
+
+function clampTranscriptHeight(height: number): number {
+  return Math.max(220, Math.min(860, Math.round(height)));
+}
+
+function adjustTranscriptHeight(delta: number): void {
+  transcriptHeight.value = clampTranscriptHeight(transcriptHeight.value + delta);
+}
+
+function toggleTerminalExpanded(): void {
+  terminalExpanded.value = !terminalExpanded.value;
+  transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
+}
 
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
@@ -1733,7 +1751,7 @@ onMounted(async () => {
       <AiPromptGame :signature="designSignature" :topics="focusTopics" />
     </section>
 
-    <section class="terminal-shell">
+    <section class="terminal-shell" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
       <p v-if="widgetBuildSession" class="build-mode-banner">
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
@@ -1741,7 +1759,16 @@ onMounted(async () => {
       <div class="conversation-bar">
         <div class="conversation-head">
           <p class="mission-kicker">AI Conversations</p>
-          <p class="conversation-count">{{ threadSummary }}</p>
+          <div class="conversation-meta">
+            <p class="conversation-count">{{ threadSummary }}</p>
+            <div class="terminal-tools">
+              <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(-80)">-</button>
+              <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(80)">+</button>
+              <button type="button" class="terminal-tool-btn" @click="toggleTerminalExpanded">
+                {{ terminalExpanded ? 'Collapse' : 'Expand' }}
+              </button>
+            </div>
+          </div>
         </div>
         <div class="conversation-actions">
           <button
@@ -2218,6 +2245,10 @@ h1 {
   backdrop-filter: blur(14px);
 }
 
+.terminal-shell.expanded {
+  box-shadow: 0 20px 46px rgba(2, 6, 23, 0.45);
+}
+
 .build-mode-banner {
   margin: 0;
   padding: 0.6rem 0.85rem;
@@ -2247,6 +2278,28 @@ h1 {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.72rem;
+}
+
+.conversation-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.terminal-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.terminal-tool-btn {
+  border-radius: 999px;
+  border: 1px solid var(--border-tone);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.16rem 0.48rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
 }
 
 .conversation-actions {
@@ -2316,11 +2369,13 @@ h1 {
 }
 
 .transcript {
-  max-height: 240px;
+  min-height: 200px;
+  max-height: var(--terminal-transcript-height, 320px);
   overflow: auto;
   padding: 0.85rem;
   display: grid;
   gap: 0.42rem;
+  transition: max-height 0.2s ease;
 }
 
 .line {

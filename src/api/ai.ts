@@ -1051,10 +1051,17 @@ function buildLocalImagePlaceholderDataUri(prompt: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+function buildExternalImageUrl(prompt: string): string {
+  const cleaned = prompt.replace(/\s+/g, ' ').trim();
+  const seed = `${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(cleaned || 'futuristic abstract composition')}?width=1024&height=1024&nologo=true&enhance=true&seed=${encodeURIComponent(seed)}`;
+}
+
 function localImageAssistantFallback(userMessage: string): AssistantTurnResult {
+  const imageUrl = buildExternalImageUrl(userMessage) || buildLocalImagePlaceholderDataUri(userMessage);
   return {
     assistantMessage:
-      'Image request captured. I generated a local preview in-thread. Ask for a style variation, camera angle, or mood shift and I will regenerate.',
+      'Image request captured. I generated an in-thread render. Ask for style variation, camera angle, lighting, or mood and I will regenerate.',
     suggestions: [
       { label: 'Try Cinematic Variant', action: 'ask-ai-access' },
       { label: 'Open Main Site', action: 'https://alexanderjgill.com' },
@@ -1063,7 +1070,7 @@ function localImageAssistantFallback(userMessage: string): AssistantTurnResult {
     media: [
       {
         type: 'image',
-        url: buildLocalImagePlaceholderDataUri(userMessage),
+        url: imageUrl,
         alt: 'Generated image preview'
       }
     ],

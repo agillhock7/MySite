@@ -296,6 +296,18 @@ function assistant_image_placeholder_data_uri(string $prompt): string
     return 'data:image/svg+xml;charset=utf-8,' . rawurlencode($svg);
 }
 
+function assistant_external_image_url(string $prompt): string
+{
+    $normalizedPrompt = trim(preg_replace('/\s+/', ' ', $prompt) ?? '');
+    if ($normalizedPrompt === '') {
+        $normalizedPrompt = 'futuristic abstract composition';
+    }
+
+    $seed = (string) time() . '-' . substr(sha1($normalizedPrompt), 0, 8);
+    return 'https://image.pollinations.ai/prompt/' . rawurlencode($normalizedPrompt)
+        . '?width=1024&height=1024&nologo=true&enhance=true&seed=' . rawurlencode($seed);
+}
+
 function assistant_generate_image(string $prompt, array $config, int $timeoutSeconds): array
 {
     $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
@@ -304,10 +316,10 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
 
     if (!$enabled || $apiKey === '') {
         return [
-            'url' => assistant_image_placeholder_data_uri($prompt),
-            'source' => 'local',
-            'provider' => 'fallback',
-            'model' => 'placeholder'
+            'url' => assistant_external_image_url($prompt),
+            'source' => 'external',
+            'provider' => 'pollinations',
+            'model' => 'pollinations'
         ];
     }
 
@@ -336,10 +348,10 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     if ($result === false) {
         curl_close($curl);
         return [
-            'url' => assistant_image_placeholder_data_uri($prompt),
-            'source' => 'local',
-            'provider' => 'fallback',
-            'model' => 'placeholder'
+            'url' => assistant_external_image_url($prompt),
+            'source' => 'external',
+            'provider' => 'pollinations',
+            'model' => 'pollinations'
         ];
     }
 
@@ -347,10 +359,10 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     curl_close($curl);
     if ($statusCode >= 400) {
         return [
-            'url' => assistant_image_placeholder_data_uri($prompt),
-            'source' => 'local',
-            'provider' => 'fallback',
-            'model' => 'placeholder'
+            'url' => assistant_external_image_url($prompt),
+            'source' => 'external',
+            'provider' => 'pollinations',
+            'model' => 'pollinations'
         ];
     }
 
@@ -365,10 +377,10 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     }
     if ($url === '') {
         return [
-            'url' => assistant_image_placeholder_data_uri($prompt),
-            'source' => 'local',
-            'provider' => 'fallback',
-            'model' => 'placeholder'
+            'url' => assistant_external_image_url($prompt),
+            'source' => 'external',
+            'provider' => 'pollinations',
+            'model' => 'pollinations'
         ];
     }
 
@@ -454,10 +466,15 @@ if ($timeoutSeconds > 120) {
 
 if (is_image_request($userMessage)) {
     $image = assistant_generate_image($userMessage, $config, $timeoutSeconds);
+    $assistantMessage = 'Image generated in-thread. Ask for edits, styles, or a new variation.';
+    if (($image['source'] ?? '') === 'external') {
+        $assistantMessage = 'Image generated via external runtime in-thread. Ask for style, angle, lighting, or mood changes.';
+    } elseif (($image['source'] ?? '') !== 'backend') {
+        $assistantMessage = 'Image preview generated in fallback mode. Configure OpenAI image access for first-party renders.';
+    }
+
     send_json(200, [
-        'assistantMessage' => $image['source'] === 'backend'
-            ? 'Image generated in-thread. Ask for edits, styles, or a new variation.'
-            : 'Image preview generated in fallback mode. Configure OpenAI image access for live renders.',
+        'assistantMessage' => $assistantMessage,
         'suggestions' => [
             ['label' => 'Refine Image Prompt', 'action' => 'ask-ai-access'],
             ['label' => 'Open Main Site', 'action' => 'https://alexanderjgill.com'],
