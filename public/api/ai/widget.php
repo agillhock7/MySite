@@ -374,6 +374,67 @@ function fallback_fashion_items(string $signature, string $mood): array
     return array_slice(array_merge(array_slice($base, $offset), array_slice($base, 0, $offset)), 0, 3);
 }
 
+function fallback_prompt_widget_answer(string $prompt): string
+{
+    $trimmed = preg_replace('/\s+/', ' ', trim($prompt)) ?? '';
+    if ($trimmed === '') {
+        return 'Add a clearer prompt and refresh this widget.';
+    }
+
+    if (strlen($trimmed) > 170) {
+        $trimmed = substr($trimmed, 0, 167) . '...';
+    }
+
+    return 'Focus on this now: ' . $trimmed;
+}
+
+function parse_prompt_widget_response(string $raw, string $fallbackAnswer): array
+{
+    $lines = preg_split('/\r\n|\r|\n/', trim($raw)) ?: [];
+    $response = '';
+    $items = [];
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if ($trimmed === '') {
+            continue;
+        }
+
+        if (stripos($trimmed, 'ANSWER:') === 0) {
+            $response = trim(substr($trimmed, 7));
+            continue;
+        }
+
+        if (stripos($trimmed, 'ACTION_') === 0 || stripos($trimmed, 'ACTION:') === 0) {
+            $parts = explode(':', $trimmed, 2);
+            $item = isset($parts[1]) ? trim($parts[1]) : '';
+            if ($item !== '') {
+                $items[] = $item;
+            }
+        }
+    }
+
+    if ($response === '') {
+        $response = trim($raw);
+    }
+    if ($response === '') {
+        $response = $fallbackAnswer;
+    }
+
+    if (count($items) === 0) {
+        $items = [
+            'Refine the prompt with exact scope and constraints.',
+            'Ask for output format you can reuse directly.',
+            'Refresh to iterate quickly on the same widget.'
+        ];
+    }
+
+    return [
+        'response' => $response,
+        'items' => array_slice($items, 0, 4)
+    ];
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     send_json(405, ['error' => 'Method not allowed']);
 }
@@ -483,6 +544,26 @@ if ($widget['type'] === 'weather') {
     ];
     $source = $summary['source'];
 } else {
+    $prompt = clean_text($widget['config']['prompt'] ?? '');
+    if ($prompt !== '') {
+        $fallbackAnswer = fallback_prompt_widget_answer($prompt);
+        $completion = ai_short_text(
+            $config,
+            'You generate concise widget answers. Return exactly 3 lines: ANSWER:, ACTION_1:, ACTION_2:.',
+            'Widget title: ' . $widget['title'] . '. User prompt: ' . $prompt . '. Keep each line concise.',
+            "ANSWER: {$fallbackAnswer}\nACTION_1: Tighten the prompt with clear desired output.\nACTION_2: Refresh to get a sharper iteration."
+        );
+
+        $parsed = parse_prompt_widget_response($completion['text'], $fallbackAnswer);
+        $payload = [
+            'mode' => 'prompt',
+            'title' => $widget['title'],
+            'prompt' => $prompt,
+            'response' => $parsed['response'],
+            'items' => $parsed['items']
+        ];
+        $source = $completion['source'];
+    } else {
     $html = sanitize_html(clean_text($widget['html'] ?? '', '<div><p>No HTML provided.</p></div>'));
     $summary = ai_short_text(
         $config,
@@ -496,6 +577,7 @@ if ($widget['type'] === 'weather') {
         'text' => $summary['text']
     ];
     $source = $summary['source'];
+    }
 }
 
 send_json(200, [

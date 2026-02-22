@@ -59,6 +59,23 @@ const textPayload = computed(() => {
   return typeof value === 'string' ? value : '';
 });
 
+const promptPayload = computed(() => {
+  const payload = runtime.value?.payload ?? {};
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
+  const response = typeof payload.response === 'string' ? payload.response : '';
+  const mode = typeof payload.mode === 'string' ? payload.mode : '';
+  const actions = Array.isArray(payload.items)
+    ? payload.items.filter((item): item is string => typeof item === 'string').slice(0, 4)
+    : [];
+
+  return {
+    mode,
+    prompt,
+    response,
+    actions
+  };
+});
+
 const htmlPayload = computed(() => {
   const value = runtime.value?.payload.html;
   return typeof value === 'string' ? value : '<p>No widget output yet.</p>';
@@ -137,8 +154,16 @@ watch(
     </template>
 
     <template v-else>
-      <div class="html-preview" v-html="htmlPayload"></div>
-      <p class="secondary">{{ textPayload }}</p>
+      <template v-if="promptPayload.mode === 'prompt'">
+        <p v-if="promptPayload.prompt" class="secondary"><strong>Prompt:</strong> {{ promptPayload.prompt }}</p>
+        <p class="primary">{{ promptPayload.response || textPayload || 'No response yet.' }}</p>
+        <ul v-if="promptPayload.actions.length > 0">
+          <li v-for="item in promptPayload.actions" :key="item">{{ item }}</li>
+        </ul>
+      </template>
+
+      <div v-else class="html-preview" v-html="htmlPayload"></div>
+      <p v-if="textPayload" class="secondary">{{ textPayload }}</p>
     </template>
   </section>
 </template>

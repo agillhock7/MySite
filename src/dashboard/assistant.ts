@@ -1,5 +1,6 @@
 import {
   MAX_DASHBOARD_WIDGETS,
+  createPromptWidgetFromPrompt,
   createPresetWidget,
   generateSimpleHtmlWidgetFromRequest,
   type DashboardWidget,
@@ -60,6 +61,17 @@ function inferCity(input: string): string {
   return match[1].trim();
 }
 
+function looksLikePromptWidgetRequest(input: string): boolean {
+  return /\b(build|create|make|generate|add)\b/i.test(input) || /\bwidget\b/i.test(input);
+}
+
+function promptFromRequest(input: string): string {
+  return input
+    .replace(/^\s*(please\s+)?(build|create|make|generate|add)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function handleNaturalLanguageWidgetRequest(
   input: string,
   seedSource: string,
@@ -91,9 +103,18 @@ export function handleNaturalLanguageWidgetRequest(
 
   const widgetType = inferWidgetType(trimmed);
   if (!widgetType) {
+    if (looksLikePromptWidgetRequest(trimmed)) {
+      const widgetPrompt = promptFromRequest(trimmed) || trimmed;
+      const widget = createPromptWidgetFromPrompt(widgetPrompt, seedSource);
+      return {
+        widget,
+        reply: `Deployed AI prompt widget "${widget.title}". Use /widget refresh ${widget.id} to regenerate.`
+      };
+    }
+
     return {
       reply:
-        'I can build widget types: weather, horoscope, fashion trends, sports scores, or custom HTML. Try: "create a weather widget for Austin".'
+        'Tell me what widget you want in plain language, or use /widget build <title> || <prompt>.'
     };
   }
 

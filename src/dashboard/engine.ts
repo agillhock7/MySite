@@ -237,6 +237,24 @@ function inferWidgetTitle(request: string, fallback: string): string {
   return compact.length > 48 ? `${compact.slice(0, 45)}...` : compact;
 }
 
+export function createPromptWidgetFromPrompt(
+  prompt: string,
+  seedSource: string,
+  explicitTitle = ''
+): DashboardWidget {
+  const cleanPrompt = prompt.trim();
+  const title = explicitTitle.trim() || inferWidgetTitle(cleanPrompt, 'AI Prompt Widget');
+
+  return {
+    ...createPresetWidget('customHtml', seedSource, title),
+    config: {
+      mode: 'prompt',
+      prompt: cleanPrompt || 'Help me build a useful dashboard widget for today.',
+      source: 'ai-cli'
+    }
+  };
+}
+
 export function generateSimpleHtmlWidgetFromRequest(request: string, seedSource: string): DashboardWidget {
   const id = generateWidgetId(seedSource);
   const createdAt = new Date().toISOString();

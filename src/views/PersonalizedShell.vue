@@ -6,6 +6,7 @@ import AiPromptGame from '@/components/AiPromptGame.vue';
 import DashboardWidgetRenderer from '@/components/DashboardWidgetRenderer.vue';
 import {
   MAX_DASHBOARD_WIDGETS,
+  createPromptWidgetFromPrompt,
   createPresetWidget,
   loadWidgets,
   saveWidgets,
@@ -475,6 +476,35 @@ function handleWidgetCommand(input: string): boolean {
     return true;
   }
 
+  if (input === '/widget build' || input.startsWith('/widget build ')) {
+    const payload = input === '/widget build' ? '' : input.slice('/widget build '.length).trim();
+    if (!payload) {
+      addLine('system', 'Usage: /widget build <title> || <prompt>');
+      addLine('system', 'Example: /widget build Weather Intel || Give me a weather summary for Austin with one planning tip.');
+      return true;
+    }
+
+    const splitToken = '||';
+    const splitIndex = payload.indexOf(splitToken);
+
+    let title = '';
+    let prompt = payload;
+    if (splitIndex !== -1) {
+      title = payload.slice(0, splitIndex).trim();
+      prompt = payload.slice(splitIndex + splitToken.length).trim();
+    }
+
+    if (!prompt) {
+      addLine('system', 'Prompt missing. Usage: /widget build <title> || <prompt>');
+      return true;
+    }
+
+    const widget = createPromptWidgetFromPrompt(prompt, `${visitorId}:${designSignature.value}:${sceneNonce.value}`, title);
+    deployWidget(widget);
+    addLine('system', `Prompt bound. Use /widget refresh ${widget.id} to run it again.`);
+    return true;
+  }
+
   if (input.startsWith('/widget html ')) {
     const payload = input.slice('/widget html '.length).trim();
     const splitToken = '||';
@@ -505,7 +535,7 @@ function handleWidgetCommand(input: string): boolean {
 
   addLine(
     'system',
-    'Widget commands: /widget list, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+    'Widget commands: /widget list, /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
   );
   return true;
 }
@@ -523,9 +553,9 @@ async function handleCommand(raw: string): Promise<void> {
     addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
-      'Widgets: /widget list, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+      'Widgets: /widget list, /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
     );
-    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: "create a weather widget for Chicago".`);
+    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: /widget build Daily Coach || Give me one focused action for today.`);
     return;
   }
 
@@ -702,6 +732,7 @@ onMounted(async () => {
 
       <div v-if="widgets.length === 0" class="empty-widgets">
         <p>No widgets yet. Try:</p>
+        <p>/widget build Daily Coach || Give me one focused action for the day and two follow-ups</p>
         <p>/widget add weather Austin</p>
         <p>/widget add horoscope</p>
         <p>/widget add sports NHL</p>
