@@ -3,6 +3,16 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import AiPromptGame from '@/components/AiPromptGame.vue';
+import DashboardWidgetRenderer from '@/components/DashboardWidgetRenderer.vue';
+import {
+  createPresetWidget,
+  loadWidgets,
+  saveWidgets,
+  sanitizeWidgetHtml,
+  type DashboardWidget,
+  type DashboardWidgetType
+} from '@/dashboard/engine';
+import { handleNaturalLanguageWidgetRequest } from '@/dashboard/assistant';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getOrCreateVisitorId } from '@/personalization/visitor';
@@ -27,6 +37,7 @@ const forcedFocus = ref('');
 const commandInput = ref('');
 const transcriptRef = ref<HTMLElement | null>(null);
 const transcript = ref<TerminalLine[]>([]);
+const widgets = ref<DashboardWidget[]>([]);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -107,6 +118,49 @@ async function openAction(url: string): Promise<void> {
   }
 }
 
+function persistWidgets(): void {
+  saveWidgets(widgets.value);
+}
+
+function deployWidget(widget: DashboardWidget, sourceLabel = 'AI CLI'): void {
+  widgets.value = [widget, ...widgets.value].slice(0, 24);
+  persistWidgets();
+  addLine('signal', `${sourceLabel} deployed widget ${widget.id} · ${widget.title}`);
+}
+
+function parseWidgetType(rawType: string): DashboardWidgetType | null {
+  const normalized = rawType.trim().toLowerCase();
+  if (normalized === 'horoscope' || normalized === 'fashion' || normalized === 'sports' || normalized === 'customhtml') {
+    return normalized === 'customhtml' ? 'customHtml' : (normalized as DashboardWidgetType);
+  }
+
+  return null;
+}
+
+function parseFocusInput(input: string): string {
+  const words = input
+    .split(/[\s,]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2);
+
+  if (words.length === 0) {
+    return '';
+  }
+
+  return words.slice(0, 2).join(' ');
+}
+
+function removeWidgetById(widgetId: string): boolean {
+  const nextWidgets = widgets.value.filter((widget) => widget.id.toLowerCase() !== widgetId.toLowerCase());
+  if (nextWidgets.length === widgets.value.length) {
+    return false;
+  }
+
+  widgets.value = nextWidgets;
+  persistWidgets();
+  return true;
+}
+
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
@@ -129,6 +183,8 @@ async function initializePersonalization(): Promise<void> {
       ? `WordPress REST warning: ${firstError}`
       : 'WordPress REST warning: no posts were returned.';
   }
+
+  widgets.value = loadWidgets();
 
   if (!personalization.blueprint) {
     initializing.value = false;
@@ -245,11 +301,11 @@ const scene = computed(() =>
 );
 
 const readinessScore = computed(() => {
-  const topicWeight = Math.min(35, focusTopics.value.length * 8);
-  const postWeight = Math.min(35, posts.value.length * 6);
-  const shortcutWeight = Math.min(20, shortcuts.value.length * 4);
+  const topicWeight = Math.min(30, focusTopics.value.length * 7);
+  const postWeight = Math.min(30, posts.value.length * 5);
+  const widgetWeight = Math.min(30, widgets.value.length * 6);
   const trackWeight = Math.min(10, scene.value.tracks.length * 3);
-  return Math.min(100, topicWeight + postWeight + shortcutWeight + trackWeight);
+  return Math.min(100, topicWeight + postWeight + widgetWeight + trackWeight);
 });
 
 const dashboardStats = computed(() => [
@@ -264,9 +320,9 @@ const dashboardStats = computed(() => [
     detail: 'Pulled from runtime WP feed'
   },
   {
-    label: 'Focus Topics',
-    value: `${focusTopics.value.length}`,
-    detail: focusTopics.value.slice(0, 2).join(' · ') || 'Waiting for focus'
+    label: 'Deployed Widgets',
+    value: `${widgets.value.length}`,
+    detail: widgets.value.length > 0 ? widgets.value[0].title : 'No widgets yet'
   },
   {
     label: 'Mission Tracks',
@@ -275,22 +331,96 @@ const dashboardStats = computed(() => [
   }
 ]);
 
-function parseFocusInput(input: string): string {
-  const words = input
-    .split(/[\s,]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 2);
-
-  if (words.length === 0) {
-    return '';
-  }
-
-  return words.slice(0, 2).join(' ');
-}
-
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
   await router.push('/onboarding?force=1&reset=1');
+}
+
+function showWidgetListInTerminal(): void {
+  if (widgets.value.length === 0) {
+    addLine('system', 'No widgets deployed yet. Try /widget add horoscope or just say "build sports scores widget".');
+    return;
+  }
+
+  for (const widget of widgets.value.slice(0, 10)) {
+    addLine('system', `${widget.id} · ${widget.type} · ${widget.title}`);
+  }
+}
+
+function handleWidgetCommand(input: string): boolean {
+  if (!input.startsWith('/widget')) {
+    return false;
+  }
+
+  if (input === '/widget list') {
+    showWidgetListInTerminal();
+    return true;
+  }
+
+  if (input === '/widget clear') {
+    widgets.value = [];
+    persistWidgets();
+    addLine('signal', 'All deployed widgets cleared.');
+    return true;
+  }
+
+  if (input.startsWith('/widget remove ')) {
+    const id = input.slice('/widget remove '.length).trim();
+    if (!id) {
+      addLine('system', 'Usage: /widget remove <widget-id>');
+      return true;
+    }
+
+    const removed = removeWidgetById(id);
+    addLine(removed ? 'signal' : 'system', removed ? `Removed widget ${id}.` : `Widget ${id} not found.`);
+    return true;
+  }
+
+  if (input.startsWith('/widget add ')) {
+    const payload = input.slice('/widget add '.length).trim();
+    const [rawType, ...rest] = payload.split(' ');
+    const widgetType = parseWidgetType(rawType);
+    if (!widgetType) {
+      addLine('system', 'Widget types: horoscope, fashion, sports, customHtml');
+      return true;
+    }
+
+    const hint = rest.join(' ').trim();
+    const widget = createPresetWidget(widgetType, `${visitorId}:${designSignature.value}:${sceneNonce.value}`, hint);
+    deployWidget(widget);
+    return true;
+  }
+
+  if (input.startsWith('/widget html ')) {
+    const payload = input.slice('/widget html '.length).trim();
+    const splitToken = '||';
+    const splitIndex = payload.indexOf(splitToken);
+
+    if (splitIndex === -1) {
+      addLine('system', 'Usage: /widget html <title> || <html>');
+      addLine('system', 'Example: /widget html Quick Card || <section><h4>Today</h4><p>Ship one feature.</p></section>');
+      return true;
+    }
+
+    const title = payload.slice(0, splitIndex).trim() || 'Custom HTML Widget';
+    const html = payload.slice(splitIndex + splitToken.length).trim();
+
+    if (!html) {
+      addLine('system', 'HTML content missing. Usage: /widget html <title> || <html>');
+      return true;
+    }
+
+    const widget: DashboardWidget = {
+      ...createPresetWidget('customHtml', `${visitorId}:${designSignature.value}:${sceneNonce.value}`, title),
+      html: sanitizeWidgetHtml(html)
+    };
+
+    deployWidget(widget);
+    return true;
+  }
+
+  addLine('system', 'Widget commands: /widget list, /widget add <type>, /widget html <title> || <html>, /widget remove <id>, /widget clear');
+  return true;
 }
 
 async function handleCommand(raw: string): Promise<void> {
@@ -303,7 +433,9 @@ async function handleCommand(raw: string): Promise<void> {
   commandInput.value = '';
 
   if (input === '/help') {
-    addLine('system', 'Commands: /help, /shuffle, /focus <topic>, /open <1-3>, /clear, /reset');
+    addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
+    addLine('system', 'Widgets: /widget list, /widget add <type>, /widget html <title> || <html>, /widget remove <id>');
+    addLine('system', 'Tip: natural language works too. Example: "build a sports score widget".');
     return;
   }
 
@@ -353,16 +485,34 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
-  const inferredFocus = parseFocusInput(input);
-  if (inferredFocus) {
-    forcedFocus.value = inferredFocus;
-    sceneNonce.value += 1;
-    addLine('signal', `Captured signal -> ${inferredFocus}. Scene updated.`);
+  if (handleWidgetCommand(input)) {
     return;
   }
 
-  sceneNonce.value += 1;
-  addLine('signal', 'Signal captured. Try /help for direct commands.');
+  const assistant = handleNaturalLanguageWidgetRequest(
+    input,
+    `${visitorId}:${designSignature.value}:${sceneNonce.value}`,
+    widgets.value.length
+  );
+
+  if (assistant.widget) {
+    deployWidget(assistant.widget, 'Assistant');
+  }
+
+  if (assistant.action === 'list') {
+    showWidgetListInTerminal();
+  }
+
+  addLine('system', assistant.reply);
+}
+
+function removeWidget(widgetId: string): void {
+  const removed = removeWidgetById(widgetId);
+  if (!removed) {
+    return;
+  }
+
+  addLine('signal', `Widget ${widgetId} removed from dashboard.`);
 }
 
 onMounted(async () => {
@@ -375,7 +525,7 @@ onMounted(async () => {
   addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
   addLine('system', scene.value.mission);
   addLine('signal', scene.value.pulse);
-  addLine('system', 'Type /help to control your experience stream.');
+  addLine('system', 'You can now build your own dashboard with AI CLI commands. Type /help.');
 });
 </script>
 
@@ -449,9 +599,32 @@ onMounted(async () => {
           v-model="commandInput"
           type="text"
           autocomplete="off"
-          placeholder="Type command or intent, then press Enter"
+          placeholder="Use AI CLI to build widgets (type /help)"
         />
       </form>
+    </section>
+
+    <section class="widget-studio">
+      <header class="studio-head">
+        <p class="mission-kicker">Widget Studio</p>
+        <p class="studio-meta">Deployable widgets: {{ widgets.length }}</p>
+      </header>
+
+      <div v-if="widgets.length === 0" class="empty-widgets">
+        <p>No widgets yet. Try:</p>
+        <p>/widget add horoscope</p>
+        <p>/widget add sports NHL</p>
+        <p>/widget html Daily Brief || &lt;section&gt;&lt;h4&gt;Daily Brief&lt;/h4&gt;&lt;p&gt;Write one clear prompt goal.&lt;/p&gt;&lt;/section&gt;</p>
+      </div>
+
+      <article v-for="widget in widgets" :key="widget.id" class="widget-row">
+        <div class="widget-head">
+          <p class="widget-id">{{ widget.id }}</p>
+          <button type="button" class="remove-widget" @click="removeWidget(widget.id)">Remove</button>
+        </div>
+        <h3>{{ widget.title }}</h3>
+        <DashboardWidgetRenderer :widget="widget" :signature="designSignature" />
+      </article>
     </section>
 
     <section class="tracks-grid">
@@ -590,49 +763,9 @@ onMounted(async () => {
   gap: 0.7rem;
 }
 
-.dashboard-card {
-  border: 1px solid #1f2937;
-  border-radius: 14px;
-  background: rgba(2, 6, 23, 0.82);
-  padding: 0.9rem;
-}
-
-.stats-grid {
-  margin-top: 0.55rem;
-  display: grid;
-  gap: 0.55rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.stat-card {
-  border: 1px solid #1f2937;
-  border-radius: 10px;
-  background: rgba(3, 7, 18, 0.84);
-  padding: 0.58rem;
-}
-
-.stat-label {
-  margin: 0;
-  color: #67e8f9;
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.stat-value {
-  margin: 0.25rem 0 0;
-  font-size: 1.1rem;
-  line-height: 1.05;
-}
-
-.stat-detail {
-  margin: 0.28rem 0 0;
-  color: #a7f3d0;
-  font-size: 0.8rem;
-}
-
 .mission-card,
-.prompt-card {
+.prompt-card,
+.dashboard-card {
   border: 1px solid #1f2937;
   border-radius: 14px;
   background: rgba(2, 6, 23, 0.82);
@@ -670,6 +803,40 @@ h1 {
   display: grid;
   gap: 0.35rem;
   color: #a7f3d0;
+}
+
+.stats-grid {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-card {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: rgba(3, 7, 18, 0.84);
+  padding: 0.58rem;
+}
+
+.stat-label {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stat-value {
+  margin: 0.25rem 0 0;
+  font-size: 1.1rem;
+  line-height: 1.05;
+}
+
+.stat-detail {
+  margin: 0.28rem 0 0;
+  color: #a7f3d0;
+  font-size: 0.8rem;
 }
 
 .terminal-shell {
@@ -732,6 +899,78 @@ h1 {
 
 .command-row input::placeholder {
   color: #64748b;
+}
+
+.widget-studio {
+  margin-top: 0.85rem;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.82);
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.68rem;
+}
+
+.studio-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.65rem;
+}
+
+.studio-meta {
+  margin: 0;
+  color: #86efac;
+  font-size: 0.76rem;
+}
+
+.empty-widgets {
+  border: 1px dashed #334155;
+  border-radius: 10px;
+  padding: 0.65rem;
+}
+
+.empty-widgets p {
+  margin: 0.25rem 0 0;
+  color: #a7f3d0;
+  font-size: 0.82rem;
+}
+
+.widget-row {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: rgba(3, 7, 18, 0.84);
+  padding: 0.66rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.widget-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.widget-id {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 0.74rem;
+  letter-spacing: 0.07em;
+}
+
+.remove-widget {
+  border: 1px solid #7f1d1d;
+  border-radius: 999px;
+  background: #450a0a;
+  color: #fecaca;
+  padding: 0.24rem 0.58rem;
+  font-size: 0.72rem;
+}
+
+.widget-row h3 {
+  margin: 0;
+  font-size: 0.98rem;
 }
 
 .tracks-grid {
@@ -853,6 +1092,15 @@ h1 {
   .dashboard-shell {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
+  }
+
+  .widget-studio {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-head,
+  .empty-widgets {
+    grid-column: 1 / -1;
   }
 
   .tracks-grid {
