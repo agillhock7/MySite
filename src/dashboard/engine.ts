@@ -1,6 +1,6 @@
 import { hashText } from '@/utils/seed';
 
-export type DashboardWidgetType = 'horoscope' | 'fashion' | 'sports' | 'customHtml';
+export type DashboardWidgetType = 'weather' | 'horoscope' | 'fashion' | 'sports' | 'customHtml';
 
 export interface DashboardWidget {
   id: string;
@@ -12,6 +12,7 @@ export interface DashboardWidget {
 }
 
 const WIDGET_STORAGE_KEY = 'mysite-dashboard-widgets-v1';
+export const MAX_DASHBOARD_WIDGETS = 7;
 
 const ZODIAC_SIGNS = [
   'aries',
@@ -66,7 +67,7 @@ function normalizeWidget(input: unknown): DashboardWidget | null {
     return null;
   }
 
-  if (!['horoscope', 'fashion', 'sports', 'customHtml'].includes(type)) {
+  if (!['weather', 'horoscope', 'fashion', 'sports', 'customHtml'].includes(type)) {
     return null;
   }
 
@@ -106,7 +107,7 @@ export function loadWidgets(): DashboardWidget[] {
     return parsed
       .map((item) => normalizeWidget(item))
       .filter((item): item is DashboardWidget => item !== null)
-      .slice(0, 24);
+      .slice(0, MAX_DASHBOARD_WIDGETS);
   } catch {
     return [];
   }
@@ -123,7 +124,7 @@ export function saveWidgets(widgets: DashboardWidget[]): void {
       return;
     }
 
-    localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(widgets.slice(0, 24)));
+    localStorage.setItem(WIDGET_STORAGE_KEY, JSON.stringify(widgets.slice(0, MAX_DASHBOARD_WIDGETS)));
   } catch {
     // Ignore storage failures; UI remains functional for current session.
   }
@@ -167,6 +168,18 @@ export function createPresetWidget(type: DashboardWidgetType, seedSource: string
   const now = new Date().toISOString();
   const id = generateWidgetId(seedSource);
   const normalizedHint = hint.trim();
+
+  if (type === 'weather') {
+    return {
+      id,
+      type,
+      title: normalizedHint ? `Weather · ${normalizedHint}` : 'Weather Widget',
+      createdAt: now,
+      config: {
+        city: normalizedHint || 'New York'
+      }
+    };
+  }
 
   if (type === 'horoscope') {
     return {

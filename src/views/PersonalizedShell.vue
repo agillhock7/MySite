@@ -5,6 +5,7 @@ import { fetchWordpressContentBundle } from '@/api/wp';
 import AiPromptGame from '@/components/AiPromptGame.vue';
 import DashboardWidgetRenderer from '@/components/DashboardWidgetRenderer.vue';
 import {
+  MAX_DASHBOARD_WIDGETS,
   createPresetWidget,
   loadWidgets,
   saveWidgets,
@@ -38,6 +39,8 @@ const commandInput = ref('');
 const transcriptRef = ref<HTMLElement | null>(null);
 const transcript = ref<TerminalLine[]>([]);
 const widgets = ref<DashboardWidget[]>([]);
+const widgetRefreshNonce = ref(0);
+const widgetRefreshKeys = ref<Record<string, number>>({});
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -122,15 +125,30 @@ function persistWidgets(): void {
   saveWidgets(widgets.value);
 }
 
-function deployWidget(widget: DashboardWidget, sourceLabel = 'AI CLI'): void {
-  widgets.value = [widget, ...widgets.value].slice(0, 24);
+function deployWidget(widget: DashboardWidget, sourceLabel = 'AI CLI'): boolean {
+  if (widgets.value.length >= MAX_DASHBOARD_WIDGETS) {
+    addLine(
+      'system',
+      `Widget limit reached (${MAX_DASHBOARD_WIDGETS}/${MAX_DASHBOARD_WIDGETS}). Remove one with /widget remove <id> or /widget clear.`
+    );
+    return false;
+  }
+
+  widgets.value = [widget, ...widgets.value].slice(0, MAX_DASHBOARD_WIDGETS);
   persistWidgets();
   addLine('signal', `${sourceLabel} deployed widget ${widget.id} · ${widget.title}`);
+  return true;
 }
 
 function parseWidgetType(rawType: string): DashboardWidgetType | null {
-  const normalized = rawType.trim().toLowerCase();
-  if (normalized === 'horoscope' || normalized === 'fashion' || normalized === 'sports' || normalized === 'customhtml') {
+  const normalized = rawType.trim().toLowerCase().replace('-', '');
+  if (
+    normalized === 'weather' ||
+    normalized === 'horoscope' ||
+    normalized === 'fashion' ||
+    normalized === 'sports' ||
+    normalized === 'customhtml'
+  ) {
     return normalized === 'customhtml' ? 'customHtml' : (normalized as DashboardWidgetType);
   }
 
@@ -158,7 +176,34 @@ function removeWidgetById(widgetId: string): boolean {
 
   widgets.value = nextWidgets;
   persistWidgets();
+  if (widgetRefreshKeys.value[widgetId] !== undefined) {
+    const nextRefreshKeys = { ...widgetRefreshKeys.value };
+    delete nextRefreshKeys[widgetId];
+    widgetRefreshKeys.value = nextRefreshKeys;
+  }
   return true;
+}
+
+function refreshWidgetRuntime(widgetId: string): string | null {
+  const target = widgets.value.find((widget) => widget.id.toLowerCase() === widgetId.toLowerCase());
+  if (!target) {
+    return null;
+  }
+
+  widgetRefreshKeys.value = {
+    ...widgetRefreshKeys.value,
+    [target.id]: (widgetRefreshKeys.value[target.id] ?? 0) + 1
+  };
+  return target.id;
+}
+
+function refreshAllWidgetRuntime(): void {
+  widgetRefreshNonce.value += 1;
+}
+
+function widgetRuntimeSignature(widgetId: string): string {
+  const widgetToken = widgetRefreshKeys.value[widgetId] ?? 0;
+  return `${designSignature.value}:${widgetRefreshNonce.value}:${widgetToken}`;
 }
 
 async function initializePersonalization(): Promise<void> {
@@ -321,7 +366,7 @@ const dashboardStats = computed(() => [
   },
   {
     label: 'Deployed Widgets',
-    value: `${widgets.value.length}`,
+    value: `${widgets.value.length}/${MAX_DASHBOARD_WIDGETS}`,
     detail: widgets.value.length > 0 ? widgets.value[0].title : 'No widgets yet'
   },
   {
@@ -338,10 +383,11 @@ async function resetPersonalization(): Promise<void> {
 
 function showWidgetListInTerminal(): void {
   if (widgets.value.length === 0) {
-    addLine('system', 'No widgets deployed yet. Try /widget add horoscope or just say "build sports scores widget".');
+    addLine('system', 'No widgets deployed yet. Try /widget add weather Austin or say "build sports scores widget".');
     return;
   }
 
+  addLine('signal', `Widgets active: ${widgets.value.length}/${MAX_DASHBOARD_WIDGETS}`);
   for (const widget of widgets.value.slice(0, 10)) {
     addLine('system', `${widget.id} · ${widget.type} · ${widget.title}`);
   }
@@ -359,8 +405,41 @@ function handleWidgetCommand(input: string): boolean {
 
   if (input === '/widget clear') {
     widgets.value = [];
+    widgetRefreshKeys.value = {};
     persistWidgets();
     addLine('signal', 'All deployed widgets cleared.');
+    return true;
+  }
+
+  if (input === '/widget refresh' || input === '/widget refresh all') {
+    if (widgets.value.length === 0) {
+      addLine('system', 'No widgets to refresh yet.');
+      return true;
+    }
+
+    refreshAllWidgetRuntime();
+    addLine('signal', `Refreshing all widgets (${widgets.value.length}/${MAX_DASHBOARD_WIDGETS})...`);
+    return true;
+  }
+
+  if (input.startsWith('/widget refresh ')) {
+    const widgetId = input.slice('/widget refresh '.length).trim();
+    if (!widgetId) {
+      addLine('system', 'Usage: /widget refresh <widget-id|all>');
+      return true;
+    }
+
+    if (widgetId.toLowerCase() === 'all') {
+      refreshAllWidgetRuntime();
+      addLine('signal', `Refreshing all widgets (${widgets.value.length}/${MAX_DASHBOARD_WIDGETS})...`);
+      return true;
+    }
+
+    const refreshedWidgetId = refreshWidgetRuntime(widgetId);
+    addLine(
+      refreshedWidgetId ? 'signal' : 'system',
+      refreshedWidgetId ? `Refreshing widget ${refreshedWidgetId}...` : `Widget ${widgetId} not found.`
+    );
     return true;
   }
 
@@ -378,10 +457,15 @@ function handleWidgetCommand(input: string): boolean {
 
   if (input.startsWith('/widget add ')) {
     const payload = input.slice('/widget add '.length).trim();
+    if (!payload) {
+      addLine('system', 'Usage: /widget add <weather|horoscope|fashion|sports|customHtml> [hint]');
+      return true;
+    }
+
     const [rawType, ...rest] = payload.split(' ');
     const widgetType = parseWidgetType(rawType);
     if (!widgetType) {
-      addLine('system', 'Widget types: horoscope, fashion, sports, customHtml');
+      addLine('system', 'Widget types: weather, horoscope, fashion, sports, customHtml');
       return true;
     }
 
@@ -419,7 +503,10 @@ function handleWidgetCommand(input: string): boolean {
     return true;
   }
 
-  addLine('system', 'Widget commands: /widget list, /widget add <type>, /widget html <title> || <html>, /widget remove <id>, /widget clear');
+  addLine(
+    'system',
+    'Widget commands: /widget list, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+  );
   return true;
 }
 
@@ -434,8 +521,11 @@ async function handleCommand(raw: string): Promise<void> {
 
   if (input === '/help') {
     addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
-    addLine('system', 'Widgets: /widget list, /widget add <type>, /widget html <title> || <html>, /widget remove <id>');
-    addLine('system', 'Tip: natural language works too. Example: "build a sports score widget".');
+    addLine(
+      'system',
+      'Widgets: /widget list, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+    );
+    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: "create a weather widget for Chicago".`);
     return;
   }
 
@@ -607,14 +697,16 @@ onMounted(async () => {
     <section class="widget-studio">
       <header class="studio-head">
         <p class="mission-kicker">Widget Studio</p>
-        <p class="studio-meta">Deployable widgets: {{ widgets.length }}</p>
+        <p class="studio-meta">Deployable widgets: {{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }}</p>
       </header>
 
       <div v-if="widgets.length === 0" class="empty-widgets">
         <p>No widgets yet. Try:</p>
+        <p>/widget add weather Austin</p>
         <p>/widget add horoscope</p>
         <p>/widget add sports NHL</p>
         <p>/widget html Daily Brief || &lt;section&gt;&lt;h4&gt;Daily Brief&lt;/h4&gt;&lt;p&gt;Write one clear prompt goal.&lt;/p&gt;&lt;/section&gt;</p>
+        <p>Limit: {{ MAX_DASHBOARD_WIDGETS }} widgets total</p>
       </div>
 
       <article v-for="widget in widgets" :key="widget.id" class="widget-row">
@@ -623,7 +715,7 @@ onMounted(async () => {
           <button type="button" class="remove-widget" @click="removeWidget(widget.id)">Remove</button>
         </div>
         <h3>{{ widget.title }}</h3>
-        <DashboardWidgetRenderer :widget="widget" :signature="designSignature" />
+        <DashboardWidgetRenderer :widget="widget" :signature="widgetRuntimeSignature(widget.id)" />
       </article>
     </section>
 

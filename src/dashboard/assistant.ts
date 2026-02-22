@@ -1,4 +1,5 @@
 import {
+  MAX_DASHBOARD_WIDGETS,
   createPresetWidget,
   generateSimpleHtmlWidgetFromRequest,
   type DashboardWidget,
@@ -13,6 +14,10 @@ export interface DashboardAssistantResult {
 
 function inferWidgetType(input: string): DashboardWidgetType | null {
   const text = input.toLowerCase();
+
+  if (text.includes('weather') || text.includes('forecast') || text.includes('temperature')) {
+    return 'weather';
+  }
 
   if (text.includes('horoscope') || text.includes('zodiac')) {
     return 'horoscope';
@@ -46,6 +51,15 @@ function inferTitle(input: string): string {
   return cleaned.length > 42 ? `${cleaned.slice(0, 39)}...` : cleaned;
 }
 
+function inferCity(input: string): string {
+  const match = input.match(/\b(?:in|for)\s+([a-zA-Z][a-zA-Z\s.-]{1,40})$/);
+  if (!match) {
+    return '';
+  }
+
+  return match[1].trim();
+}
+
 export function handleNaturalLanguageWidgetRequest(
   input: string,
   seedSource: string,
@@ -64,8 +78,14 @@ export function handleNaturalLanguageWidgetRequest(
     return {
       action: 'list',
       reply: existingWidgetCount > 0
-        ? `You currently have ${existingWidgetCount} deployed widgets.`
+        ? `You currently have ${existingWidgetCount}/${MAX_DASHBOARD_WIDGETS} deployed widgets.`
         : 'No widgets deployed yet. Ask me to build one.'
+    };
+  }
+
+  if (existingWidgetCount >= MAX_DASHBOARD_WIDGETS) {
+    return {
+      reply: `Widget limit reached (${MAX_DASHBOARD_WIDGETS}/${MAX_DASHBOARD_WIDGETS}). Remove one with /widget remove <id> or /widget clear.`
     };
   }
 
@@ -73,11 +93,12 @@ export function handleNaturalLanguageWidgetRequest(
   if (!widgetType) {
     return {
       reply:
-        'I can build widget types: horoscope, fashion trends, sports scores, or custom HTML. Try: "create a horoscope widget".'
+        'I can build widget types: weather, horoscope, fashion trends, sports scores, or custom HTML. Try: "create a weather widget for Austin".'
     };
   }
 
   const titleHint = inferTitle(trimmed);
+  const cityHint = inferCity(trimmed);
 
   if (widgetType === 'customHtml') {
     const widget = generateSimpleHtmlWidgetFromRequest(trimmed, seedSource);
@@ -89,11 +110,17 @@ export function handleNaturalLanguageWidgetRequest(
 
   const widget = createPresetWidget(widgetType, seedSource, titleHint);
   const labels: Record<DashboardWidgetType, string> = {
+    weather: 'weather',
     horoscope: 'horoscope',
     fashion: 'fashion trend',
     sports: 'sports score',
     customHtml: 'custom html'
   };
+
+  if (widgetType === 'weather' && cityHint) {
+    widget.config.city = cityHint;
+    widget.title = `Weather · ${cityHint}`;
+  }
 
   return {
     widget,

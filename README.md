@@ -12,6 +12,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - Valid blueprint is cached in `localStorage` for offline-friendly repeat visits.
 - Reset controls clear personalization and restart onboarding.
 - Final personalized shell includes an embedded AI concierge chat for UX guidance, hosting onboarding, and AI access routing.
+- In-app AI CLI can deploy up to 7 runtime widgets (`weather`, `horoscope`, `fashion`, `sports`, `customHtml`) with refresh calls to `/api/ai/widget.php`.
 - Includes an internal story route (`/story/:id`) with modern full-article rendering from WordPress posts.
 
 ## Stack
@@ -30,9 +31,11 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - `src/blueprint/engine.ts`: load/save/clear/validate/migrate blueprint
 - `src/api/ai.ts`: frontend API integration + fallback logic
 - `src/content/library.ts`: default content + runtime overrides
+- `src/api/widgetRuntime.ts`: widget runtime refresh API client
 - `public/api/ai/onboarding.php`: onboarding turn endpoint
 - `public/api/ai/blueprint.php`: blueprint generation endpoint
 - `public/api/ai/assistant.php`: in-shell assistant endpoint
+- `public/api/ai/widget.php`: AI-powered widget runtime refresh endpoint
 - `public/api/content/wp.php`: WordPress content bundle endpoint
 - `public/api/content/post.php`: single-post detail endpoint for internal story pages
 
@@ -135,6 +138,23 @@ Output returns:
 - `assistantMessage`
 - `suggestions` (`label` + `action`)
 - `source`
+
+### `POST /api/ai/widget.php`
+
+Runtime widget refresh endpoint.
+
+Input includes:
+
+- `widget` (`id`, `type`, `title`, `config`, optional `html`)
+- `signature`
+
+Output returns:
+
+- `widgetId`
+- `type`
+- `refreshedAt`
+- `source` (`ai` | `external` | `fallback`)
+- `payload` (type-specific fields)
 
 ### `GET /api/content/wp.php`
 
