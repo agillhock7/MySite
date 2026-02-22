@@ -94,6 +94,8 @@ const conversationThreads = ref<SavedConversation[]>([]);
 const activeConversationId = ref('');
 const terminalExpanded = ref(false);
 const transcriptHeight = ref(320);
+const imageRenderPending = ref(false);
+const imageRenderPrompt = ref('');
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -158,6 +160,27 @@ function buildConversationTitleFromTranscript(lines: TerminalLine[]): string {
   }
 
   return compact.slice(0, 44);
+}
+
+function isImageConversationRequest(message: string): boolean {
+  return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|thumbnail|portrait)\b/i.test(message);
+}
+
+function resolveAssistantMediaUrl(url: string): string {
+  const cleaned = url.trim();
+  if (!cleaned) {
+    return cleaned;
+  }
+
+  if (cleaned.startsWith('data:image/')) {
+    return cleaned;
+  }
+
+  if (/^https:\/\//i.test(cleaned)) {
+    return `/api/ai/image-proxy.php?url=${encodeURIComponent(cleaned)}`;
+  }
+
+  return cleaned;
 }
 
 function createConversation(title = 'New Conversation'): SavedConversation {
@@ -593,8 +616,13 @@ async function streamAssistantMessage(message: string): Promise<void> {
 }
 
 async function runAssistantConversation(userInput: string): Promise<void> {
+  const expectsImage = isImageConversationRequest(userInput);
   assistantStreaming.value = true;
-  assistantStreamPhase.value = 'AI stream: analyzing request...';
+  imageRenderPending.value = expectsImage;
+  imageRenderPrompt.value = expectsImage ? userInput.trim() : '';
+  assistantStreamPhase.value = expectsImage
+    ? 'AI stream: composing multimodal image...'
+    : 'AI stream: analyzing request...';
   assistantSuggestions.value = [];
   addLine('signal', assistantStreamPhase.value);
 
@@ -606,9 +634,9 @@ async function runAssistantConversation(userInput: string): Promise<void> {
       variantNonce: sceneNonce.value
     });
 
-    assistantStreamPhase.value = result.source === 'backend'
-      ? 'AI stream: rendering response...'
-      : 'Fallback stream: rendering response...';
+    assistantStreamPhase.value = expectsImage
+      ? (result.source === 'backend' ? 'AI stream: finalizing visual response...' : 'Fallback stream: finalizing visual response...')
+      : (result.source === 'backend' ? 'AI stream: rendering response...' : 'Fallback stream: rendering response...');
 
     await streamAssistantMessage(result.assistantMessage);
 
@@ -618,10 +646,15 @@ async function runAssistantConversation(userInput: string): Promise<void> {
           continue;
         }
         addLine('assistant', item.alt || 'Generated image', {
-          imageUrl: item.url,
+          imageUrl: resolveAssistantMediaUrl(item.url),
           imageAlt: item.alt || 'Generated image'
         });
       }
+    } else if (expectsImage) {
+      addLine('assistant', 'Generated image preview', {
+        imageUrl: buildTranscriptImageFallback(userInput),
+        imageAlt: 'Generated image fallback'
+      });
     }
 
     assistantSuggestions.value = result.suggestions.slice(0, 3);
@@ -632,6 +665,8 @@ async function runAssistantConversation(userInput: string): Promise<void> {
   } finally {
     assistantStreaming.value = false;
     assistantStreamPhase.value = '';
+    imageRenderPending.value = false;
+    imageRenderPrompt.value = '';
   }
 }
 
@@ -1845,7 +1880,17 @@ onUnmounted(() => {
           <span></span>
           <span></span>
         </div>
-        <p>{{ assistantStreamPhase || 'Streaming assistant response...' }}</p>
+        <div class="stream-copy">
+          <p>{{ assistantStreamPhase || 'Streaming assistant response...' }}</p>
+          <div v-if="imageRenderPending" class="image-pipeline-preview">
+            <div class="pipeline-grid"></div>
+            <div class="pipeline-copy">
+              <strong>Multimodal Render Queue</strong>
+              <span>{{ imageRenderPrompt || 'Generating visual...' }}</span>
+            </div>
+            <div class="pipeline-pulse"></div>
+          </div>
+        </div>
       </div>
 
       <div ref="transcriptRef" class="transcript" aria-live="polite">
@@ -2406,6 +2451,81 @@ h1 {
   margin: 0;
   font-size: 0.78rem;
   color: var(--text-primary);
+}
+
+.stream-copy {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.image-pipeline-preview {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), 0.36);
+  border-radius: 10px;
+  padding: 0.45rem 0.55rem;
+  background: rgba(var(--accent-rgb), 0.1);
+  display: grid;
+  gap: 0.3rem;
+  min-width: min(100%, 520px);
+}
+
+.pipeline-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(var(--accent-rgb), 0.08) 1px, transparent 1px);
+  background-size: 14px 14px;
+  opacity: 0.6;
+}
+
+.pipeline-copy {
+  position: relative;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.pipeline-copy strong {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(var(--accent-soft-rgb));
+}
+
+.pipeline-copy span {
+  font-size: 0.76rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipeline-pulse {
+  position: relative;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.2);
+  overflow: hidden;
+}
+
+.pipeline-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgba(var(--accent-soft-rgb), 0.9), rgba(var(--accent-rgb), 0));
+  animation: pipeline-run 1.1s linear infinite;
+}
+
+@keyframes pipeline-run {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 .stream-bars {

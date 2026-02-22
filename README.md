@@ -17,6 +17,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - Dashboard visuals are now personalization-driven by blueprint mode/accent/layout for stronger per-visitor identity.
 - Terminal now supports multimodal chat behavior with streamed assistant text and in-thread image responses via `/image <prompt>` (no auto-widget deploy).
 - Up to 5 assistant conversations are stored locally and can be switched from the terminal thread bar or `/thread` commands.
+- Image responses are routed through a same-origin proxy (`/api/ai/image-proxy.php`) to reduce browser-side external image blocking and improve preview reliability.
 - Includes an internal story route (`/story/:id`) with modern full-article rendering from WordPress posts.
 
 ## Stack
