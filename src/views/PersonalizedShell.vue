@@ -28,6 +28,20 @@ interface TerminalLine {
   text: string;
 }
 
+type WidgetOutputFormat = 'brief' | 'bullets' | 'checklist';
+
+interface WidgetBuildDraft {
+  intent: string;
+  scope: string;
+  format: WidgetOutputFormat;
+  title: string;
+}
+
+interface WidgetBuildSession {
+  step: 'intent' | 'scope' | 'format' | 'title' | 'confirm';
+  draft: WidgetBuildDraft;
+}
+
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
@@ -42,6 +56,7 @@ const transcript = ref<TerminalLine[]>([]);
 const widgets = ref<DashboardWidget[]>([]);
 const widgetRefreshNonce = ref(0);
 const widgetRefreshKeys = ref<Record<string, number>>({});
+const widgetBuildSession = ref<WidgetBuildSession | null>(null);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -167,6 +182,243 @@ function parseFocusInput(input: string): string {
   }
 
   return words.slice(0, 2).join(' ');
+}
+
+function defaultWidgetBuildDraft(): WidgetBuildDraft {
+  return {
+    intent: '',
+    scope: '',
+    format: 'brief',
+    title: ''
+  };
+}
+
+function parseWidgetOutputFormat(input: string): WidgetOutputFormat | null {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === 'brief' || normalized === 'concise' || normalized === 'paragraph') {
+    return 'brief';
+  }
+
+  if (normalized === 'bullets' || normalized === 'bullet' || normalized === 'list') {
+    return 'bullets';
+  }
+
+  if (normalized === 'checklist' || normalized === 'tasks' || normalized === 'todo') {
+    return 'checklist';
+  }
+
+  return null;
+}
+
+function formatInstruction(format: WidgetOutputFormat): string {
+  if (format === 'bullets') {
+    return 'Use a short heading sentence and then a tight bullet list of actionable points.';
+  }
+
+  if (format === 'checklist') {
+    return 'Return a practical checklist with concise, execution-focused tasks.';
+  }
+
+  return 'Return one concise answer with direct, practical guidance.';
+}
+
+function deriveWidgetTitle(input: string): string {
+  const cleaned = input
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) {
+    return '';
+  }
+
+  const words = cleaned.split(' ').slice(0, 4);
+  const titled = words.map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`);
+  return titled.join(' ');
+}
+
+function composePromptFromBuildDraft(draft: WidgetBuildDraft): string {
+  const scope = draft.scope || 'general audience';
+  return [
+    `Widget goal: ${draft.intent}.`,
+    `Context/focus: ${scope}.`,
+    `Output requirement: ${formatInstruction(draft.format)}`,
+    'Keep language clear, modern, and useful in a dashboard card.'
+  ].join(' ');
+}
+
+function widgetBuildSummary(draft: WidgetBuildDraft): string {
+  return `Intent="${draft.intent}" · Scope="${draft.scope || 'general'}" · Format=${draft.format} · Title="${draft.title || 'auto'}"`;
+}
+
+function isWidgetBuildIntentRequest(input: string): boolean {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized || normalized.startsWith('/')) {
+    return false;
+  }
+
+  const hasBuildVerb = /\b(build|create|make|generate|design|craft)\b/.test(normalized);
+  const mentionsWidget = /\bwidget\b/.test(normalized);
+  return hasBuildVerb && mentionsWidget;
+}
+
+function extractIntentFromBuildRequest(input: string): string {
+  return input
+    .replace(/\b(please|can you|could you|would you)\b/gi, ' ')
+    .replace(/\b(build|create|make|generate|design|craft)\b/gi, ' ')
+    .replace(/\b(widget|for me|a|an|the)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function startWidgetBuildMode(initialIntent = ''): boolean {
+  if (widgets.value.length >= MAX_DASHBOARD_WIDGETS) {
+    addLine(
+      'system',
+      `Widget limit reached (${MAX_DASHBOARD_WIDGETS}/${MAX_DASHBOARD_WIDGETS}). Remove one with /widget remove <id> or /widget clear.`
+    );
+    return false;
+  }
+
+  const draft = defaultWidgetBuildDraft();
+  const normalizedIntent = initialIntent.trim();
+  if (normalizedIntent) {
+    draft.intent = normalizedIntent;
+    draft.title = deriveWidgetTitle(normalizedIntent);
+  }
+
+  widgetBuildSession.value = {
+    step: normalizedIntent ? 'scope' : 'intent',
+    draft
+  };
+
+  addLine('signal', 'Widget build mode enabled. I will ask a few short questions.');
+  if (!normalizedIntent) {
+    addLine('system', '1/4 What should this widget do for the user?');
+  } else {
+    addLine('system', `1/4 Goal captured: "${normalizedIntent}"`);
+    addLine('system', '2/4 What should it focus on (city, topic, audience, source)?');
+  }
+  addLine('system', 'Use /widget cancel anytime to exit build mode.');
+  return true;
+}
+
+function cancelWidgetBuildMode(): void {
+  widgetBuildSession.value = null;
+  addLine('system', 'Widget build mode cancelled.');
+}
+
+function handleWidgetBuildModeInput(input: string): boolean {
+  const session = widgetBuildSession.value;
+  if (!session) {
+    return false;
+  }
+
+  const trimmed = input.trim();
+  const normalized = trimmed.toLowerCase();
+
+  if (normalized === '/widget cancel' || normalized === '/cancel') {
+    cancelWidgetBuildMode();
+    return true;
+  }
+
+  if (normalized === '/help') {
+    addLine('system', 'Build mode active. Answer the current question, or use /widget cancel.');
+    addLine('system', 'Formats: brief, bullets, checklist.');
+    return true;
+  }
+
+  if (normalized.startsWith('/widget ')) {
+    addLine('system', 'Build mode is active. Finish these questions or use /widget cancel.');
+    return true;
+  }
+
+  if (trimmed.startsWith('/')) {
+    return false;
+  }
+
+  if (session.step === 'intent') {
+    if (trimmed.length < 6) {
+      addLine('system', 'Please give a bit more detail for the widget goal.');
+      return true;
+    }
+
+    session.draft.intent = trimmed;
+    if (!session.draft.title) {
+      session.draft.title = deriveWidgetTitle(trimmed);
+    }
+    session.step = 'scope';
+    addLine('system', '2/4 What should it focus on (city, topic, audience, source)?');
+    return true;
+  }
+
+  if (session.step === 'scope') {
+    session.draft.scope = trimmed || 'general audience';
+    session.step = 'format';
+    addLine('system', '3/4 Preferred output format: brief, bullets, or checklist?');
+    return true;
+  }
+
+  if (session.step === 'format') {
+    const format = parseWidgetOutputFormat(trimmed);
+    if (!format) {
+      addLine('system', 'Choose one: brief, bullets, checklist.');
+      return true;
+    }
+
+    session.draft.format = format;
+    session.step = 'title';
+    addLine('system', `4/4 Widget title (or type "auto"): current="${session.draft.title || 'auto'}"`);
+    return true;
+  }
+
+  if (session.step === 'title') {
+    if (normalized === 'auto') {
+      session.draft.title = deriveWidgetTitle(session.draft.intent);
+    } else if (trimmed) {
+      session.draft.title = trimmed;
+    }
+
+    session.step = 'confirm';
+    addLine('system', `Review: ${widgetBuildSummary(session.draft)}`);
+    addLine('system', 'Deploy this widget now? (yes/no)');
+    return true;
+  }
+
+  if (session.step === 'confirm') {
+    if (normalized === 'yes' || normalized === 'y') {
+      const prompt = composePromptFromBuildDraft(session.draft);
+      const widget = createPromptWidgetFromPrompt(
+        prompt,
+        `${visitorId}:${designSignature.value}:${sceneNonce.value}`,
+        session.draft.title
+      );
+
+      const deployed = deployWidget(widget, 'Build Mode');
+      widgetBuildSession.value = null;
+      if (deployed) {
+        addLine('system', `Widget is live. Use /widget refresh ${widget.id} to regenerate.`);
+      }
+      return true;
+    }
+
+    if (normalized === 'no' || normalized === 'n') {
+      widgetBuildSession.value = {
+        step: 'intent',
+        draft: defaultWidgetBuildDraft()
+      };
+      addLine('system', 'No problem. Let’s try again. 1/4 What should this widget do for the user?');
+      return true;
+    }
+
+    addLine('system', 'Reply with yes or no.');
+    return true;
+  }
+
+  return false;
 }
 
 function removeWidgetById(widgetId: string): boolean {
@@ -377,6 +629,25 @@ const dashboardStats = computed(() => [
   }
 ]);
 
+const widgetBuildStepLabel = computed(() => {
+  const step = widgetBuildSession.value?.step;
+  if (!step) {
+    return '';
+  }
+
+  if (step === 'intent') return 'Goal';
+  if (step === 'scope') return 'Scope';
+  if (step === 'format') return 'Format';
+  if (step === 'title') return 'Title';
+  return 'Confirm';
+});
+
+const commandPlaceholder = computed(() =>
+  widgetBuildSession.value
+    ? `Widget build mode (${widgetBuildStepLabel.value}) · answer question or /widget cancel`
+    : 'Use AI CLI to build widgets (type /help)'
+);
+
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
   await router.push('/onboarding?force=1&reset=1');
@@ -384,7 +655,7 @@ async function resetPersonalization(): Promise<void> {
 
 function showWidgetListInTerminal(): void {
   if (widgets.value.length === 0) {
-    addLine('system', 'No widgets deployed yet. Try /widget add weather Austin or say "build sports scores widget".');
+    addLine('system', 'No widgets deployed yet. Try /widget build and I will guide you.');
     return;
   }
 
@@ -409,6 +680,15 @@ function handleWidgetCommand(input: string): boolean {
     widgetRefreshKeys.value = {};
     persistWidgets();
     addLine('signal', 'All deployed widgets cleared.');
+    return true;
+  }
+
+  if (input === '/widget cancel') {
+    if (widgetBuildSession.value) {
+      cancelWidgetBuildMode();
+    } else {
+      addLine('system', 'Widget build mode is not active.');
+    }
     return true;
   }
 
@@ -479,13 +759,17 @@ function handleWidgetCommand(input: string): boolean {
   if (input === '/widget build' || input.startsWith('/widget build ')) {
     const payload = input === '/widget build' ? '' : input.slice('/widget build '.length).trim();
     if (!payload) {
-      addLine('system', 'Usage: /widget build <title> || <prompt>');
-      addLine('system', 'Example: /widget build Weather Intel || Give me a weather summary for Austin with one planning tip.');
+      startWidgetBuildMode();
       return true;
     }
 
     const splitToken = '||';
     const splitIndex = payload.indexOf(splitToken);
+
+    if (splitIndex === -1) {
+      startWidgetBuildMode(payload);
+      return true;
+    }
 
     let title = '';
     let prompt = payload;
@@ -535,7 +819,7 @@ function handleWidgetCommand(input: string): boolean {
 
   addLine(
     'system',
-    'Widget commands: /widget list, /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+    'Widget commands: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
   );
   return true;
 }
@@ -549,13 +833,17 @@ async function handleCommand(raw: string): Promise<void> {
   addLine('user', input);
   commandInput.value = '';
 
+  if (handleWidgetBuildModeInput(input)) {
+    return;
+  }
+
   if (input === '/help') {
     addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
-      'Widgets: /widget list, /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear'
+      'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
     );
-    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: /widget build Daily Coach || Give me one focused action for today.`);
+    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: type "/widget build" and I will guide the questions.`);
     return;
   }
 
@@ -609,6 +897,12 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
+  if (isWidgetBuildIntentRequest(input)) {
+    const intentHint = extractIntentFromBuildRequest(input);
+    startWidgetBuildMode(intentHint);
+    return;
+  }
+
   const assistant = handleNaturalLanguageWidgetRequest(
     input,
     `${visitorId}:${designSignature.value}:${sceneNonce.value}`,
@@ -645,7 +939,7 @@ onMounted(async () => {
   addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
   addLine('system', scene.value.mission);
   addLine('signal', scene.value.pulse);
-  addLine('system', 'You can now build your own dashboard with AI CLI commands. Type /help.');
+  addLine('system', 'You can now build your own dashboard with AI CLI commands. Type /widget build for guided creation.');
 });
 </script>
 
@@ -706,6 +1000,10 @@ onMounted(async () => {
     </section>
 
     <section class="terminal-shell">
+      <p v-if="widgetBuildSession" class="build-mode-banner">
+        Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
+      </p>
+
       <div ref="transcriptRef" class="transcript" aria-live="polite">
         <p v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
           <span class="glyph">{{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : '$' }}</span>
@@ -719,7 +1017,7 @@ onMounted(async () => {
           v-model="commandInput"
           type="text"
           autocomplete="off"
-          placeholder="Use AI CLI to build widgets (type /help)"
+          :placeholder="commandPlaceholder"
         />
       </form>
     </section>
@@ -732,6 +1030,8 @@ onMounted(async () => {
 
       <div v-if="widgets.length === 0" class="empty-widgets">
         <p>No widgets yet. Try:</p>
+        <p>/widget build</p>
+        <p>build me a widget for weather in Austin</p>
         <p>/widget build Daily Coach || Give me one focused action for the day and two follow-ups</p>
         <p>/widget add weather Austin</p>
         <p>/widget add horoscope</p>
@@ -968,6 +1268,16 @@ h1 {
   border-radius: 14px;
   background: #020617;
   overflow: hidden;
+}
+
+.build-mode-banner {
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid #134e4a;
+  background: rgba(6, 78, 59, 0.38);
+  color: #a7f3d0;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
 }
 
 .transcript {

@@ -12,7 +12,7 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - Valid blueprint is cached in `localStorage` for offline-friendly repeat visits.
 - Reset controls clear personalization and restart onboarding.
 - Final personalized shell includes an embedded AI concierge chat for UX guidance, hosting onboarding, and AI access routing.
-- In-app AI CLI can deploy up to 7 runtime widgets with `/widget build <title> || <prompt>` as the primary flow, plus optional presets (`weather`, `horoscope`, `fashion`, `sports`, `customHtml`).
+- In-app AI CLI can deploy up to 7 runtime widgets with guided `/widget build` Q&A (clarification mode), plus fast-path `/widget build <title> || <prompt>` and optional presets (`weather`, `horoscope`, `fashion`, `sports`, `customHtml`).
 - Includes an internal story route (`/story/:id`) with modern full-article rendering from WordPress posts.
 
 ## Stack
