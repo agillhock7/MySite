@@ -84,7 +84,7 @@ async function seedConversation(): Promise<void> {
 
   if (turn.source === 'local' && !fallbackNoticeShown.value) {
     fallbackNoticeShown.value = true;
-    pushLine('system', 'Live chat AI unavailable, continuing with local conversational fallback.');
+    pushLine('system', 'Live AI is temporarily unavailable. Running local conversational mode.');
   }
 
   await assistantReply(turn.assistantMessage, 80);
@@ -132,7 +132,7 @@ async function finalizeBlueprint(rawBlueprint: unknown): Promise<void> {
 }
 
 async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
-  await assistantReply('Great, generating your personalized experience now...', 80);
+  await assistantReply('Perfect. I have enough signal. Building your experience now...', 80);
 
   const generationNonce = bumpDesignIteration();
   variantNonce.value = generationNonce;
@@ -181,7 +181,7 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
 async function handleCommand(command: string): Promise<void> {
   if (command === '/help') {
     pushLine('system', 'Commands: /help, /reset, /hardreset, /skip');
-    pushLine('system', 'Tip: answer with who you are, your interests, and the experience mood you want.');
+    pushLine('system', 'Tip: one sentence is enough. Share your goal, interests, and preferred vibe.');
     return;
   }
 
@@ -247,12 +247,12 @@ async function handleSubmit(): Promise<void> {
 
   if (turn.source === 'local' && !fallbackNoticeShown.value) {
     fallbackNoticeShown.value = true;
-    pushLine('system', 'Live chat AI unavailable, continuing with local conversational fallback.');
+    pushLine('system', 'Live AI is temporarily unavailable. Running local conversational mode.');
   }
 
   await assistantReply(turn.assistantMessage, 80);
 
-  if ((turn.isComplete && turnsTaken.value >= 2) || (hasEnoughIntent(intentDraft.value) && turnsTaken.value >= 3) || turnsTaken.value >= 6) {
+  if ((turn.isComplete && turnsTaken.value >= 1) || (hasEnoughIntent(intentDraft.value) && turnsTaken.value >= 2) || turnsTaken.value >= 4) {
     await startBlueprintGeneration(intentDraft.value);
   }
 }
@@ -264,8 +264,8 @@ onMounted(async () => {
     return;
   }
 
-  pushLine('system', 'Identity-first design chat initialized. Type /help for commands.');
-  pushLine('system', 'I will ask about you first, then generate a unique UX/UI style from that profile.');
+  pushLine('system', 'Welcome. This takes about 30 seconds. Type /help for commands.');
+  pushLine('system', 'Tell me your intent and what kind of experience you want. I will handle the rest.');
   await seedConversation();
 });
 </script>

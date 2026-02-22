@@ -719,41 +719,41 @@ function composeFollowUpPrompt(
 
   if (userLooksConfused(lastUserMessage)) {
     return seededPick(seed, 'confusion', [
-      'No problem. Should this feel simple and direct, or rich with detail?',
-      'All good. Should we prioritize portfolio, insights, or bio content first?',
-      'Clear. Tell me the one content area visitors should hit first, and I will shape the flow.'
+      'All good. In one line, what should this experience help you do first?',
+      'No stress. What is your main intent here: learn, explore, or take action?',
+      'Quick reset: what outcome do you want from this site visit?'
     ]);
   }
 
   if (userTurns <= 1) {
     return seededPick(seed, 'ask-identity', [
-      'Before design: what are you into right now, and what should this experience feel like about you?',
-      'Let me design around you first. What interests, obsessions, or themes should lead your experience?',
-      'Tell me about your style and interests so I can shape a uniquely personal experience.'
+      'Great start. What is your main intent, and what topics should we focus on first?',
+      'Nice. Tell me your goal for this visit plus 1-3 interests to shape the experience.',
+      'Awesome. What are you hoping to do here, and what themes matter most to you?'
     ]);
   }
 
   if (missingGoal) {
     return seededPick(seed, 'ask-goal', [
-      'What should this experience make the visitor feel or do in the first 20 seconds?',
-      'If this UX worked perfectly, what action would people take first?',
-      'What is the one conversion or behavior this custom experience must drive?'
+      'What is the one outcome you want this experience to drive first?',
+      'If this works perfectly, what action should happen first?',
+      'What should this experience help you accomplish right now?'
     ]);
   }
 
   if (missingTopics) {
     return seededPick(seed, 'ask-topics', [
-      'List 2-4 personal interest themes to anchor the design.',
-      'Name 2-4 topics that represent your voice and should shape this experience.',
-      'What 2-4 themes should this personalized interface revolve around?'
+      'Give me 1-3 topics you care about so I can tune the experience.',
+      'What themes should we prioritize first? 1-3 is enough.',
+      'Share a few interest topics and I will shape the dashboard around them.'
     ]);
   }
 
-  if (userTurns <= 3) {
+  if (userTurns <= 2) {
     return seededPick(seed, 'ask-style-finish', [
-      'Last thing: should the interface feel calm, cinematic, or high-energy?',
-      'Final calibration: do you want clean minimalism, bold visual storytelling, or dense technical depth?',
-      'Quick final tune: should this feel lightweight, balanced, or information-rich?'
+      'Final quick tune: do you want this to feel simple, visual, or deep-dive?',
+      'Last detail: what vibe should lead this experience: minimal, visual, dense, or playful?',
+      'Quick calibration: should this feel lightweight, balanced, or rich with detail?'
     ]);
   }
 
@@ -817,9 +817,9 @@ function localOnboardingFallback(
   const assistantMessage = lastUser
     ? composeFollowUpPrompt(nextIntent, latestMessage, seed, userTurns)
     : seededPick(seed, 'opening', [
-        'Let us make this personal. What are you into, and what should visitors feel about you immediately?',
-        'I will design around your personality first. What interests and tone should define this experience?',
-        'Start with you: what topics, identity, or energy should this interface express?'
+        'Welcome. What are you trying to do today, and what topics should I center first?',
+        'Glad you are here. Share your intent for this visit and a few interests to guide the experience.',
+        'Let us make this useful quickly. What is your goal right now, and what should we focus on?'
       ]);
 
   const complete = isIntentComplete(nextIntent);

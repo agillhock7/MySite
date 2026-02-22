@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { fetchWordpressContentBundle } from '@/api/wp';
+import AiPromptGame from '@/components/AiPromptGame.vue';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getOrCreateVisitorId } from '@/personalization/visitor';
@@ -243,6 +244,37 @@ const scene = computed(() =>
   })
 );
 
+const readinessScore = computed(() => {
+  const topicWeight = Math.min(35, focusTopics.value.length * 8);
+  const postWeight = Math.min(35, posts.value.length * 6);
+  const shortcutWeight = Math.min(20, shortcuts.value.length * 4);
+  const trackWeight = Math.min(10, scene.value.tracks.length * 3);
+  return Math.min(100, topicWeight + postWeight + shortcutWeight + trackWeight);
+});
+
+const dashboardStats = computed(() => [
+  {
+    label: 'Experience Readiness',
+    value: `${readinessScore.value}%`,
+    detail: readinessScore.value >= 80 ? 'High signal' : 'Building signal'
+  },
+  {
+    label: 'Live Story Nodes',
+    value: `${posts.value.length}`,
+    detail: 'Pulled from runtime WP feed'
+  },
+  {
+    label: 'Focus Topics',
+    value: `${focusTopics.value.length}`,
+    detail: focusTopics.value.slice(0, 2).join(' · ') || 'Waiting for focus'
+  },
+  {
+    label: 'Mission Tracks',
+    value: `${scene.value.tracks.length}`,
+    detail: 'Action lanes available now'
+  }
+]);
+
 function parseFocusInput(input: string): string {
   const words = input
     .split(/[\s,]+/)
@@ -386,6 +418,21 @@ onMounted(async () => {
           <li v-for="prompt in scene.prompts" :key="prompt">{{ prompt }}</li>
         </ul>
       </article>
+    </section>
+
+    <section class="dashboard-shell">
+      <article class="dashboard-card">
+        <p class="mission-kicker">Visitor Dashboard</p>
+        <div class="stats-grid">
+          <section v-for="stat in dashboardStats" :key="stat.label" class="stat-card">
+            <p class="stat-label">{{ stat.label }}</p>
+            <h2 class="stat-value">{{ stat.value }}</h2>
+            <p class="stat-detail">{{ stat.detail }}</p>
+          </section>
+        </div>
+      </article>
+
+      <AiPromptGame :signature="designSignature" :topics="focusTopics" />
     </section>
 
     <section class="terminal-shell">
@@ -535,6 +582,53 @@ onMounted(async () => {
   margin-top: 0.85rem;
   display: grid;
   gap: 0.7rem;
+}
+
+.dashboard-shell {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.dashboard-card {
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.82);
+  padding: 0.9rem;
+}
+
+.stats-grid {
+  margin-top: 0.55rem;
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-card {
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: rgba(3, 7, 18, 0.84);
+  padding: 0.58rem;
+}
+
+.stat-label {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.stat-value {
+  margin: 0.25rem 0 0;
+  font-size: 1.1rem;
+  line-height: 1.05;
+}
+
+.stat-detail {
+  margin: 0.28rem 0 0;
+  color: #a7f3d0;
+  font-size: 0.8rem;
 }
 
 .mission-card,
@@ -754,6 +848,11 @@ h1 {
 
   .mission-shell {
     grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
+  }
+
+  .dashboard-shell {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
   }
 
   .tracks-grid {
