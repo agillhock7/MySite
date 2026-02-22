@@ -1021,8 +1021,62 @@ function normalizeAssistantSuggestions(value: unknown): AssistantActionSuggestio
     .slice(0, 4);
 }
 
+function isImageGenerationIntent(message: string): boolean {
+  return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|portrait|thumbnail)\b/.test(
+    message.toLowerCase()
+  );
+}
+
+function buildLocalImagePlaceholderDataUri(prompt: string): string {
+  const cleanedPrompt = prompt
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 88);
+
+  const safePrompt = cleanedPrompt || 'Image request';
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">',
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#021114"/>',
+    '<stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>',
+    '<rect width="1280" height="720" fill="url(#g)"/>',
+    '<circle cx="140" cy="120" r="180" fill="rgba(20,184,166,0.22)"/>',
+    '<circle cx="1090" cy="620" r="230" fill="rgba(59,130,246,0.17)"/>',
+    '<rect x="82" y="84" width="1116" height="552" rx="24" fill="rgba(2,6,23,0.52)" stroke="rgba(94,234,212,0.44)" stroke-width="2"/>',
+    '<text x="130" y="204" fill="#99f6e4" font-family="monospace" font-size="30">MULTIMODAL PREVIEW</text>',
+    `<text x="130" y="292" fill="#d1fae5" font-family="monospace" font-size="38">${safePrompt}</text>`,
+    '<text x="130" y="370" fill="#67e8f9" font-family="monospace" font-size="24">Live image provider unavailable. Showing local preview.</text>',
+    '</svg>'
+  ].join('');
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function localImageAssistantFallback(userMessage: string): AssistantTurnResult {
+  return {
+    assistantMessage:
+      'Image request captured. I generated a local preview in-thread. Ask for a style variation, camera angle, or mood shift and I will regenerate.',
+    suggestions: [
+      { label: 'Try Cinematic Variant', action: 'ask-ai-access' },
+      { label: 'Open Main Site', action: 'https://alexanderjgill.com' },
+      { label: 'Open Pro Suite', action: 'https://hiops.darkhorsevirtue.io' }
+    ],
+    media: [
+      {
+        type: 'image',
+        url: buildLocalImagePlaceholderDataUri(userMessage),
+        alt: 'Generated image preview'
+      }
+    ],
+    source: 'local'
+  };
+}
+
 function localAssistantFallback(userMessage: string): AssistantTurnResult {
   const normalized = userMessage.toLowerCase();
+
+  if (isImageGenerationIntent(normalized)) {
+    return localImageAssistantFallback(userMessage);
+  }
 
   if (/host|hosting|server|domain|pro suite|dark horse|whmcs/.test(normalized)) {
     return {
@@ -1130,10 +1184,16 @@ export async function generateAssistantTurnWithFallback(params: {
         : localAssistantFallback(params.userMessage).assistantMessage;
     const source = record.source === 'local' ? 'local' : 'backend';
 
+    const suggestions = normalizeAssistantSuggestions(record.suggestions);
+    const media = normalizeAssistantMedia(record.media);
+    const imageFallback = isImageGenerationIntent(params.userMessage) && media.length === 0
+      ? localImageAssistantFallback(params.userMessage)
+      : null;
+
     return {
       assistantMessage,
-      suggestions: normalizeAssistantSuggestions(record.suggestions),
-      media: normalizeAssistantMedia(record.media),
+      suggestions: suggestions.length > 0 ? suggestions : imageFallback?.suggestions ?? [],
+      media: media.length > 0 ? media : imageFallback?.media ?? [],
       source
     };
   } catch {
