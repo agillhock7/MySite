@@ -174,19 +174,15 @@ function buildConversationTitleFromTranscript(lines: TerminalLine[]): string {
   return compact.slice(0, 44);
 }
 
+function toneLabel(tone: TerminalLine['tone']): string {
+  if (tone === 'assistant') return 'AI';
+  if (tone === 'user') return 'You';
+  if (tone === 'signal') return 'System Signal';
+  return 'System';
+}
+
 function isImageConversationRequest(message: string): boolean {
   return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|thumbnail|portrait)\b/i.test(message);
-}
-
-function buildExternalImagePromptUrl(prompt: string): string {
-  const cleanPrompt = prompt.replace(/\s+/g, ' ').trim() || 'futuristic editorial portrait with cinematic lighting';
-  const seed = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1024&height=1024&nologo=true&enhance=true&seed=${encodeURIComponent(seed)}`;
-}
-
-function buildStockImageFallbackUrl(prompt: string): string {
-  const seed = hashText(prompt.replace(/\s+/g, ' ').trim() || 'mysite-visual').toString(36);
-  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/1024/1024`;
 }
 
 function rememberBlobUrl(url: string): void {
@@ -304,22 +300,26 @@ async function resolveAssistantMediaUrl(url: string, promptContext: string): Pro
 }
 
 async function ensureGeneratedImageForPrompt(prompt: string): Promise<string> {
-  const externalUrl = buildExternalImagePromptUrl(prompt);
-  if (await canRenderImageUrl(externalUrl)) {
-    return externalUrl;
-  }
-  const proxied = await fetchImageThroughProxy(externalUrl);
-  if (proxied) {
-    return proxied;
-  }
-
-  const stockUrl = buildStockImageFallbackUrl(prompt);
-  if (await canRenderImageUrl(stockUrl)) {
-    return stockUrl;
-  }
-  const proxiedStock = await fetchImageThroughProxy(stockUrl);
-  if (proxiedStock) {
-    return proxiedStock;
+  try {
+    const response = await fetch('/api/ai/image.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ prompt }),
+      cache: 'no-store'
+    });
+    const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    const endpointImage = payload && typeof payload.imageDataUrl === 'string' ? payload.imageDataUrl.trim() : '';
+    if (endpointImage.startsWith('data:image/')) {
+      return endpointImage;
+    }
+    const endpointError = payload && typeof payload.error === 'string' ? payload.error.trim() : '';
+    if (endpointError) {
+      addLine('signal', `Image runtime notice: ${endpointError}`);
+    }
+  } catch {
+    addLine('signal', 'Image runtime notice: endpoint request failed. Showing local generated fallback.');
   }
 
   return buildTranscriptImageFallback(prompt);
@@ -810,8 +810,14 @@ async function runAssistantConversation(userInput: string): Promise<void> {
 
     await streamAssistantMessage(result.assistantMessage);
 
-    const mediaItems = result.media.filter((item) => item.type === 'image');
-    if (mediaItems.length > 0) {
+    if (expectsImage) {
+      const generatedImage = await ensureGeneratedImageForPrompt(userInput);
+      addLine('assistant', 'Generated image preview', {
+        imageUrl: generatedImage,
+        imageAlt: 'Generated image preview'
+      });
+    } else {
+      const mediaItems = result.media.filter((item) => item.type === 'image');
       for (const item of mediaItems) {
         const resolvedImage = await resolveAssistantMediaUrl(item.url, userInput);
         addLine('assistant', item.alt || 'Generated image', {
@@ -819,12 +825,6 @@ async function runAssistantConversation(userInput: string): Promise<void> {
           imageAlt: item.alt || 'Generated image'
         });
       }
-    } else if (expectsImage) {
-      const generatedImage = await ensureGeneratedImageForPrompt(userInput);
-      addLine('assistant', 'Generated image preview', {
-        imageUrl: generatedImage,
-        imageAlt: 'Generated image preview'
-      });
     }
 
     assistantSuggestions.value = result.suggestions.slice(0, 3);
@@ -2074,7 +2074,10 @@ onUnmounted(() => {
             {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
           </span>
           <div class="line-body">
-            <span>{{ line.text }}</span>
+            <div class="line-meta">
+              <span class="line-role">{{ toneLabel(line.tone) }}</span>
+            </div>
+            <p class="line-text">{{ line.text }}</p>
             <div v-if="line.imageUrl" class="line-media-shell">
               <div v-if="mediaLoadState[line.id] !== 'ready'" class="line-media-loading">
                 <div class="line-media-grid"></div>
@@ -2753,19 +2756,59 @@ h1 {
 .line {
   margin: 0;
   display: flex;
-  gap: 0.48rem;
-  align-items: flex-start;
+  gap: 0.5rem;
+  align-items: stretch;
   font-size: 0.92rem;
 }
 
 .line-body {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.35rem;
   min-width: 0;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.58);
+  padding: 0.48rem 0.58rem 0.56rem;
+  box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.1);
 }
 
-.line-body span {
+.line-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.line-role {
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(var(--accent-soft-rgb));
+}
+
+.line-text {
+  margin: 0;
   overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.tone-user .line-body {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: linear-gradient(140deg, rgba(var(--accent-rgb), 0.18), rgba(2, 6, 23, 0.82) 52%);
+}
+
+.tone-assistant .line-body {
+  border-color: rgba(var(--accent-rgb), 0.34);
+  background: linear-gradient(140deg, rgba(var(--accent-rgb), 0.12), rgba(2, 6, 23, 0.74) 58%);
+}
+
+.tone-signal .line-body {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.tone-system .line-body {
+  border-color: rgba(var(--accent-rgb), 0.18);
+  background: rgba(2, 6, 23, 0.44);
 }
 
 .line-media {
@@ -2854,8 +2897,17 @@ h1 {
 }
 
 .glyph {
-  color: rgb(var(--accent-rgb));
-  min-width: 0.8rem;
+  color: rgb(var(--accent-soft-rgb));
+  min-width: 1.1rem;
+  font-size: 0.78rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 999px;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: inline-grid;
+  place-items: center;
+  margin-top: 0.15rem;
+  background: rgba(var(--accent-rgb), 0.16);
 }
 
 .command-row {
@@ -2890,10 +2942,18 @@ h1 {
 .assistant-actions button {
   border: 1px solid var(--border-tone);
   border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.16);
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.24), rgba(var(--accent-sharp-rgb), 0.18));
   color: var(--text-primary);
-  padding: 0.28rem 0.62rem;
+  padding: 0.32rem 0.7rem;
   font-size: 0.74rem;
+  letter-spacing: 0.03em;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.assistant-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.16);
 }
 
 .widget-studio {

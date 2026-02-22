@@ -41,6 +41,8 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - `public/api/ai/blueprint.php`: blueprint generation endpoint
 - `public/api/ai/assistant.php`: in-shell assistant endpoint
 - `public/api/ai/widget.php`: AI-powered widget runtime refresh endpoint
+- `public/api/ai/image.php`: dedicated multimodal image generation endpoint for chat threads
+- `public/api/ai/image-proxy.php`: same-origin remote image proxy for preview reliability
 - `public/api/content/wp.php`: WordPress content bundle endpoint
 - `public/api/content/post.php`: single-post detail endpoint for internal story pages
 
