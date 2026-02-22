@@ -15,7 +15,8 @@ Headless Vue frontend for a WordPress site, generated from a conversational onbo
 - In-app AI CLI can deploy up to 7 runtime widgets with guided `/widget build` Q&A (clarification mode), plus fast-path `/widget build <title> || <prompt>` and optional presets (`weather`, `horoscope`, `fashion`, `sports`, `customHtml`).
 - Widget Tuning Studio supports inline editing (`/widget edit <id>` or Edit button), prompt optimization, config overrides, and save + re-run.
 - Dashboard visuals are now personalization-driven by blueprint mode/accent/layout for stronger per-visitor identity.
-- Terminal now supports multimodal chat behavior with streamed assistant text and image requests via `/image <prompt>`.
+- Terminal now supports multimodal chat behavior with streamed assistant text and in-thread image responses via `/image <prompt>` (no auto-widget deploy).
+- Up to 5 assistant conversations are stored locally and can be switched from the terminal thread bar or `/thread` commands.
 - Includes an internal story route (`/story/:id`) with modern full-article rendering from WordPress posts.
 
 ## Stack
@@ -140,6 +141,7 @@ Output returns:
 
 - `assistantMessage`
 - `suggestions` (`label` + `action`)
+- `media` (currently `[{ type: "image", url, alt }]` when image generation is requested)
 - `source`
 
 ### `POST /api/ai/widget.php`

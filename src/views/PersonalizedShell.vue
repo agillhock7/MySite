@@ -26,6 +26,8 @@ interface TerminalLine {
   id: number;
   tone: 'system' | 'user' | 'signal' | 'assistant';
   text: string;
+  imageUrl?: string;
+  imageAlt?: string;
 }
 
 type WidgetOutputFormat = 'brief' | 'bullets' | 'checklist';
@@ -52,6 +54,22 @@ interface WidgetEditorState {
   configEntries: Array<{ key: string; value: string }>;
 }
 
+interface SavedConversation {
+  id: string;
+  title: string;
+  updatedAt: string;
+  transcript: TerminalLine[];
+  suggestions: Array<{ label: string; action: string }>;
+}
+
+interface ConversationStorePayload {
+  activeConversationId: string;
+  conversations: SavedConversation[];
+}
+
+const CONVERSATION_STORAGE_KEY = 'mysite.assistant.conversations.v1';
+const MAX_SAVED_CONVERSATIONS = 5;
+
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
@@ -72,9 +90,291 @@ const widgetEditor = ref<WidgetEditorState | null>(null);
 const assistantStreaming = ref(false);
 const assistantStreamPhase = ref('');
 const assistantSuggestions = ref<Array<{ label: string; action: string }>>([]);
+const conversationThreads = ref<SavedConversation[]>([]);
+const activeConversationId = ref('');
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
+
+function canUseStorage(): boolean {
+  return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
+}
+
+function cloneTerminalLine(line: TerminalLine): TerminalLine {
+  return {
+    id: line.id,
+    tone: line.tone,
+    text: line.text,
+    imageUrl: line.imageUrl,
+    imageAlt: line.imageAlt
+  };
+}
+
+function sanitizeTerminalLine(value: unknown): TerminalLine | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const idRaw = record.id;
+  const id = typeof idRaw === 'number' ? idRaw : Number.parseInt(String(idRaw ?? ''), 10);
+  const toneRaw = typeof record.tone === 'string' ? record.tone.trim() : '';
+  const text = typeof record.text === 'string' ? record.text : '';
+  const imageUrl = typeof record.imageUrl === 'string' ? record.imageUrl.trim() : '';
+  const imageAlt = typeof record.imageAlt === 'string' ? record.imageAlt.trim() : '';
+
+  if (!Number.isFinite(id) || !['system', 'user', 'signal', 'assistant'].includes(toneRaw) || !text.trim()) {
+    return null;
+  }
+
+  return {
+    id,
+    tone: toneRaw as TerminalLine['tone'],
+    text: text.trim(),
+    imageUrl: imageUrl || undefined,
+    imageAlt: imageAlt || undefined
+  };
+}
+
+function normalizeConversationTitle(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const cleaned = value.trim();
+  return cleaned.length > 0 ? cleaned.slice(0, 44) : fallback;
+}
+
+function buildConversationTitleFromTranscript(lines: TerminalLine[]): string {
+  const candidate = lines.find((line) => line.tone === 'user' && line.text.trim().length > 0)?.text
+    ?? lines.find((line) => line.tone === 'assistant' && line.text.trim().length > 0)?.text
+    ?? '';
+
+  const compact = candidate.replace(/\s+/g, ' ').trim();
+  if (!compact) {
+    return 'New Conversation';
+  }
+
+  return compact.slice(0, 44);
+}
+
+function createConversation(title = 'New Conversation'): SavedConversation {
+  const now = new Date().toISOString();
+  const token = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return {
+    id: `C-${token}`,
+    title,
+    updatedAt: now,
+    transcript: [],
+    suggestions: []
+  };
+}
+
+function normalizeConversation(value: unknown): SavedConversation | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === 'string' ? record.id.trim() : '';
+  if (!id) {
+    return null;
+  }
+
+  const transcriptRaw = Array.isArray(record.transcript) ? record.transcript : [];
+  const nextTranscript = transcriptRaw
+    .map((line) => sanitizeTerminalLine(line))
+    .filter((line): line is TerminalLine => line !== null)
+    .slice(-120);
+
+  const suggestionsRaw = Array.isArray(record.suggestions) ? record.suggestions : [];
+  const suggestions = suggestionsRaw
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return null;
+      }
+
+      const item = entry as Record<string, unknown>;
+      const label = typeof item.label === 'string' ? item.label.trim() : '';
+      const action = typeof item.action === 'string' ? item.action.trim() : '';
+      if (!label || !action) {
+        return null;
+      }
+
+      return { label, action };
+    })
+    .filter((entry): entry is { label: string; action: string } => entry !== null)
+    .slice(0, 3);
+
+  const updatedAt = typeof record.updatedAt === 'string' && record.updatedAt.trim()
+    ? record.updatedAt.trim()
+    : new Date().toISOString();
+  const fallbackTitle = buildConversationTitleFromTranscript(nextTranscript);
+
+  return {
+    id,
+    title: normalizeConversationTitle(record.title, fallbackTitle),
+    updatedAt,
+    transcript: nextTranscript.map(cloneTerminalLine),
+    suggestions
+  };
+}
+
+function persistConversationState(): void {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  try {
+    const normalized = conversationThreads.value
+      .slice()
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, MAX_SAVED_CONVERSATIONS)
+      .map((conversation) => ({
+        ...conversation,
+        transcript: conversation.transcript.map(cloneTerminalLine),
+        suggestions: conversation.suggestions.slice(0, 3)
+      }));
+
+    if (normalized.length === 0) {
+      localStorage.removeItem(CONVERSATION_STORAGE_KEY);
+      return;
+    }
+
+    if (!normalized.some((conversation) => conversation.id === activeConversationId.value)) {
+      activeConversationId.value = normalized[0].id;
+    }
+
+    const payload: ConversationStorePayload = {
+      activeConversationId: activeConversationId.value,
+      conversations: normalized
+    };
+
+    conversationThreads.value = normalized;
+    localStorage.setItem(CONVERSATION_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota or access errors; in-memory conversation remains usable.
+  }
+}
+
+function initializeConversationThreads(): void {
+  if (!canUseStorage()) {
+    const created = createConversation();
+    conversationThreads.value = [created];
+    activeConversationId.value = created.id;
+    transcript.value = [];
+    assistantSuggestions.value = [];
+    return;
+  }
+
+  try {
+    const raw = localStorage.getItem(CONVERSATION_STORAGE_KEY);
+    if (!raw) {
+      const created = createConversation();
+      conversationThreads.value = [created];
+      activeConversationId.value = created.id;
+      transcript.value = [];
+      assistantSuggestions.value = [];
+      persistConversationState();
+      return;
+    }
+
+    const decoded = JSON.parse(raw) as unknown;
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      throw new Error('Invalid conversation payload');
+    }
+
+    const payload = decoded as Record<string, unknown>;
+    const conversationsRaw = Array.isArray(payload.conversations) ? payload.conversations : [];
+    const conversations = conversationsRaw
+      .map((entry) => normalizeConversation(entry))
+      .filter((entry): entry is SavedConversation => entry !== null)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, MAX_SAVED_CONVERSATIONS);
+
+    if (conversations.length === 0) {
+      const created = createConversation();
+      conversationThreads.value = [created];
+      activeConversationId.value = created.id;
+      transcript.value = [];
+      assistantSuggestions.value = [];
+      persistConversationState();
+      return;
+    }
+
+    const requestedActiveId = typeof payload.activeConversationId === 'string' ? payload.activeConversationId.trim() : '';
+    const selected = conversations.find((conversation) => conversation.id === requestedActiveId) ?? conversations[0];
+
+    conversationThreads.value = conversations;
+    activeConversationId.value = selected.id;
+    transcript.value = selected.transcript.map(cloneTerminalLine);
+    assistantSuggestions.value = selected.suggestions.slice(0, 3);
+    persistConversationState();
+  } catch {
+    const created = createConversation();
+    conversationThreads.value = [created];
+    activeConversationId.value = created.id;
+    transcript.value = [];
+    assistantSuggestions.value = [];
+    persistConversationState();
+  }
+}
+
+function persistActiveConversation(): void {
+  const activeId = activeConversationId.value;
+  if (!activeId) {
+    return;
+  }
+
+  const index = conversationThreads.value.findIndex((conversation) => conversation.id === activeId);
+  if (index === -1) {
+    return;
+  }
+
+  const existing = conversationThreads.value[index];
+  const inferredTitle = buildConversationTitleFromTranscript(transcript.value);
+  const nextTitle = inferredTitle && existing.title === 'New Conversation'
+    ? inferredTitle
+    : existing.title || inferredTitle || 'New Conversation';
+
+  const nextConversation: SavedConversation = {
+    ...existing,
+    title: nextTitle.slice(0, 44),
+    updatedAt: new Date().toISOString(),
+    transcript: transcript.value.map(cloneTerminalLine).slice(-120),
+    suggestions: assistantSuggestions.value.slice(0, 3)
+  };
+
+  conversationThreads.value.splice(index, 1, nextConversation);
+  persistConversationState();
+}
+
+function startNewConversation(): void {
+  const created = createConversation();
+  conversationThreads.value = [created, ...conversationThreads.value];
+  activeConversationId.value = created.id;
+  transcript.value = [];
+  assistantSuggestions.value = [];
+  persistConversationState();
+  addLine('signal', `Conversation ${created.id} active. Ask anything or use /widget build.`);
+}
+
+function switchConversation(conversationId: string): void {
+  if (conversationId === activeConversationId.value) {
+    return;
+  }
+
+  const target = conversationThreads.value.find((conversation) => conversation.id === conversationId);
+  if (!target) {
+    return;
+  }
+
+  activeConversationId.value = target.id;
+  transcript.value = target.transcript.map(cloneTerminalLine);
+  assistantSuggestions.value = target.suggestions.slice(0, 3);
+  scrollTranscriptToEnd();
+  persistConversationState();
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -156,14 +456,21 @@ function scrollTranscriptToEnd(): void {
   });
 }
 
-function addLine(tone: TerminalLine['tone'], text: string): number {
+function addLine(
+  tone: TerminalLine['tone'],
+  text: string,
+  media?: { imageUrl?: string; imageAlt?: string }
+): number {
   const lineId = Date.now() + Math.floor(Math.random() * 1000);
   transcript.value.push({
     id: lineId,
     tone,
-    text
+    text,
+    imageUrl: media?.imageUrl,
+    imageAlt: media?.imageAlt
   });
   scrollTranscriptToEnd();
+  persistActiveConversation();
   return lineId;
 }
 
@@ -175,6 +482,7 @@ function appendLine(lineId: number, textChunk: string): void {
 
   line.text += textChunk;
   scrollTranscriptToEnd();
+  persistActiveConversation();
 }
 
 function isExternalUrl(url: string): boolean {
@@ -244,34 +552,6 @@ async function streamAssistantMessage(message: string): Promise<void> {
   }
 }
 
-function isImageIntentRequest(input: string): boolean {
-  const normalized = input.toLowerCase();
-  return /\b(image|illustration|render|draw|logo|poster|photo|artwork)\b/.test(normalized);
-}
-
-function buildImageWidgetPrompt(input: string): string {
-  const cleaned = input
-    .replace(/\b(can you|please|could you|would you|help me|make me|build me)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!cleaned) {
-    return 'Generate an editorial-style image with cinematic lighting for this personalized dashboard.';
-  }
-
-  return `Generate a high-quality image for this request: ${cleaned}`;
-}
-
-function createImagePromptWidget(input: string): DashboardWidget {
-  const prompt = buildImageWidgetPrompt(input);
-  const titleHint = deriveWidgetTitle(input) || 'AI Image';
-  const widget = createPromptWidgetFromPrompt(prompt, `${visitorId}:${designSignature.value}:${sceneNonce.value}`, titleHint);
-  widget.config.intent = 'image';
-  widget.config.mode = 'prompt';
-  widget.config.outputStyle = 'brief';
-  return widget;
-}
-
 async function runAssistantConversation(userInput: string): Promise<void> {
   assistantStreaming.value = true;
   assistantStreamPhase.value = 'AI stream: analyzing request...';
@@ -291,10 +571,24 @@ async function runAssistantConversation(userInput: string): Promise<void> {
       : 'Fallback stream: rendering response...';
 
     await streamAssistantMessage(result.assistantMessage);
+
+    if (result.media.length > 0) {
+      for (const item of result.media) {
+        if (item.type !== 'image') {
+          continue;
+        }
+        addLine('assistant', item.alt || 'Generated image', {
+          imageUrl: item.url,
+          imageAlt: item.alt || 'Generated image'
+        });
+      }
+    }
+
     assistantSuggestions.value = result.suggestions.slice(0, 3);
     if (assistantSuggestions.value.length > 0) {
       addLine('signal', 'Suggestions ready. Tap a quick action below.');
     }
+    persistActiveConversation();
   } finally {
     assistantStreaming.value = false;
     assistantStreamPhase.value = '';
@@ -1012,6 +1306,8 @@ const commandPlaceholder = computed(() =>
     : 'Chat with multimodal AI or build widgets (type /help)'
 );
 
+const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
+
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
   await router.push('/onboarding?force=1&reset=1');
@@ -1027,6 +1323,52 @@ function showWidgetListInTerminal(): void {
   for (const widget of widgets.value.slice(0, 10)) {
     addLine('system', `${widget.id} · ${widget.type} · ${widget.title}`);
   }
+}
+
+function handleThreadCommand(input: string): boolean {
+  if (!input.startsWith('/thread')) {
+    return false;
+  }
+
+  if (input === '/thread') {
+    addLine('system', 'Thread commands: /thread list, /thread new, /thread open <id>');
+    return true;
+  }
+
+  if (input === '/thread list') {
+    addLine('signal', `Saved conversations: ${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
+    for (const thread of conversationThreads.value) {
+      const marker = thread.id === activeConversationId.value ? ' (active)' : '';
+      addLine('system', `${thread.id}${marker} · ${thread.title}`);
+    }
+    return true;
+  }
+
+  if (input === '/thread new') {
+    startNewConversation();
+    return true;
+  }
+
+  if (input.startsWith('/thread open ')) {
+    const targetId = input.slice('/thread open '.length).trim();
+    if (!targetId) {
+      addLine('system', 'Usage: /thread open <conversation-id>');
+      return true;
+    }
+
+    const target = conversationThreads.value.find((thread) => thread.id.toLowerCase() === targetId.toLowerCase());
+    if (!target) {
+      addLine('system', `Conversation ${targetId} not found. Use /thread list.`);
+      return true;
+    }
+
+    switchConversation(target.id);
+    addLine('signal', `Conversation ${target.id} restored.`);
+    return true;
+  }
+
+  addLine('system', 'Thread commands: /thread list, /thread new, /thread open <id>');
+  return true;
 }
 
 function handleWidgetCommand(input: string): boolean {
@@ -1214,17 +1556,18 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input === '/help') {
-    addLine('system', 'Core: /help, /image <prompt>, /shuffle, /focus <topic>, /open <1-3>, /reset');
+    addLine('system', 'Core: /help, /image <prompt>, /thread [list|new|open <id>], /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
       'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
     );
-    addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: type "/widget build" and I will guide the questions.`);
+    addLine('system', `Conversation limit: ${MAX_SAVED_CONVERSATIONS}. Widget limit: ${MAX_DASHBOARD_WIDGETS}.`);
     return;
   }
 
   if (input === '/clear') {
     transcript.value = [];
+    assistantSuggestions.value = [];
     addLine('system', `Transcript cleared. ${scene.value.codename} remains active.`);
     return;
   }
@@ -1276,17 +1619,12 @@ async function handleCommand(raw: string): Promise<void> {
       return;
     }
 
-    const imageWidget = createImagePromptWidget(prompt);
-    const deployed = deployWidget(imageWidget, 'Multimodal');
-    if (deployed) {
-      const refreshedId = refreshWidgetRuntime(imageWidget.id);
-      if (refreshedId) {
-        addLine('signal', `Image render pipeline engaged for ${refreshedId}.`);
-      }
-      addLine('system', `Image request queued in widget "${imageWidget.title}".`);
-    }
-
+    addLine('signal', 'Multimodal request detected. Generating in-thread visual...');
     await runAssistantConversation(`Generate an image for this request: ${prompt}`);
+    return;
+  }
+
+  if (handleThreadCommand(input)) {
     return;
   }
 
@@ -1298,18 +1636,6 @@ async function handleCommand(raw: string): Promise<void> {
     const intentHint = extractIntentFromBuildRequest(input);
     startWidgetBuildMode(intentHint);
     return;
-  }
-
-  if (isImageIntentRequest(input)) {
-    const imageWidget = createImagePromptWidget(input);
-    const deployed = deployWidget(imageWidget, 'Multimodal');
-    if (deployed) {
-      const refreshedId = refreshWidgetRuntime(imageWidget.id);
-      if (refreshedId) {
-        addLine('signal', `Image render pipeline engaged for ${refreshedId}.`);
-      }
-      addLine('system', `Open the widget "${imageWidget.title}" below while the image render completes.`);
-    }
   }
 
   await runAssistantConversation(input);
@@ -1331,10 +1657,15 @@ onMounted(async () => {
     return;
   }
 
-  addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
-  addLine('system', scene.value.mission);
-  addLine('signal', scene.value.pulse);
-  addLine('system', 'You can now build your own dashboard with AI CLI commands. Type /widget build for guided creation.');
+  initializeConversationThreads();
+
+  if (transcript.value.length === 0) {
+    addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
+    addLine('system', scene.value.mission);
+    addLine('signal', scene.value.pulse);
+    addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
+    addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
+  }
 });
 </script>
 
@@ -1407,6 +1738,28 @@ onMounted(async () => {
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
 
+      <div class="conversation-bar">
+        <div class="conversation-head">
+          <p class="mission-kicker">AI Conversations</p>
+          <p class="conversation-count">{{ threadSummary }}</p>
+        </div>
+        <div class="conversation-actions">
+          <button
+            v-for="thread in conversationThreads"
+            :key="thread.id"
+            type="button"
+            class="thread-chip"
+            :class="{ active: thread.id === activeConversationId }"
+            @click="switchConversation(thread.id)"
+          >
+            {{ thread.title }}
+          </button>
+          <button type="button" class="thread-new" @click="startNewConversation">
+            + New
+          </button>
+        </div>
+      </div>
+
       <div v-if="assistantStreaming" class="stream-shell" aria-live="polite">
         <div class="stream-bars">
           <span></span>
@@ -1419,12 +1772,15 @@ onMounted(async () => {
       </div>
 
       <div ref="transcriptRef" class="transcript" aria-live="polite">
-        <p v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
+        <article v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
           <span class="glyph">
             {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
           </span>
-          {{ line.text }}
-        </p>
+          <div class="line-body">
+            <span>{{ line.text }}</span>
+            <img v-if="line.imageUrl" class="line-media" :src="line.imageUrl" :alt="line.imageAlt || 'Generated image'" loading="lazy" />
+          </div>
+        </article>
       </div>
 
       <form class="command-row" @submit.prevent="handleCommand(commandInput)">
@@ -1458,7 +1814,7 @@ onMounted(async () => {
       <div v-if="widgets.length === 0" class="empty-widgets">
         <p>No widgets yet. Try:</p>
         <p>/widget build</p>
-        <p>/image a cinematic neon skyline over the desert at sunrise</p>
+        <p>/image cinematic neon skyline over the desert at sunrise</p>
         <p>build me a widget for weather in Austin</p>
         <p>/widget build Daily Coach || Give me one focused action for the day and two follow-ups</p>
         <p>/widget add weather Austin</p>
@@ -1872,6 +2228,52 @@ h1 {
   letter-spacing: 0.03em;
 }
 
+.conversation-bar {
+  border-bottom: 1px solid var(--border-tone);
+  padding: 0.62rem 0.85rem 0.74rem;
+  display: grid;
+  gap: 0.45rem;
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.conversation-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.conversation-count {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.conversation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.thread-chip,
+.thread-new {
+  border-radius: 999px;
+  border: 1px solid var(--border-tone);
+  background: rgba(var(--accent-rgb), 0.13);
+  color: var(--text-primary);
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-chip.active {
+  border-color: rgba(var(--accent-rgb), 0.66);
+  background: rgba(var(--accent-rgb), 0.26);
+}
+
 .stream-shell {
   padding: 0.62rem 0.85rem;
   border-bottom: 1px solid var(--border-tone);
@@ -1927,6 +2329,23 @@ h1 {
   gap: 0.48rem;
   align-items: flex-start;
   font-size: 0.92rem;
+}
+
+.line-body {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.line-body span {
+  overflow-wrap: anywhere;
+}
+
+.line-media {
+  width: min(100%, 360px);
+  border-radius: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 14px 28px rgba(2, 6, 23, 0.36);
 }
 
 .tone-system {

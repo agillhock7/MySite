@@ -17,6 +17,16 @@ function send_json(int $status, array $payload): void
     exit;
 }
 
+function clean_text($value, string $fallback = ''): string
+{
+    if (!is_string($value)) {
+        return $fallback;
+    }
+
+    $trimmed = trim($value);
+    return $trimmed === '' ? $fallback : $trimmed;
+}
+
 function normalize_transcript($value): array
 {
     if (!is_array($value)) {
@@ -117,7 +127,7 @@ function assistant_schema(): array
     return [
         'type' => 'object',
         'additionalProperties' => false,
-        'required' => ['assistantMessage', 'suggestions'],
+        'required' => ['assistantMessage', 'suggestions', 'media'],
         'properties' => [
             'assistantMessage' => ['type' => 'string'],
             'suggestions' => [
@@ -129,6 +139,19 @@ function assistant_schema(): array
                     'properties' => [
                         'label' => ['type' => 'string'],
                         'action' => ['type' => 'string']
+                    ]
+                ]
+            ],
+            'media' => [
+                'type' => 'array',
+                'items' => [
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => ['type', 'url', 'alt'],
+                    'properties' => [
+                        'type' => ['type' => 'string', 'enum' => ['image']],
+                        'url' => ['type' => 'string'],
+                        'alt' => ['type' => 'string']
                     ]
                 ]
             ]
@@ -206,6 +229,157 @@ function normalize_suggestions($value): array
     return $normalized;
 }
 
+function normalize_media($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($value as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $type = strtolower(clean_text($item['type'] ?? ''));
+        $url = clean_text($item['url'] ?? '');
+        $alt = clean_text($item['alt'] ?? '', 'Generated image');
+        if ($type !== 'image' || $url === '') {
+            continue;
+        }
+
+        if (!preg_match('/^https?:\/\//i', $url) && strpos($url, 'data:image/') !== 0) {
+            continue;
+        }
+
+        $normalized[] = [
+            'type' => 'image',
+            'url' => $url,
+            'alt' => $alt
+        ];
+
+        if (count($normalized) >= 2) {
+            break;
+        }
+    }
+
+    return $normalized;
+}
+
+function is_image_request(string $message): bool
+{
+    return preg_match('/\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art)\b/i', $message) === 1;
+}
+
+function assistant_image_placeholder_data_uri(string $prompt): string
+{
+    $title = trim(preg_replace('/\s+/', ' ', $prompt) ?? '');
+    if ($title === '') {
+        $title = 'Image pending';
+    }
+    if (strlen($title) > 80) {
+        $title = substr($title, 0, 77) . '...';
+    }
+
+    $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">' .
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#031b14"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>' .
+        '<rect width="1280" height="720" fill="url(#g)"/>' .
+        '<circle cx="120" cy="130" r="170" fill="rgba(16,185,129,0.24)"/>' .
+        '<circle cx="1060" cy="620" r="240" fill="rgba(34,197,94,0.18)"/>' .
+        '<rect x="86" y="90" width="1108" height="540" rx="24" fill="rgba(2,6,23,0.54)" stroke="rgba(110,231,183,0.45)" stroke-width="2"/>' .
+        '<text x="130" y="205" fill="#a7f3d0" font-family="monospace" font-size="32">MULTIMODAL IMAGE PREVIEW</text>' .
+        '<text x="130" y="295" fill="#d1fae5" font-family="monospace" font-size="40">' . $safeTitle . '</text>' .
+        '<text x="130" y="375" fill="#86efac" font-family="monospace" font-size="26">Live generation unavailable: using fallback preview.</text>' .
+        '</svg>';
+
+    return 'data:image/svg+xml;charset=utf-8,' . rawurlencode($svg);
+}
+
+function assistant_generate_image(string $prompt, array $config, int $timeoutSeconds): array
+{
+    $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
+    $enabled = (bool) ($openAiConfig['enabled'] ?? true);
+    $apiKey = mysite_resolve_openai_api_key($config);
+
+    if (!$enabled || $apiKey === '') {
+        return [
+            'url' => assistant_image_placeholder_data_uri($prompt),
+            'source' => 'local',
+            'provider' => 'fallback',
+            'model' => 'placeholder'
+        ];
+    }
+
+    $imageModel = clean_text($openAiConfig['image_model'] ?? 'gpt-image-1', 'gpt-image-1');
+    $imageApiUrl = clean_text($openAiConfig['images_api_url'] ?? 'https://api.openai.com/v1/images/generations', 'https://api.openai.com/v1/images/generations');
+
+    $payload = [
+        'model' => $imageModel,
+        'prompt' => $prompt,
+        'size' => '1024x1024'
+    ];
+
+    $curl = curl_init($imageApiUrl);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => $timeoutSeconds
+    ]);
+
+    $result = curl_exec($curl);
+    if ($result === false) {
+        curl_close($curl);
+        return [
+            'url' => assistant_image_placeholder_data_uri($prompt),
+            'source' => 'local',
+            'provider' => 'fallback',
+            'model' => 'placeholder'
+        ];
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+    if ($statusCode >= 400) {
+        return [
+            'url' => assistant_image_placeholder_data_uri($prompt),
+            'source' => 'local',
+            'provider' => 'fallback',
+            'model' => 'placeholder'
+        ];
+    }
+
+    $decoded = json_decode((string) $result, true);
+    $data = is_array($decoded['data'] ?? null) ? $decoded['data'] : [];
+    $first = is_array($data[0] ?? null) ? $data[0] : [];
+    $url = clean_text($first['url'] ?? '');
+    $b64 = clean_text($first['b64_json'] ?? '');
+
+    if ($url === '' && $b64 !== '') {
+        $url = 'data:image/png;base64,' . $b64;
+    }
+    if ($url === '') {
+        return [
+            'url' => assistant_image_placeholder_data_uri($prompt),
+            'source' => 'local',
+            'provider' => 'fallback',
+            'model' => 'placeholder'
+        ];
+    }
+
+    return [
+        'url' => $url,
+        'source' => 'backend',
+        'provider' => 'openai',
+        'model' => $imageModel
+    ];
+}
+
 function local_assistant_fallback(string $userMessage): array
 {
     $normalized = strtolower($userMessage);
@@ -218,6 +392,7 @@ function local_assistant_fallback(string $userMessage): array
                 ['label' => 'Ask AI Access', 'action' => 'ask-ai-access'],
                 ['label' => 'Refine Experience', 'action' => '/onboarding?force=1']
             ],
+            'media' => [],
             'source' => 'local'
         ];
     }
@@ -230,6 +405,7 @@ function local_assistant_fallback(string $userMessage): array
                 ['label' => 'Ask Hosting', 'action' => 'ask-hosting'],
                 ['label' => 'Open Main Site', 'action' => 'https://alexanderjgill.com']
             ],
+            'media' => [],
             'source' => 'local'
         ];
     }
@@ -241,6 +417,7 @@ function local_assistant_fallback(string $userMessage): array
             ['label' => 'Open Main Site', 'action' => 'https://alexanderjgill.com'],
             ['label' => 'Refine Experience', 'action' => '/onboarding?force=1']
         ],
+        'media' => [],
         'source' => 'local'
     ];
 }
@@ -267,6 +444,36 @@ $visitorSeed = substr(sha1($visitorId . ':v' . (string) $variantNonce), 0, 10);
 
 $config = mysite_load_server_config();
 $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
+$timeoutSeconds = (int) ($openAiConfig['timeout_seconds'] ?? 30);
+if ($timeoutSeconds < 5) {
+    $timeoutSeconds = 5;
+}
+if ($timeoutSeconds > 120) {
+    $timeoutSeconds = 120;
+}
+
+if (is_image_request($userMessage)) {
+    $image = assistant_generate_image($userMessage, $config, $timeoutSeconds);
+    send_json(200, [
+        'assistantMessage' => $image['source'] === 'backend'
+            ? 'Image generated in-thread. Ask for edits, styles, or a new variation.'
+            : 'Image preview generated in fallback mode. Configure OpenAI image access for live renders.',
+        'suggestions' => [
+            ['label' => 'Refine Image Prompt', 'action' => 'ask-ai-access'],
+            ['label' => 'Open Main Site', 'action' => 'https://alexanderjgill.com'],
+            ['label' => 'Open Pro Suite', 'action' => 'https://hiops.darkhorsevirtue.io']
+        ],
+        'media' => [
+            [
+                'type' => 'image',
+                'url' => (string) $image['url'],
+                'alt' => 'Generated image preview'
+            ]
+        ],
+        'source' => (string) $image['source']
+    ]);
+}
+
 $enabled = (bool) ($openAiConfig['enabled'] ?? true);
 $apiKey = mysite_resolve_openai_api_key($config);
 
@@ -284,14 +491,6 @@ if ($apiUrl === '') {
     $apiUrl = 'https://api.openai.com/v1/chat/completions';
 }
 
-$timeoutSeconds = (int) ($openAiConfig['timeout_seconds'] ?? 30);
-if ($timeoutSeconds < 5) {
-    $timeoutSeconds = 5;
-}
-if ($timeoutSeconds > 120) {
-    $timeoutSeconds = 120;
-}
-
 $systemPrompt = <<<PROMPT
 You are an embedded assistant inside a personalized headless blog experience.
 Be concise, practical, and calm.
@@ -304,6 +503,7 @@ Rules:
 - Return JSON only.
 - Keep assistantMessage under 70 words.
 - Provide 1-3 suggestions with label/action.
+- Return media as an array (empty if none). For image responses, include media item with type=image, url, alt.
 - Suggestion actions may be a safe URL, /onboarding?force=1, ask-hosting, ask-ai-access, or reopen-onboarding.
 - Never output code blocks or markdown.
 PROMPT;
@@ -374,9 +574,11 @@ $suggestions = normalize_suggestions($parsed['suggestions'] ?? []);
 if (count($suggestions) === 0) {
     $suggestions = local_assistant_fallback($userMessage)['suggestions'];
 }
+$media = normalize_media($parsed['media'] ?? []);
 
 send_json(200, [
     'assistantMessage' => $assistantMessage,
     'suggestions' => $suggestions,
+    'media' => $media,
     'source' => 'backend'
 ]);

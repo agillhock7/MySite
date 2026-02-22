@@ -26,9 +26,16 @@ export interface AssistantActionSuggestion {
   action: string;
 }
 
+export interface AssistantMediaItem {
+  type: 'image';
+  url: string;
+  alt: string;
+}
+
 export interface AssistantTurnResult {
   assistantMessage: string;
   suggestions: AssistantActionSuggestion[];
+  media: AssistantMediaItem[];
   source: 'backend' | 'local';
 }
 
@@ -1026,6 +1033,7 @@ function localAssistantFallback(userMessage: string): AssistantTurnResult {
         { label: 'View Main Site', action: 'https://alexanderjgill.com' },
         { label: 'Refine UX Again', action: '/onboarding?force=1' }
       ],
+      media: [],
       source: 'local'
     };
   }
@@ -1039,6 +1047,7 @@ function localAssistantFallback(userMessage: string): AssistantTurnResult {
         { label: 'Ask About Hosting', action: 'ask-hosting' },
         { label: 'Reset Personalization', action: '/onboarding?force=1&reset=1' }
       ],
+      media: [],
       source: 'local'
     };
   }
@@ -1051,8 +1060,39 @@ function localAssistantFallback(userMessage: string): AssistantTurnResult {
       { label: 'Main Blog', action: 'https://alexanderjgill.com' },
       { label: 'Refine Experience', action: '/onboarding?force=1' }
     ],
+    media: [],
     source: 'local'
   };
+}
+
+function normalizeAssistantMedia(value: unknown): AssistantMediaItem[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const record = asObject(item);
+      if (!record) {
+        return null;
+      }
+
+      const typeRaw = typeof record.type === 'string' ? record.type.trim().toLowerCase() : '';
+      const url = typeof record.url === 'string' ? record.url.trim() : '';
+      const alt = typeof record.alt === 'string' ? record.alt.trim() : '';
+
+      if (typeRaw !== 'image' || !url) {
+        return null;
+      }
+
+      return {
+        type: 'image' as const,
+        url,
+        alt: alt || 'Generated image'
+      };
+    })
+    .filter((item): item is AssistantMediaItem => item !== null)
+    .slice(0, 3);
 }
 
 export async function generateAssistantTurnWithFallback(params: {
@@ -1088,11 +1128,13 @@ export async function generateAssistantTurnWithFallback(params: {
       typeof record.assistantMessage === 'string' && record.assistantMessage.trim().length > 0
         ? record.assistantMessage.trim()
         : localAssistantFallback(params.userMessage).assistantMessage;
+    const source = record.source === 'local' ? 'local' : 'backend';
 
     return {
       assistantMessage,
       suggestions: normalizeAssistantSuggestions(record.suggestions),
-      source: 'backend'
+      media: normalizeAssistantMedia(record.media),
+      source
     };
   } catch {
     return localAssistantFallback(params.userMessage);
