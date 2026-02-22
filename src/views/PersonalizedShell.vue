@@ -14,7 +14,7 @@ import {
   type DashboardWidget,
   type DashboardWidgetType
 } from '@/dashboard/engine';
-import { handleNaturalLanguageWidgetRequest } from '@/dashboard/assistant';
+import { generateAssistantTurnWithFallback, type OnboardingTranscriptLine } from '@/api/ai';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getOrCreateVisitorId } from '@/personalization/visitor';
@@ -24,7 +24,7 @@ import { hashText } from '@/utils/seed';
 
 interface TerminalLine {
   id: number;
-  tone: 'system' | 'user' | 'signal';
+  tone: 'system' | 'user' | 'signal' | 'assistant';
   text: string;
 }
 
@@ -69,6 +69,9 @@ const widgetRefreshKeys = ref<Record<string, number>>({});
 const widgetBuildSession = ref<WidgetBuildSession | null>(null);
 const editingWidgetId = ref('');
 const widgetEditor = ref<WidgetEditorState | null>(null);
+const assistantStreaming = ref(false);
+const assistantStreamPhase = ref('');
+const assistantSuggestions = ref<Array<{ label: string; action: string }>>([]);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -143,13 +146,7 @@ function firstStringArrayModuleProp(propName: string): string[] {
   return [];
 }
 
-function addLine(tone: TerminalLine['tone'], text: string): void {
-  transcript.value.push({
-    id: Date.now() + Math.floor(Math.random() * 1000),
-    tone,
-    text
-  });
-
+function scrollTranscriptToEnd(): void {
   nextTick(() => {
     if (!transcriptRef.value) {
       return;
@@ -157,6 +154,27 @@ function addLine(tone: TerminalLine['tone'], text: string): void {
 
     transcriptRef.value.scrollTop = transcriptRef.value.scrollHeight;
   });
+}
+
+function addLine(tone: TerminalLine['tone'], text: string): number {
+  const lineId = Date.now() + Math.floor(Math.random() * 1000);
+  transcript.value.push({
+    id: lineId,
+    tone,
+    text
+  });
+  scrollTranscriptToEnd();
+  return lineId;
+}
+
+function appendLine(lineId: number, textChunk: string): void {
+  const line = transcript.value.find((entry) => entry.id === lineId);
+  if (!line) {
+    return;
+  }
+
+  line.text += textChunk;
+  scrollTranscriptToEnd();
 }
 
 function isExternalUrl(url: string): boolean {
@@ -168,6 +186,21 @@ async function openAction(url: string): Promise<void> {
     return;
   }
 
+  if (url === 'ask-hosting') {
+    await runAssistantConversation('I need hosting onboarding help through Dark Horse Virtue Pro Suite.');
+    return;
+  }
+
+  if (url === 'ask-ai-access') {
+    await runAssistantConversation('Help me map an AI access plan for this experience.');
+    return;
+  }
+
+  if (url === 'reopen-onboarding') {
+    await router.push('/onboarding?force=1');
+    return;
+  }
+
   if (url.startsWith('/')) {
     await router.push(url);
     return;
@@ -175,6 +208,96 @@ async function openAction(url: string): Promise<void> {
 
   if (isExternalUrl(url)) {
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
+function buildAssistantTranscript(): OnboardingTranscriptLine[] {
+  return transcript.value
+    .slice(-16)
+    .map((line) => {
+      const role: OnboardingTranscriptLine['role'] = line.tone === 'user'
+        ? 'user'
+        : line.tone === 'assistant'
+          ? 'assistant'
+          : 'system';
+
+      return {
+        role,
+        text: line.text
+      };
+    });
+}
+
+async function streamAssistantMessage(message: string): Promise<void> {
+  const text = message.trim();
+  if (!text) {
+    return;
+  }
+
+  const lineId = addLine('assistant', '');
+  const chunks = text.split(/(\s+)/).filter((chunk) => chunk.length > 0);
+
+  for (const chunk of chunks) {
+    appendLine(lineId, chunk);
+    const isBreak = chunk.trim().length === 0;
+    await new Promise((resolve) => window.setTimeout(resolve, isBreak ? 10 : 22));
+  }
+}
+
+function isImageIntentRequest(input: string): boolean {
+  const normalized = input.toLowerCase();
+  return /\b(image|illustration|render|draw|logo|poster|photo|artwork)\b/.test(normalized);
+}
+
+function buildImageWidgetPrompt(input: string): string {
+  const cleaned = input
+    .replace(/\b(can you|please|could you|would you|help me|make me|build me)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) {
+    return 'Generate an editorial-style image with cinematic lighting for this personalized dashboard.';
+  }
+
+  return `Generate a high-quality image for this request: ${cleaned}`;
+}
+
+function createImagePromptWidget(input: string): DashboardWidget {
+  const prompt = buildImageWidgetPrompt(input);
+  const titleHint = deriveWidgetTitle(input) || 'AI Image';
+  const widget = createPromptWidgetFromPrompt(prompt, `${visitorId}:${designSignature.value}:${sceneNonce.value}`, titleHint);
+  widget.config.intent = 'image';
+  widget.config.mode = 'prompt';
+  widget.config.outputStyle = 'brief';
+  return widget;
+}
+
+async function runAssistantConversation(userInput: string): Promise<void> {
+  assistantStreaming.value = true;
+  assistantStreamPhase.value = 'AI stream: analyzing request...';
+  assistantSuggestions.value = [];
+  addLine('signal', assistantStreamPhase.value);
+
+  try {
+    const result = await generateAssistantTurnWithFallback({
+      userMessage: userInput,
+      transcript: buildAssistantTranscript(),
+      visitorId,
+      variantNonce: sceneNonce.value
+    });
+
+    assistantStreamPhase.value = result.source === 'backend'
+      ? 'AI stream: rendering response...'
+      : 'Fallback stream: rendering response...';
+
+    await streamAssistantMessage(result.assistantMessage);
+    assistantSuggestions.value = result.suggestions.slice(0, 3);
+    if (assistantSuggestions.value.length > 0) {
+      addLine('signal', 'Suggestions ready. Tap a quick action below.');
+    }
+  } finally {
+    assistantStreaming.value = false;
+    assistantStreamPhase.value = '';
   }
 }
 
@@ -886,7 +1009,7 @@ const widgetBuildStepLabel = computed(() => {
 const commandPlaceholder = computed(() =>
   widgetBuildSession.value
     ? `Widget build mode (${widgetBuildStepLabel.value}) · answer question or /widget cancel`
-    : 'Use AI CLI to build widgets (type /help)'
+    : 'Chat with multimodal AI or build widgets (type /help)'
 );
 
 async function resetPersonalization(): Promise<void> {
@@ -1091,7 +1214,7 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input === '/help') {
-    addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
+    addLine('system', 'Core: /help, /image <prompt>, /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
       'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
@@ -1146,6 +1269,27 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
+  if (input.startsWith('/image ')) {
+    const prompt = input.slice('/image '.length).trim();
+    if (!prompt) {
+      addLine('system', 'Usage: /image <prompt>');
+      return;
+    }
+
+    const imageWidget = createImagePromptWidget(prompt);
+    const deployed = deployWidget(imageWidget, 'Multimodal');
+    if (deployed) {
+      const refreshedId = refreshWidgetRuntime(imageWidget.id);
+      if (refreshedId) {
+        addLine('signal', `Image render pipeline engaged for ${refreshedId}.`);
+      }
+      addLine('system', `Image request queued in widget "${imageWidget.title}".`);
+    }
+
+    await runAssistantConversation(`Generate an image for this request: ${prompt}`);
+    return;
+  }
+
   if (handleWidgetCommand(input)) {
     return;
   }
@@ -1156,21 +1300,19 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
-  const assistant = handleNaturalLanguageWidgetRequest(
-    input,
-    `${visitorId}:${designSignature.value}:${sceneNonce.value}`,
-    widgets.value.length
-  );
-
-  if (assistant.widget) {
-    deployWidget(assistant.widget, 'Assistant');
+  if (isImageIntentRequest(input)) {
+    const imageWidget = createImagePromptWidget(input);
+    const deployed = deployWidget(imageWidget, 'Multimodal');
+    if (deployed) {
+      const refreshedId = refreshWidgetRuntime(imageWidget.id);
+      if (refreshedId) {
+        addLine('signal', `Image render pipeline engaged for ${refreshedId}.`);
+      }
+      addLine('system', `Open the widget "${imageWidget.title}" below while the image render completes.`);
+    }
   }
 
-  if (assistant.action === 'list') {
-    showWidgetListInTerminal();
-  }
-
-  addLine('system', assistant.reply);
+  await runAssistantConversation(input);
 }
 
 function removeWidget(widgetId: string): void {
@@ -1265,9 +1407,22 @@ onMounted(async () => {
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
 
+      <div v-if="assistantStreaming" class="stream-shell" aria-live="polite">
+        <div class="stream-bars">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <p>{{ assistantStreamPhase || 'Streaming assistant response...' }}</p>
+      </div>
+
       <div ref="transcriptRef" class="transcript" aria-live="polite">
         <p v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
-          <span class="glyph">{{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : '$' }}</span>
+          <span class="glyph">
+            {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
+          </span>
           {{ line.text }}
         </p>
       </div>
@@ -1281,6 +1436,17 @@ onMounted(async () => {
           :placeholder="commandPlaceholder"
         />
       </form>
+
+      <div v-if="assistantSuggestions.length > 0" class="assistant-actions">
+        <button
+          v-for="suggestion in assistantSuggestions"
+          :key="`${suggestion.label}:${suggestion.action}`"
+          type="button"
+          @click="openAction(suggestion.action)"
+        >
+          {{ suggestion.label }}
+        </button>
+      </div>
     </section>
 
     <section class="widget-studio">
@@ -1292,6 +1458,7 @@ onMounted(async () => {
       <div v-if="widgets.length === 0" class="empty-widgets">
         <p>No widgets yet. Try:</p>
         <p>/widget build</p>
+        <p>/image a cinematic neon skyline over the desert at sunrise</p>
         <p>build me a widget for weather in Austin</p>
         <p>/widget build Daily Coach || Give me one focused action for the day and two follow-ups</p>
         <p>/widget add weather Austin</p>
@@ -1705,6 +1872,47 @@ h1 {
   letter-spacing: 0.03em;
 }
 
+.stream-shell {
+  padding: 0.62rem 0.85rem;
+  border-bottom: 1px solid var(--border-tone);
+  background: rgba(var(--accent-rgb), 0.12);
+  display: flex;
+  align-items: center;
+  gap: 0.58rem;
+}
+
+.stream-shell p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+
+.stream-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.16rem;
+  min-width: 40px;
+  height: 16px;
+}
+
+.stream-bars span {
+  width: 4px;
+  border-radius: 999px;
+  background: rgb(var(--accent-soft-rgb));
+  animation: stream-bars 0.9s ease-in-out infinite;
+}
+
+.stream-bars span:nth-child(1) { animation-delay: 0s; height: 6px; }
+.stream-bars span:nth-child(2) { animation-delay: 0.1s; height: 10px; }
+.stream-bars span:nth-child(3) { animation-delay: 0.2s; height: 14px; }
+.stream-bars span:nth-child(4) { animation-delay: 0.3s; height: 10px; }
+.stream-bars span:nth-child(5) { animation-delay: 0.4s; height: 6px; }
+
+@keyframes stream-bars {
+  0%, 100% { transform: scaleY(0.7); opacity: 0.65; }
+  50% { transform: scaleY(1.05); opacity: 1; }
+}
+
 .transcript {
   max-height: 240px;
   overflow: auto;
@@ -1733,6 +1941,10 @@ h1 {
   color: var(--text-signal);
 }
 
+.tone-assistant {
+  color: color-mix(in srgb, var(--text-primary) 86%, rgb(var(--accent-soft-rgb)));
+}
+
 .glyph {
   color: rgb(var(--accent-rgb));
   min-width: 0.8rem;
@@ -1757,6 +1969,23 @@ h1 {
 
 .command-row input::placeholder {
   color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+
+.assistant-actions {
+  border-top: 1px solid var(--border-tone);
+  padding: 0.55rem 0.85rem 0.7rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.assistant-actions button {
+  border: 1px solid var(--border-tone);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.28rem 0.62rem;
+  font-size: 0.74rem;
 }
 
 .widget-studio {

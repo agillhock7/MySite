@@ -88,6 +88,19 @@ const promptPayload = computed(() => {
   };
 });
 
+const promptImageUrl = computed(() => {
+  const value = runtime.value?.payload.imageUrl;
+  return typeof value === 'string' ? value.trim() : '';
+});
+
+const likelyImagePrompt = computed(() => {
+  const prompt = `${props.widget.config.prompt ?? ''} ${props.widget.title}`.toLowerCase();
+  if (props.widget.config.intent === 'image') {
+    return true;
+  }
+  return /\b(image|illustration|render|draw|logo|poster|photo|artwork)\b/.test(prompt);
+});
+
 const protocolLabel = computed(() => {
   if (promptPayload.value.mode !== 'prompt') {
     return '';
@@ -227,6 +240,11 @@ watch(
       </div>
     </header>
 
+    <div v-if="loading && likelyImagePrompt" class="image-pending" aria-live="polite">
+      <div class="scanline"></div>
+      <p>Generating image variation...</p>
+    </div>
+
     <p v-if="error" class="error-line">{{ error }}</p>
 
     <template v-else-if="widget.type === 'weather'">
@@ -262,6 +280,9 @@ watch(
     <template v-else>
       <template v-if="promptPayload.mode === 'prompt'">
         <p class="protocol">{{ protocolLabel }}</p>
+        <figure v-if="promptPayload.capability === 'image' && promptImageUrl" class="generated-image">
+          <img :src="promptImageUrl" :alt="widget.title" loading="lazy" />
+        </figure>
         <p v-if="promptPayload.prompt" class="secondary"><strong>Prompt:</strong> {{ promptPayload.prompt }}</p>
         <p class="primary">{{ promptPayload.response || textPayload || 'No response yet.' }}</p>
         <div v-if="promptFacts.length > 0" class="facts-grid">
@@ -364,6 +385,48 @@ watch(
   color: #fca5a5;
 }
 
+.image-pending {
+  margin-top: 0.48rem;
+  border: 1px solid rgba(var(--accent-rgb, 22, 199, 207), 0.34);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.72);
+  height: 120px;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.image-pending p {
+  margin: 0;
+  color: rgb(var(--accent-soft-rgb, 120, 224, 228));
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  z-index: 1;
+}
+
+.scanline {
+  position: absolute;
+  inset: -10% 0 auto 0;
+  height: 45%;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--accent-rgb, 22, 199, 207), 0),
+    rgba(var(--accent-rgb, 22, 199, 207), 0.24),
+    rgba(var(--accent-rgb, 22, 199, 207), 0)
+  );
+  animation: scan 1.9s linear infinite;
+}
+
+@keyframes scan {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(170px);
+  }
+}
+
 ul {
   margin: 0.4rem 0 0;
   padding-left: 1rem;
@@ -377,6 +440,22 @@ ul {
   display: grid;
   gap: 0.38rem;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.generated-image {
+  margin: 0.45rem 0 0;
+  border: 1px solid rgba(var(--accent-rgb, 22, 199, 207), 0.38);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(2, 6, 23, 0.86);
+}
+
+.generated-image img {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 320px;
+  object-fit: cover;
 }
 
 .fact {

@@ -465,6 +465,135 @@ function fetch_crypto_price_payload(string $coinId, int $timeoutSeconds): array
     ];
 }
 
+function is_image_prompt(string $prompt): bool
+{
+    return preg_match('/\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art)\b/i', $prompt) === 1;
+}
+
+function prompt_svg_placeholder_data_uri(string $prompt): string
+{
+    $title = trim(preg_replace('/\s+/', ' ', $prompt) ?? '');
+    if ($title === '') {
+        $title = 'Image pending';
+    }
+
+    if (strlen($title) > 80) {
+        $title = substr($title, 0, 77) . '...';
+    }
+
+    $escapedTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">' .
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#022c22"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>' .
+        '<rect width="1280" height="720" fill="url(#g)"/>' .
+        '<circle cx="180" cy="130" r="160" fill="rgba(16,185,129,0.24)"/>' .
+        '<circle cx="1080" cy="620" r="220" fill="rgba(22,163,74,0.18)"/>' .
+        '<rect x="86" y="90" width="1108" height="540" rx="26" fill="rgba(2,6,23,0.56)" stroke="rgba(110,231,183,0.45)" stroke-width="2"/>' .
+        '<text x="130" y="215" fill="#a7f3d0" font-family="monospace" font-size="32">AI IMAGE RUNTIME</text>' .
+        '<text x="130" y="300" fill="#d1fae5" font-family="monospace" font-size="42">' . $escapedTitle . '</text>' .
+        '<text x="130" y="380" fill="#86efac" font-family="monospace" font-size="28">Prompt processed via multimodal pipeline</text>' .
+        '</svg>';
+
+    return 'data:image/svg+xml;charset=utf-8,' . rawurlencode($svg);
+}
+
+function fetch_generated_image_payload(string $prompt, array $config, int $timeoutSeconds): array
+{
+    $openAiConfig = as_array($config['openai'] ?? []);
+    $enabled = (bool) ($openAiConfig['enabled'] ?? true);
+    $apiKey = mysite_resolve_openai_api_key($config);
+
+    if (!$enabled || $apiKey === '') {
+        return [
+            'ok' => true,
+            'source' => 'fallback',
+            'payload' => [
+                'imageUrl' => prompt_svg_placeholder_data_uri($prompt),
+                'provider' => 'fallback',
+                'model' => 'placeholder'
+            ]
+        ];
+    }
+
+    $imageModel = clean_text($openAiConfig['image_model'] ?? 'gpt-image-1', 'gpt-image-1');
+    $imageApiUrl = clean_text($openAiConfig['images_api_url'] ?? 'https://api.openai.com/v1/images/generations', 'https://api.openai.com/v1/images/generations');
+
+    $requestPayload = [
+        'model' => $imageModel,
+        'prompt' => $prompt,
+        'size' => '1024x1024'
+    ];
+
+    $curl = curl_init($imageApiUrl);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_POSTFIELDS => json_encode($requestPayload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => $timeoutSeconds
+    ]);
+
+    $result = curl_exec($curl);
+    if ($result === false) {
+        curl_close($curl);
+        return [
+            'ok' => true,
+            'source' => 'fallback',
+            'payload' => [
+                'imageUrl' => prompt_svg_placeholder_data_uri($prompt),
+                'provider' => 'fallback',
+                'model' => 'placeholder'
+            ]
+        ];
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+
+    if ($statusCode >= 400) {
+        return [
+            'ok' => true,
+            'source' => 'fallback',
+            'payload' => [
+                'imageUrl' => prompt_svg_placeholder_data_uri($prompt),
+                'provider' => 'fallback',
+                'model' => 'placeholder'
+            ]
+        ];
+    }
+
+    $decoded = json_decode((string) $result, true);
+    $imageData = as_array(as_array($decoded['data'] ?? [])[0] ?? []);
+    $url = clean_text($imageData['url'] ?? '');
+    $b64 = clean_text($imageData['b64_json'] ?? '');
+
+    if ($url === '' && $b64 !== '') {
+        $url = 'data:image/png;base64,' . $b64;
+    }
+
+    if ($url === '') {
+        $url = prompt_svg_placeholder_data_uri($prompt);
+        $source = 'fallback';
+        $provider = 'fallback';
+        $imageModel = 'placeholder';
+    } else {
+        $source = 'ai';
+        $provider = 'openai';
+    }
+
+    return [
+        'ok' => true,
+        'source' => $source,
+        'payload' => [
+            'imageUrl' => $url,
+            'provider' => $provider,
+            'model' => $imageModel
+        ]
+    ];
+}
+
 function extract_time_location_from_prompt(string $prompt): string
 {
     $text = trim($prompt);
@@ -585,9 +714,18 @@ function fetch_time_payload(string $location, int $timeoutSeconds): array
 function detect_prompt_capability(string $prompt): array
 {
     $normalized = strtolower($prompt);
+    $isImagePrompt = is_image_prompt($normalized);
     $isWeatherPrompt = preg_match('/\b(weather|forecast|temperature)\b/i', $normalized) === 1;
     $isTimePrompt = preg_match('/\b(current time|local time|time in|what time|clock)\b/i', $normalized) === 1;
     $coinId = detect_crypto_symbol_from_prompt($prompt);
+
+    if ($isImagePrompt) {
+        return [
+            'type' => 'image',
+            'location' => '',
+            'coinId' => ''
+        ];
+    }
 
     if ($coinId !== '') {
         return [
@@ -773,7 +911,26 @@ if ($widget['type'] === 'weather') {
     $prompt = clean_text($widget['config']['prompt'] ?? '');
     if ($prompt !== '') {
         $capability = detect_prompt_capability($prompt);
-        if (($capability['type'] ?? 'generic') === 'time') {
+        if (($capability['type'] ?? 'generic') === 'image') {
+            $imageResult = fetch_generated_image_payload($prompt, $config, $timeoutSeconds);
+            $imagePayload = as_array($imageResult['payload'] ?? []);
+
+            $payload = [
+                'mode' => 'prompt',
+                'capability' => 'image',
+                'title' => $widget['title'],
+                'prompt' => $prompt,
+                'response' => 'Image render complete for your prompt.',
+                'items' => [
+                    'Provider: ' . clean_text($imagePayload['provider'] ?? 'fallback', 'fallback'),
+                    'Model: ' . clean_text($imagePayload['model'] ?? 'placeholder', 'placeholder'),
+                    'Use refresh to generate another variation.'
+                ],
+                'imageUrl' => clean_text($imagePayload['imageUrl'] ?? ''),
+                'facts' => $imagePayload
+            ];
+            $source = clean_text($imageResult['source'] ?? 'fallback', 'fallback');
+        } elseif (($capability['type'] ?? 'generic') === 'time') {
             $location = clean_text($capability['location'] ?? '', 'Saudi Arabia');
             $timeResult = fetch_time_payload($location, $timeoutSeconds);
             $timePayload = as_array($timeResult['payload'] ?? []);
