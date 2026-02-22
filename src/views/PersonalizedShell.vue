@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import AiPromptGame from '@/components/AiPromptGame.vue';
@@ -388,6 +388,44 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function clampColor(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function buildTranscriptImageFallback(label: string): string {
+  const safeLabel = label
+    .replace(/[<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 88) || 'Image preview unavailable';
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="640" viewBox="0 0 1024 640">',
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#02121f"/><stop offset="100%" stop-color="#0b1021"/></linearGradient></defs>',
+    '<rect width="1024" height="640" fill="url(#g)"/>',
+    '<circle cx="140" cy="110" r="150" fill="rgba(6,182,212,0.22)"/>',
+    '<circle cx="892" cy="560" r="210" fill="rgba(16,185,129,0.2)"/>',
+    '<rect x="72" y="72" width="880" height="496" rx="20" fill="rgba(2,6,23,0.6)" stroke="rgba(110,231,255,0.45)" stroke-width="2"/>',
+    '<text x="114" y="188" fill="#67e8f9" font-family="monospace" font-size="30">MULTIMODAL IMAGE FALLBACK</text>',
+    `<text x="114" y="276" fill="#d1fae5" font-family="monospace" font-size="34">${safeLabel}</text>`,
+    '<text x="114" y="342" fill="#86efac" font-family="monospace" font-size="22">Source image failed to load in browser. Showing safe local preview.</text>',
+    '</svg>'
+  ].join('');
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function handleTranscriptImageError(event: Event, line: TerminalLine): void {
+  const target = event.target;
+  if (!(target instanceof HTMLImageElement)) {
+    return;
+  }
+
+  if (target.dataset.fallbackApplied === '1') {
+    return;
+  }
+
+  const fallback = buildTranscriptImageFallback(line.imageAlt || line.text || 'Generated image');
+  target.dataset.fallbackApplied = '1';
+  target.src = fallback;
+  line.imageUrl = fallback;
+  persistActiveConversation();
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -1326,6 +1364,13 @@ function toggleTerminalExpanded(): void {
   transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
 }
 
+function handleGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && terminalExpanded.value) {
+    terminalExpanded.value = false;
+    transcriptHeight.value = clampTranscriptHeight(320);
+  }
+}
+
 async function resetPersonalization(): Promise<void> {
   personalization.resetPersonalization();
   await router.push('/onboarding?force=1&reset=1');
@@ -1670,6 +1715,7 @@ function removeWidget(widgetId: string): void {
 
 onMounted(async () => {
   await initializePersonalization();
+  window.addEventListener('keydown', handleGlobalKeydown);
 
   if (!blueprint.value) {
     return;
@@ -1684,6 +1730,10 @@ onMounted(async () => {
     addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
     addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown);
 });
 </script>
 
@@ -1805,7 +1855,14 @@ onMounted(async () => {
           </span>
           <div class="line-body">
             <span>{{ line.text }}</span>
-            <img v-if="line.imageUrl" class="line-media" :src="line.imageUrl" :alt="line.imageAlt || 'Generated image'" loading="lazy" />
+            <img
+              v-if="line.imageUrl"
+              class="line-media"
+              :src="line.imageUrl"
+              :alt="line.imageAlt || 'Generated image'"
+              loading="lazy"
+              @error="handleTranscriptImageError($event, line)"
+            />
           </div>
         </article>
       </div>
@@ -2246,6 +2303,11 @@ h1 {
 }
 
 .terminal-shell.expanded {
+  position: fixed;
+  inset: 0.8rem;
+  z-index: 56;
+  border-width: 2px;
+  background: color-mix(in srgb, var(--surface-main) 92%, black);
   box-shadow: 0 20px 46px rgba(2, 6, 23, 0.45);
 }
 
@@ -2300,6 +2362,10 @@ h1 {
   padding: 0.16rem 0.48rem;
   font-size: 0.68rem;
   letter-spacing: 0.04em;
+}
+
+.terminal-tool-btn:hover {
+  background: rgba(var(--accent-rgb), 0.3);
 }
 
 .conversation-actions {
@@ -2376,6 +2442,10 @@ h1 {
   display: grid;
   gap: 0.42rem;
   transition: max-height 0.2s ease;
+}
+
+.terminal-shell.expanded .transcript {
+  max-height: min(74vh, 920px);
 }
 
 .line {

@@ -308,6 +308,51 @@ function assistant_external_image_url(string $prompt): string
         . '?width=1024&height=1024&nologo=true&enhance=true&seed=' . rawurlencode($seed);
 }
 
+function assistant_fetch_image_as_data_uri(string $url, int $timeoutSeconds): string
+{
+    if (!preg_match('/^https?:\/\//i', $url)) {
+        return '';
+    }
+
+    $curl = curl_init($url);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
+        CURLOPT_CONNECTTIMEOUT => min(8, $timeoutSeconds),
+        CURLOPT_HTTPHEADER => [
+            'Accept: image/*,*/*;q=0.8',
+            'User-Agent: MySite-Assistant/1.0'
+        ]
+    ]);
+
+    $binary = curl_exec($curl);
+    if ($binary === false) {
+        curl_close($curl);
+        return '';
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $contentType = trim((string) curl_getinfo($curl, CURLINFO_CONTENT_TYPE));
+    curl_close($curl);
+
+    if ($statusCode >= 400 || $binary === '') {
+        return '';
+    }
+
+    $mime = strtolower(explode(';', $contentType)[0] ?? '');
+    if ($mime === '' || strpos($mime, 'image/') !== 0) {
+        $mime = 'image/jpeg';
+    }
+
+    $encoded = base64_encode((string) $binary);
+    if ($encoded === '') {
+        return '';
+    }
+
+    return 'data:' . $mime . ';base64,' . $encoded;
+}
+
 function assistant_generate_image(string $prompt, array $config, int $timeoutSeconds): array
 {
     $openAiConfig = is_array($config['openai'] ?? null) ? $config['openai'] : [];
@@ -315,11 +360,13 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     $apiKey = mysite_resolve_openai_api_key($config);
 
     if (!$enabled || $apiKey === '') {
+        $externalUrl = assistant_external_image_url($prompt);
+        $externalDataUri = assistant_fetch_image_as_data_uri($externalUrl, $timeoutSeconds);
         return [
-            'url' => assistant_external_image_url($prompt),
-            'source' => 'external',
-            'provider' => 'pollinations',
-            'model' => 'pollinations'
+            'url' => $externalDataUri !== '' ? $externalDataUri : assistant_image_placeholder_data_uri($prompt),
+            'source' => $externalDataUri !== '' ? 'external' : 'local',
+            'provider' => $externalDataUri !== '' ? 'pollinations' : 'fallback',
+            'model' => $externalDataUri !== '' ? 'pollinations' : 'placeholder'
         ];
     }
 
@@ -347,22 +394,26 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     $result = curl_exec($curl);
     if ($result === false) {
         curl_close($curl);
+        $externalUrl = assistant_external_image_url($prompt);
+        $externalDataUri = assistant_fetch_image_as_data_uri($externalUrl, $timeoutSeconds);
         return [
-            'url' => assistant_external_image_url($prompt),
-            'source' => 'external',
-            'provider' => 'pollinations',
-            'model' => 'pollinations'
+            'url' => $externalDataUri !== '' ? $externalDataUri : assistant_image_placeholder_data_uri($prompt),
+            'source' => $externalDataUri !== '' ? 'external' : 'local',
+            'provider' => $externalDataUri !== '' ? 'pollinations' : 'fallback',
+            'model' => $externalDataUri !== '' ? 'pollinations' : 'placeholder'
         ];
     }
 
     $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
     if ($statusCode >= 400) {
+        $externalUrl = assistant_external_image_url($prompt);
+        $externalDataUri = assistant_fetch_image_as_data_uri($externalUrl, $timeoutSeconds);
         return [
-            'url' => assistant_external_image_url($prompt),
-            'source' => 'external',
-            'provider' => 'pollinations',
-            'model' => 'pollinations'
+            'url' => $externalDataUri !== '' ? $externalDataUri : assistant_image_placeholder_data_uri($prompt),
+            'source' => $externalDataUri !== '' ? 'external' : 'local',
+            'provider' => $externalDataUri !== '' ? 'pollinations' : 'fallback',
+            'model' => $externalDataUri !== '' ? 'pollinations' : 'placeholder'
         ];
     }
 
@@ -376,11 +427,13 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
         $url = 'data:image/png;base64,' . $b64;
     }
     if ($url === '') {
+        $externalUrl = assistant_external_image_url($prompt);
+        $externalDataUri = assistant_fetch_image_as_data_uri($externalUrl, $timeoutSeconds);
         return [
-            'url' => assistant_external_image_url($prompt),
-            'source' => 'external',
-            'provider' => 'pollinations',
-            'model' => 'pollinations'
+            'url' => $externalDataUri !== '' ? $externalDataUri : assistant_image_placeholder_data_uri($prompt),
+            'source' => $externalDataUri !== '' ? 'external' : 'local',
+            'provider' => $externalDataUri !== '' ? 'pollinations' : 'fallback',
+            'model' => $externalDataUri !== '' ? 'pollinations' : 'placeholder'
         ];
     }
 
