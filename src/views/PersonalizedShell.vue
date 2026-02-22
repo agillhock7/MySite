@@ -1,38 +1,34 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import ModuleRenderer from '@/components/ModuleRenderer.vue';
-import AssistantDock from '@/components/AssistantDock.vue';
-import HoloBackdrop from '@/components/effects/HoloBackdrop.vue';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
-import { getDesignIteration, getOrCreateVisitorId } from '@/personalization/visitor';
+import { getOrCreateVisitorId } from '@/personalization/visitor';
 import { usePersonalizationStore } from '@/stores/personalization';
-import { useReducedMotion } from '@/composables/useReducedMotion';
-import { resolveExperienceSystem } from '@/design/experience';
+import { buildExperienceScene, type ExperiencePost } from '@/experience/session';
 import { hashText } from '@/utils/seed';
 
-interface VisualCard {
-  key: string;
-  title: string;
-  imageUrl: string;
-  href: string;
+interface TerminalLine {
+  id: number;
+  tone: 'system' | 'user' | 'signal';
+  text: string;
 }
 
 const router = useRouter();
 const personalization = usePersonalizationStore();
-const { prefersReducedMotion } = useReducedMotion();
 
 const initializing = ref(true);
 const initializationError = ref('');
 const wordpressError = ref('');
-const pointerX = ref(52);
-const pointerY = ref(36);
+const sceneNonce = ref(0);
+const forcedFocus = ref('');
+const commandInput = ref('');
+const transcriptRef = ref<HTMLElement | null>(null);
+const transcript = ref<TerminalLine[]>([]);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
-const assistantVariantNonce = getDesignIteration();
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -75,6 +71,41 @@ function firstStringArrayModuleProp(propName: string): string[] {
   return [];
 }
 
+function addLine(tone: TerminalLine['tone'], text: string): void {
+  transcript.value.push({
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    tone,
+    text
+  });
+
+  nextTick(() => {
+    if (!transcriptRef.value) {
+      return;
+    }
+
+    transcriptRef.value.scrollTop = transcriptRef.value.scrollHeight;
+  });
+}
+
+function isExternalUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+async function openAction(url: string): Promise<void> {
+  if (!url) {
+    return;
+  }
+
+  if (url.startsWith('/')) {
+    await router.push(url);
+    return;
+  }
+
+  if (isExternalUrl(url)) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
 async function initializePersonalization(): Promise<void> {
   initializing.value = true;
   initializationError.value = '';
@@ -90,12 +121,12 @@ async function initializePersonalization(): Promise<void> {
   }
 
   if (!wpBundle) {
-    wordpressError.value = 'WordPress fetch unavailable. Rendering from cached content when possible.';
+    wordpressError.value = 'WordPress fetch unavailable. Running from cached runtime content.';
   } else if (wpBundle.wordpress && !wpBundle.wordpress.available) {
     const firstError = wpBundle.wordpress.errors[0] ?? '';
     wordpressError.value = firstError
-      ? `WordPress REST fetch warning: ${firstError}`
-      : 'WordPress REST fetch warning: no posts returned.';
+      ? `WordPress REST warning: ${firstError}`
+      : 'WordPress REST warning: no posts were returned.';
   }
 
   if (!personalization.blueprint) {
@@ -107,9 +138,20 @@ async function initializePersonalization(): Promise<void> {
   initializing.value = false;
 }
 
+const brandName = computed(() => firstStringModuleProp('brandName') || 'Alexander Gill');
+const brandTagline = computed(() => firstStringModuleProp('brandTagline') || 'Power plays.');
+const brandBaseUrl = computed(() => firstStringModuleProp('brandBaseUrl') || 'https://alexanderjgill.com');
+const brandIconUrl = computed(
+  () => firstStringModuleProp('brandIconUrl') || 'https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png'
+);
+
 const focusTopics = computed(() => {
-  const topics = firstStringArrayModuleProp('focusTopics');
-  return topics.length > 0 ? topics.slice(0, 7) : ['Identity', 'Interests', 'Intent'];
+  const fromProps = firstStringArrayModuleProp('focusTopics');
+  if (fromProps.length > 0) {
+    return fromProps.slice(0, 6);
+  }
+
+  return ['Identity', 'Ideas', 'Momentum'];
 });
 
 const designSignature = computed(() => {
@@ -119,212 +161,99 @@ const designSignature = computed(() => {
   }
 
   if (!blueprint.value) {
-    return 'DESIGN00';
+    return 'SIG-0000';
   }
 
   const moduleIds = blueprint.value.modules.map((module) => module.id).join('|');
   return hashText(`${blueprint.value.createdAt}|${moduleIds}`).toString(36).toUpperCase().padStart(8, '0').slice(0, 8);
 });
 
-const experienceSystem = computed(() => {
-  if (!blueprint.value) {
-    return null;
+const goalSignal = computed(() => {
+  const heroTitle = firstStringModuleProp('title');
+  if (heroTitle) {
+    return heroTitle;
   }
 
-  return resolveExperienceSystem({
-    blueprint: blueprint.value,
-    signature: designSignature.value,
-    focusTopics: focusTopics.value,
-    hints: {
-      shellProfile: firstStringModuleProp('shellProfile'),
-      typographyProfile: firstStringModuleProp('typographyProfile'),
-      motionProfile: firstStringModuleProp('motionProfile'),
-      visualFx: firstStringModuleProp('visualFx'),
-      textureFx: firstStringModuleProp('textureFx'),
-      energyFx: firstStringModuleProp('energyFx'),
-      styleMotif: firstStringModuleProp('styleMotif')
-    },
-    reducedMotion: prefersReducedMotion.value
-  });
+  return 'Guide each visitor through a distinctive content journey.';
 });
 
-const modeClass = computed(() => (blueprint.value?.theme.mode === 'dark' ? 'mode-dark' : 'mode-light'));
-const toneClass = computed(() => `tone-${experienceSystem.value?.typographyProfile ?? 'grotesk'}`);
-const motionClass = computed(() => `motion-${experienceSystem.value?.motionProfile ?? 'balanced'}`);
-const shellProfileClass = computed(() => `profile-${experienceSystem.value?.shellProfile ?? 'editorial'}`);
-const experienceClass = computed(() => `experience-${experienceSystem.value?.experienceMode ?? 0}`);
-const fxClass = computed(() => `fx-${experienceSystem.value?.visualFx ?? 'neon'}`);
-const textureClass = computed(() => `texture-${experienceSystem.value?.textureFx ?? 'glass'}`);
-const energyClass = computed(() => `energy-${experienceSystem.value?.energyFx ?? 'balanced'}`);
-const motifClass = computed(() => `motif-${experienceSystem.value?.styleMotif ?? 'editorial'}`);
-const layoutClass = computed(() => `layout-nav-${blueprint.value?.layout.nav ?? 'top'}`);
+const posts = computed<ExperiencePost[]>(() => {
+  const featured = asRecord(getContentByKey('featuredGrid'));
+  const items = Array.isArray(featured?.items) ? featured.items : [];
 
-const ambientNodes = computed(() => experienceSystem.value?.ambientNodes ?? []);
-const ambientRings = computed(() => experienceSystem.value?.ambientRings ?? []);
-
-const brandName = computed(() => firstStringModuleProp('brandName') || 'Alexander Gill');
-const brandTagline = computed(() => firstStringModuleProp('brandTagline') || 'Power plays.');
-const brandBaseUrl = computed(() => firstStringModuleProp('brandBaseUrl') || 'https://alexanderjgill.com');
-const brandIconUrl = computed(
-  () => firstStringModuleProp('brandIconUrl') || 'https://alexanderjgill.com/wp-content/uploads/2025/09/A_icon_1_171f1f.png'
-);
-const brandSecondaryIconUrl = computed(
-  () =>
-    firstStringModuleProp('brandSecondaryIconUrl') ||
-    'https://alexanderjgill.com/wp-content/uploads/2025/09/cropped-darkhorsevirtueio_icon_1.png'
-);
-
-const brandSections = computed(() => {
-  const sections = firstStringArrayModuleProp('brandSections');
-  return sections.length > 0 ? sections.slice(0, 8) : ['Work', 'Lab', 'Read', 'Bio', 'Markets'];
-});
-
-const shellTitle = computed(() => experienceSystem.value?.shellTitle ?? 'Personalized Story Engine');
-const experienceLabel = computed(() => experienceSystem.value?.experienceLabel ?? 'EDITORIAL Chronicle');
-
-const wordpressStatus = computed(() => {
-  if (!blueprint.value) {
-    return '';
-  }
-
-  return 'Live post stream from alexanderjgill.com WordPress REST content.';
-});
-
-const shellStyle = computed(() => {
-  const system = experienceSystem.value;
-  const radius = system?.radius ?? 16;
-  const panelBlur = system?.panelBlur ?? 8;
-  const moduleGapRem = system?.moduleGapRem ?? 1.05;
-  const tiltY = ((pointerX.value - 50) / 50) * 1.8;
-  const tiltX = ((pointerY.value - 50) / 50) * -1.8;
-
-  return {
-    '--accent': blueprint.value?.theme.accent ?? '#0ea5e9',
-    '--radius': `${radius}px`,
-    '--panel-blur': `${panelBlur}px`,
-    '--module-gap': `${moduleGapRem}rem`,
-    '--pointer-x': `${pointerX.value}%`,
-    '--pointer-y': `${pointerY.value}%`,
-    '--tilt-x': `${tiltX.toFixed(3)}deg`,
-    '--tilt-y': `${tiltY.toFixed(3)}deg`
-  };
-});
-
-const navItems = computed(() => (blueprint.value?.shortcuts ?? []).slice(0, 8));
-
-const orderedModules = computed(() => {
-  const modules = blueprint.value?.modules ?? [];
-  return modules.map((module, index) => ({ module, index }));
-});
-
-const leadModuleEntry = computed(() => {
-  const hero = orderedModules.value.find((entry) => entry.module.type === 'Hero');
-  if (hero) {
-    return hero;
-  }
-
-  return orderedModules.value[0] ?? null;
-});
-
-const remainingModuleEntries = computed(() => {
-  if (!leadModuleEntry.value) {
-    return orderedModules.value;
-  }
-
-  return orderedModules.value.filter((entry) => entry.module.id !== leadModuleEntry.value?.module.id);
-});
-
-function isSupportType(type: string): boolean {
-  return type === 'QuickActions' || type === 'FAQ';
-}
-
-const supportModules = computed(() => remainingModuleEntries.value.filter((entry) => isSupportType(entry.module.type)));
-const featureModules = computed(() => remainingModuleEntries.value.filter((entry) => !isSupportType(entry.module.type)));
-
-const heroVisualCards = computed<VisualCard[]>(() => {
-  const rawFeatured = asRecord(getContentByKey('featuredGrid'));
-  const rawItems = Array.isArray(rawFeatured?.items) ? (rawFeatured?.items as unknown[]) : [];
-
-  const cards = rawItems
+  const mapped = items
     .map((entry, index) => {
       const item = asRecord(entry);
       if (!item) {
         return null;
       }
 
-      const title = typeof item.title === 'string' ? item.title.trim() : `Post ${index + 1}`;
-      const imageUrl = typeof item.imageUrl === 'string' ? item.imageUrl.trim() : '';
+      const id = String(item.id ?? `post-${index + 1}`);
+      const title = typeof item.title === 'string' ? item.title.trim() : '';
+      if (!title) {
+        return null;
+      }
+
+      const description = typeof item.description === 'string' ? item.description.trim() : 'No summary available yet.';
       const hrefRaw = typeof item.href === 'string' ? item.href.trim() : '';
       const canonical = typeof item.canonicalUrl === 'string' ? item.canonicalUrl.trim() : '';
       const href = hrefRaw || canonical || brandBaseUrl.value;
+      const imageUrl = typeof item.imageUrl === 'string' ? item.imageUrl.trim() : '';
+      const meta = typeof item.meta === 'string' ? item.meta.trim() : 'Live stream';
 
       return {
-        key: `${item.id ?? title}-${index}`,
+        id,
         title,
+        description,
+        href,
         imageUrl,
-        href
+        meta
       };
     })
-    .filter((item): item is VisualCard => item !== null)
-    .slice(0, 5);
+    .filter((item): item is ExperiencePost => item !== null)
+    .slice(0, 8);
 
-  if (cards.length > 0) {
-    return cards;
+  if (mapped.length > 0) {
+    return mapped;
   }
 
-  return focusTopics.value.slice(0, 4).map((topic, index) => ({
-    key: `${topic}-${index}`,
-    title: topic,
-    imageUrl: '',
-    href: brandBaseUrl.value
-  }));
+  return [
+    {
+      id: 'fallback-post',
+      title: 'Open alexanderjgill.com',
+      description: 'No feed detected in runtime cache. Open the source blog directly.',
+      href: brandBaseUrl.value,
+      imageUrl: '',
+      meta: 'Fallback stream'
+    }
+  ];
 });
 
-const posterTransforms = computed(() => experienceSystem.value?.posterTransforms ?? []);
+const shortcuts = computed(() => (blueprint.value?.shortcuts ?? []).slice(0, 6));
 
-function posterStyle(index: number): Record<string, string> {
-  const token = posterTransforms.value[index % posterTransforms.value.length];
-  if (!token || prefersReducedMotion.value) {
-    return {};
+const scene = computed(() =>
+  buildExperienceScene({
+    visitorId,
+    signature: designSignature.value,
+    goal: goalSignal.value,
+    topics: focusTopics.value,
+    posts: posts.value,
+    nonce: sceneNonce.value,
+    forcedFocus: forcedFocus.value
+  })
+);
+
+function parseFocusInput(input: string): string {
+  const words = input
+    .split(/[\s,]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2);
+
+  if (words.length === 0) {
+    return '';
   }
 
-  return {
-    '--poster-rotate': token.rotateDeg,
-    '--poster-lift': token.liftPx,
-    '--poster-scale': token.scale
-  };
-}
-
-function toBrandSectionUrl(section: string): string {
-  return `${brandBaseUrl.value}/#${section.toLowerCase()}`;
-}
-
-function isUrlAction(action: string): boolean {
-  return /^https?:\/\//i.test(action);
-}
-
-function handlePointerMove(event: PointerEvent): void {
-  if (prefersReducedMotion.value) {
-    return;
-  }
-
-  const target = event.currentTarget;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-
-  const rect = target.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return;
-  }
-
-  pointerX.value = ((event.clientX - rect.left) / rect.width) * 100;
-  pointerY.value = ((event.clientY - rect.top) / rect.height) * 100;
-}
-
-function handlePointerLeave(): void {
-  pointerX.value = 52;
-  pointerY.value = 36;
+  return words.slice(0, 2).join(' ');
 }
 
 async function resetPersonalization(): Promise<void> {
@@ -332,849 +261,507 @@ async function resetPersonalization(): Promise<void> {
   await router.push('/onboarding?force=1&reset=1');
 }
 
-async function openChatRefinement(): Promise<void> {
-  await router.push('/onboarding?force=1');
+async function handleCommand(raw: string): Promise<void> {
+  const input = raw.trim();
+  if (!input) {
+    return;
+  }
+
+  addLine('user', input);
+  commandInput.value = '';
+
+  if (input === '/help') {
+    addLine('system', 'Commands: /help, /shuffle, /focus <topic>, /open <1-3>, /clear, /reset');
+    return;
+  }
+
+  if (input === '/clear') {
+    transcript.value = [];
+    addLine('system', `Transcript cleared. ${scene.value.codename} remains active.`);
+    return;
+  }
+
+  if (input === '/shuffle') {
+    sceneNonce.value += 1;
+    forcedFocus.value = '';
+    addLine('signal', `Scene recompiled -> ${scene.value.codename}`);
+    return;
+  }
+
+  if (input.startsWith('/focus ')) {
+    const candidate = parseFocusInput(input.slice('/focus '.length));
+    if (!candidate) {
+      addLine('system', 'Focus command requires a topic. Example: /focus hockey');
+      return;
+    }
+
+    forcedFocus.value = candidate;
+    sceneNonce.value += 1;
+    addLine('signal', `Focus lane locked -> ${candidate}`);
+    return;
+  }
+
+  if (input.startsWith('/open ')) {
+    const token = input.slice('/open '.length).trim();
+    const index = Number.parseInt(token, 10) - 1;
+    const track = scene.value.tracks[index];
+    if (!track) {
+      addLine('system', 'Track not found. Use /open 1, /open 2, or /open 3.');
+      return;
+    }
+
+    addLine('signal', `Opening ${track.label}...`);
+    await openAction(track.ctaHref);
+    return;
+  }
+
+  if (input === '/reset') {
+    addLine('system', 'Resetting personalization and returning to onboarding terminal...');
+    await resetPersonalization();
+    return;
+  }
+
+  const inferredFocus = parseFocusInput(input);
+  if (inferredFocus) {
+    forcedFocus.value = inferredFocus;
+    sceneNonce.value += 1;
+    addLine('signal', `Captured signal -> ${inferredFocus}. Scene updated.`);
+    return;
+  }
+
+  sceneNonce.value += 1;
+  addLine('signal', 'Signal captured. Try /help for direct commands.');
 }
 
 onMounted(async () => {
   await initializePersonalization();
+
+  if (!blueprint.value) {
+    return;
+  }
+
+  addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
+  addLine('system', scene.value.mission);
+  addLine('signal', scene.value.pulse);
+  addLine('system', 'Type /help to control your experience stream.');
 });
 </script>
 
 <template>
-  <main v-if="initializing" class="booting-shell">
-    <section class="boot-card">
-      <p>Composing a fresh personalized interface from live post signals...</p>
+  <main v-if="initializing" class="experience-root loading-root">
+    <section class="loading-card">
+      <p>Booting visitor experience terminal...</p>
     </section>
   </main>
 
-  <main
-    v-else-if="blueprint"
-    class="shell"
-    :class="[
-      modeClass,
-      toneClass,
-      motionClass,
-      shellProfileClass,
-      experienceClass,
-      fxClass,
-      textureClass,
-      energyClass,
-      motifClass,
-      layoutClass,
-      prefersReducedMotion ? 'reduced-motion' : ''
-    ]"
-    :style="shellStyle"
-    @pointermove="handlePointerMove"
-    @pointerleave="handlePointerLeave"
-  >
-    <div class="ambient-layer" aria-hidden="true">
-      <HoloBackdrop
-        class="holo-layer"
-        :accent="blueprint.theme.accent"
-        :seed="experienceSystem?.visualSeed ?? 0"
-        :reduced-motion="prefersReducedMotion"
-      />
-      <span class="ambient-grid"></span>
-      <span class="ambient-noise"></span>
-      <span
-        v-for="ring in ambientRings"
-        :key="ring.key"
-        class="ambient-ring"
-        :style="{
-          width: ring.size,
-          height: ring.size,
-          left: ring.left,
-          top: ring.top,
-          opacity: ring.opacity,
-          transform: `translate(-50%, -50%) rotate(${ring.rotate})`,
-          animationDuration: ring.duration
-        }"
-      ></span>
-      <span
-        v-for="node in ambientNodes"
-        :key="node.key"
-        class="ambient-node"
-        :class="node.blendClass"
-        :style="{
-          width: node.size,
-          height: node.size,
-          left: node.left,
-          top: node.top,
-          opacity: node.opacity,
-          animationDuration: node.duration,
-          animationDelay: node.delay
-        }"
-      ></span>
-      <span class="ambient-sweep"></span>
-    </div>
-
-    <header class="command-header">
-      <a class="brand-lockup" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
-        <img class="brand-primary-icon" :src="brandIconUrl" alt="" loading="lazy" />
-        <span class="brand-lockup-text">
+  <main v-else-if="blueprint" class="experience-root">
+    <header class="topbar">
+      <a class="brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
+        <img :src="brandIconUrl" alt="" loading="lazy" />
+        <span>
           <strong>{{ brandName }}</strong>
           <em>{{ brandTagline }}</em>
         </span>
-        <img class="brand-secondary-icon" :src="brandSecondaryIconUrl" alt="" loading="lazy" />
       </a>
 
-      <div class="header-meta">
-        <p class="eyebrow">{{ experienceLabel }} · Signature {{ designSignature }} · {{ BUILD_TAG }}</p>
-        <h1>{{ shellTitle }}</h1>
-        <p class="source-note">{{ wordpressStatus }}</p>
-        <p class="persona-note">Designed around: {{ focusTopics.join(' · ') }}</p>
-        <p v-if="initializationError" class="fallback-note">{{ initializationError }}</p>
-        <p v-if="wordpressError" class="fallback-note">{{ wordpressError }}</p>
-      </div>
-
-      <div class="header-actions">
-        <button type="button" class="secondary-btn" @click="openChatRefinement">Refine With Chat</button>
-        <button type="button" class="reset-btn" @click="resetPersonalization">Reset Personalization</button>
+      <div class="topbar-meta">
+        <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
+        <button type="button" @click="resetPersonalization">Reset Personalization</button>
       </div>
     </header>
 
-    <section class="hero-stage">
-      <article class="identity-card">
-        <p class="identity-title">Experience DNA</p>
-        <div class="topic-cluster" aria-label="Personalization topics">
-          <span v-for="topic in focusTopics" :key="topic" class="topic-chip">{{ topic }}</span>
-        </div>
-
-        <div class="brand-rail" aria-label="Brand sections">
-          <a
-            v-for="section in brandSections"
-            :key="section"
-            class="brand-section-chip"
-            :href="toBrandSectionUrl(section)"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {{ section }}
-          </a>
-        </div>
+    <section class="mission-shell">
+      <article class="mission-card">
+        <p class="mission-kicker">Mission Brief</p>
+        <h1>{{ scene.mission }}</h1>
+        <p class="voice-line">{{ scene.voice }}</p>
+        <p class="pulse-line">{{ scene.pulse }}</p>
+        <p v-if="wordpressError" class="warning-line">{{ wordpressError }}</p>
+        <p v-if="initializationError" class="warning-line">{{ initializationError }}</p>
       </article>
 
-      <article class="artboard-card">
-        <p class="identity-title">Live Post Canvas</p>
-        <div class="poster-grid" :class="`count-${heroVisualCards.length}`">
-          <a
-            v-for="(card, idx) in heroVisualCards"
-            :key="card.key"
-            class="poster-card"
-            :class="`poster-${(idx % 5) + 1}`"
-            :style="posterStyle(idx)"
-            :href="card.href"
-            :target="isUrlAction(card.href) ? '_blank' : '_self'"
-            :rel="isUrlAction(card.href) ? 'noopener noreferrer' : undefined"
-          >
-            <img v-if="card.imageUrl" :src="card.imageUrl" alt="" loading="lazy" />
-            <div v-else class="poster-fallback" aria-hidden="true">
-              <span>{{ card.title.slice(0, 28) }}</span>
-            </div>
-            <p>{{ card.title }}</p>
-          </a>
-        </div>
+      <article class="prompt-card">
+        <p class="mission-kicker">Prompt Suggestions</p>
+        <ul>
+          <li v-for="prompt in scene.prompts" :key="prompt">{{ prompt }}</li>
+        </ul>
       </article>
     </section>
 
-    <nav v-if="blueprint.layout.nav !== 'none'" class="shell-nav" :class="`nav-${blueprint.layout.nav}`">
-      <template v-for="item in navItems" :key="item.action">
-        <a
-          v-if="isUrlAction(item.action)"
-          :href="item.action"
-          class="nav-item"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {{ item.label }}
-        </a>
-        <button v-else type="button" class="nav-item">
-          {{ item.label }}
-        </button>
-      </template>
-    </nav>
-
-    <section class="module-stage">
-      <article v-if="leadModuleEntry" class="lead-slot" :style="{ '--stagger': '0ms' }">
-        <ModuleRenderer :module="leadModuleEntry.module" :shortcuts="blueprint.shortcuts" />
-      </article>
-
-      <div class="module-columns">
-        <div class="feature-stack">
-          <article
-            v-for="(entry, idx) in featureModules"
-            :key="entry.module.id"
-            class="module-slot"
-            :class="[`slot-type-${entry.module.type}`, idx % 2 === 0 ? 'slot-left' : 'slot-right']"
-            :style="{ '--stagger': `${90 + idx * 80}ms` }"
-          >
-            <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
-          </article>
-        </div>
-
-        <aside v-if="supportModules.length > 0" class="support-stack">
-          <article
-            v-for="(entry, idx) in supportModules"
-            :key="entry.module.id"
-            class="module-slot support-slot"
-            :class="`slot-type-${entry.module.type}`"
-            :style="{ '--stagger': `${120 + idx * 90}ms` }"
-          >
-            <ModuleRenderer :module="entry.module" :shortcuts="blueprint.shortcuts" />
-          </article>
-        </aside>
+    <section class="terminal-shell">
+      <div ref="transcriptRef" class="transcript" aria-live="polite">
+        <p v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
+          <span class="glyph">{{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : '$' }}</span>
+          {{ line.text }}
+        </p>
       </div>
+
+      <form class="command-row" @submit.prevent="handleCommand(commandInput)">
+        <span class="glyph">></span>
+        <input
+          v-model="commandInput"
+          type="text"
+          autocomplete="off"
+          placeholder="Type command or intent, then press Enter"
+        />
+      </form>
     </section>
 
-    <AssistantDock
-      :visitor-id="visitorId"
-      :variant-nonce="assistantVariantNonce"
-      :design-signature="designSignature"
-    />
+    <section class="tracks-grid">
+      <article v-for="track in scene.tracks" :key="track.id" class="track-card">
+        <p class="track-signal">{{ track.signal }}</p>
+        <h2>{{ track.label }}</h2>
+        <p>{{ track.summary }}</p>
+        <button type="button" @click="openAction(track.ctaHref)">{{ track.ctaLabel }}</button>
+      </article>
+    </section>
+
+    <section class="content-stream">
+      <article v-for="post in posts" :key="post.id" class="post-row">
+        <img v-if="post.imageUrl" :src="post.imageUrl" alt="" loading="lazy" />
+        <div>
+          <p class="post-meta">{{ post.meta }}</p>
+          <h3>{{ post.title }}</h3>
+          <p>{{ post.description }}</p>
+          <a :href="post.href" :target="isExternalUrl(post.href) ? '_blank' : '_self'" :rel="isExternalUrl(post.href) ? 'noopener noreferrer' : undefined">Open</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="shortcut-row">
+      <a
+        v-for="shortcut in shortcuts"
+        :key="`${shortcut.label}:${shortcut.action}`"
+        class="shortcut-chip"
+        :href="shortcut.action"
+        :target="isExternalUrl(shortcut.action) ? '_blank' : '_self'"
+        :rel="isExternalUrl(shortcut.action) ? 'noopener noreferrer' : undefined"
+      >
+        {{ shortcut.label }}
+      </a>
+    </section>
   </main>
 </template>
 
 <style scoped>
-.booting-shell {
+.experience-root {
   min-height: 100vh;
+  background:
+    radial-gradient(circle at 90% -16%, rgba(16, 185, 129, 0.2), transparent 42%),
+    radial-gradient(circle at -12% 88%, rgba(14, 165, 233, 0.15), transparent 50%),
+    #000000;
+  color: #d1fae5;
+  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+  padding: 1rem;
+}
+
+.loading-root {
   display: grid;
   place-items: center;
-  background: #03060f;
-  color: #dbeafe;
-  padding: 1rem;
 }
 
-.boot-card {
-  border: 1px solid #1e2a45;
+.loading-card {
+  border: 1px solid #1f2937;
   border-radius: 14px;
-  background: #0d1524;
-  padding: 1rem 1.25rem;
+  padding: 0.95rem 1rem;
+  background: #040404;
 }
 
-.shell {
-  position: relative;
-  overflow: hidden;
-  min-height: 100vh;
-  padding: 1rem 1rem 15rem;
-  font-family: var(--shell-font, 'Sora', 'Avenir Next', 'Segoe UI', sans-serif);
-  color: var(--text-primary);
-  background: var(--bg);
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: rgba(3, 7, 18, 0.78);
+  padding: 0.8rem 0.9rem;
 }
 
-.ambient-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.holo-layer {
-  position: absolute;
-  inset: 0;
-  opacity: 0.72;
-}
-
-.ambient-grid {
-  position: absolute;
-  inset: 0;
-  opacity: 0.26;
-  background:
-    linear-gradient(transparent 96%, color-mix(in srgb, var(--accent) 26%, transparent) 100%),
-    linear-gradient(90deg, transparent 96%, color-mix(in srgb, var(--accent) 20%, transparent) 100%);
-  background-size: 100% 32px, 32px 100%;
-  mask-image: radial-gradient(circle at var(--pointer-x) var(--pointer-y), black, transparent 85%);
-}
-
-.ambient-noise {
-  position: absolute;
-  inset: 0;
-  opacity: 0.1;
-  background-image:
-    radial-gradient(circle at 12% 22%, rgba(255, 255, 255, 0.18) 0, transparent 1.5px),
-    radial-gradient(circle at 86% 37%, rgba(255, 255, 255, 0.16) 0, transparent 1.6px),
-    radial-gradient(circle at 44% 74%, rgba(255, 255, 255, 0.12) 0, transparent 1.5px);
-  background-size: 160px 160px, 150px 150px, 130px 130px;
-}
-
-.ambient-node {
-  position: absolute;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 42%, transparent);
-  filter: blur(16px);
-  transform: translate(-50%, -50%);
-  animation: breathe 15s ease-in-out infinite alternate;
-}
-
-.ambient-ring {
-  position: absolute;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
-  animation: spin-slow 24s linear infinite;
-}
-
-.blend-screen {
-  mix-blend-mode: screen;
-}
-
-.blend-overlay {
-  mix-blend-mode: overlay;
-}
-
-.blend-plus {
-  mix-blend-mode: plus-lighter;
-}
-
-.ambient-sweep {
-  position: absolute;
-  inset: -20% -20% auto -20%;
-  height: 56%;
-  background: radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 24%, transparent), transparent 58%);
-  opacity: 0.75;
-}
-
-.mode-light {
-  --bg:
-    radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 12%, transparent), transparent 46%),
-    linear-gradient(150deg, #f6f9ff, #e9f2ff 42%, #f5f8ff);
-  --surface: rgba(255, 255, 255, 0.9);
-  --surface-muted: #e8f1ff;
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --border: #cbd5e1;
-}
-
-.mode-dark {
-  --bg:
-    radial-gradient(circle at var(--pointer-x) var(--pointer-y), color-mix(in srgb, var(--accent) 19%, transparent), transparent 44%),
-    linear-gradient(165deg, #040a17, #08132a 45%, #0c1d3a 100%);
-  --surface: rgba(12, 22, 43, 0.84);
-  --surface-muted: rgba(25, 39, 70, 0.9);
-  --text-primary: #e5edf7;
-  --text-secondary: #93a7c9;
-  --border: #2a3c63;
-}
-
-.tone-grotesk {
-  --shell-font: 'Sora', 'Avenir Next', sans-serif;
-}
-
-.tone-literary {
-  --shell-font: 'Iowan Old Style', 'Baskerville', serif;
-}
-
-.tone-display {
-  --shell-font: 'Bebas Neue', 'Franklin Gothic Medium', sans-serif;
-}
-
-.tone-mono {
-  --shell-font: 'IBM Plex Mono', 'Fira Code', monospace;
-}
-
-.command-header,
-.hero-stage,
-.shell-nav,
-.module-stage {
-  position: relative;
-  z-index: 2;
-}
-
-.command-header,
-.hero-stage {
-  transform: perspective(1400px) rotateX(var(--tilt-x)) rotateY(var(--tilt-y));
-  transform-style: preserve-3d;
-}
-
-.command-header {
-  position: relative;
-  display: grid;
-  gap: 0.85rem;
-  border-radius: calc(var(--radius) + 6px);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  background:
-    linear-gradient(
-      138deg,
-      color-mix(in srgb, var(--accent) 10%, var(--surface)),
-      color-mix(in srgb, var(--surface) 88%, transparent)
-    );
-  backdrop-filter: blur(var(--panel-blur));
-  padding: 1rem;
-  overflow: hidden;
-}
-
-.command-header::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  background:
-    conic-gradient(
-      from 0deg at 50% 50%,
-      color-mix(in srgb, var(--accent) 56%, transparent),
-      transparent 22%,
-      color-mix(in srgb, var(--accent) 38%, transparent) 36%,
-      transparent 52%,
-      color-mix(in srgb, var(--accent) 44%, transparent) 68%,
-      transparent 84%,
-      color-mix(in srgb, var(--accent) 56%, transparent)
-    );
-  filter: blur(18px);
-  opacity: 0.22;
-  animation: spin-halo 14s linear infinite;
-  pointer-events: none;
-}
-
-.command-header > * {
-  position: relative;
-  z-index: 1;
-}
-
-.brand-lockup {
+.brand {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  width: fit-content;
-  text-decoration: none;
   color: inherit;
+  text-decoration: none;
 }
 
-.brand-primary-icon,
-.brand-secondary-icon {
+.brand img {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
-  object-fit: cover;
+  border: 1px solid #334155;
 }
 
-.brand-lockup-text {
+.brand span {
   display: grid;
   line-height: 1.02;
 }
 
-.brand-lockup-text strong {
+.brand strong {
   font-size: 0.82rem;
-  letter-spacing: 0.08em;
   text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
-.brand-lockup-text em {
+.brand em {
   font-style: normal;
   font-size: 0.72rem;
-  color: color-mix(in srgb, var(--accent) 82%, var(--text-secondary));
+  color: #67e8f9;
 }
 
-.header-meta {
-  min-width: 0;
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  font-size: 0.76rem;
-}
-
-h1 {
-  margin: 0.2rem 0 0;
-  font-size: clamp(1.45rem, 4.8vw, 2.8rem);
-  line-height: 1.03;
-  text-wrap: balance;
-}
-
-.source-note,
-.persona-note,
-.fallback-note {
-  margin: 0.35rem 0 0;
-  color: var(--text-secondary);
-}
-
-.persona-note {
-  color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary));
-}
-
-.fallback-note {
-  color: color-mix(in srgb, var(--accent) 86%, var(--text-secondary));
-  font-size: 0.86rem;
-}
-
-.header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.52rem;
-}
-
-.secondary-btn,
-.reset-btn {
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, var(--border));
-  border-radius: 999px;
-  background:
-    linear-gradient(
-      140deg,
-      color-mix(in srgb, var(--accent) 16%, var(--surface)),
-      color-mix(in srgb, var(--surface) 92%, transparent)
-    );
-  color: var(--text-primary);
-  padding: 0.52rem 0.9rem;
-}
-
-.hero-stage {
-  margin-top: 0.95rem;
+.topbar-meta {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.4rem;
+  justify-items: end;
 }
 
-.identity-card,
-.artboard-card {
-  border-radius: calc(var(--radius) + 2px);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
-  background:
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--accent) 8%, var(--surface)),
-      color-mix(in srgb, var(--surface) 90%, transparent)
-    );
-  padding: 0.9rem;
-  backdrop-filter: blur(var(--panel-blur));
-}
-
-.identity-title {
+.topbar-meta p {
   margin: 0;
-  font-size: 0.76rem;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--accent) 86%, var(--text-secondary));
-}
-
-.topic-cluster {
-  margin-top: 0.55rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.topic-chip {
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  padding: 0.24rem 0.56rem;
-  font-size: 0.7rem;
-  text-transform: uppercase;
+  color: #86efac;
+  font-size: 0.74rem;
   letter-spacing: 0.06em;
 }
 
-.brand-rail {
-  margin-top: 0.62rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.brand-section-chip {
-  text-decoration: none;
-  color: inherit;
+.topbar-meta button {
+  border: 1px solid #134e4a;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
-  padding: 0.24rem 0.56rem;
-  font-size: 0.7rem;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  background: #022c22;
+  color: #99f6e4;
+  padding: 0.38rem 0.75rem;
 }
 
-.poster-grid {
-  margin-top: 0.58rem;
+.mission-shell {
+  margin-top: 0.85rem;
   display: grid;
-  gap: 0.5rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
 }
 
-.poster-card {
-  --poster-rotate: 0deg;
-  --poster-lift: 0px;
-  --poster-scale: 1;
-  position: relative;
-  border-radius: 12px;
-  overflow: hidden;
-  min-height: 114px;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
-  text-decoration: none;
-  color: inherit;
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  transform: translateY(var(--poster-lift)) rotate(var(--poster-rotate)) scale(var(--poster-scale));
-  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+.mission-card,
+.prompt-card {
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.82);
+  padding: 0.9rem;
 }
 
-.poster-card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
-  box-shadow: 0 12px 22px color-mix(in srgb, var(--accent) 20%, transparent);
-}
-
-.poster-card img,
-.poster-fallback {
-  width: 100%;
-  height: 100%;
-  min-height: 114px;
-  object-fit: cover;
-}
-
-.poster-fallback {
-  display: grid;
-  place-items: center;
-  padding: 0.8rem;
-  text-align: center;
-  background:
-    radial-gradient(circle at 18% 18%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 44%),
-    linear-gradient(145deg, color-mix(in srgb, var(--accent) 24%, #0b1222), #0f172a 60%, #111827);
-}
-
-.poster-fallback span {
-  color: color-mix(in srgb, var(--accent) 32%, #ffffff);
-  font-size: 0.85rem;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.poster-card p {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+.mission-kicker {
   margin: 0;
-  padding: 0.42rem 0.52rem;
-  font-size: 0.75rem;
-  line-height: 1.3;
-  color: #ffffff;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0));
+  font-size: 0.73rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: #67e8f9;
 }
 
+h1 {
+  margin: 0.38rem 0 0;
+  font-size: clamp(1.2rem, 3.5vw, 2rem);
+  line-height: 1.08;
+}
 
-.shell-nav {
-  margin-top: 0.9rem;
+.voice-line,
+.pulse-line,
+.warning-line {
+  margin: 0.45rem 0 0;
+  color: #86efac;
+}
+
+.warning-line {
+  color: #fca5a5;
+}
+
+.prompt-card ul {
+  margin: 0.55rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+  color: #a7f3d0;
+}
+
+.terminal-shell {
+  margin-top: 0.85rem;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: #020617;
+  overflow: hidden;
+}
+
+.transcript {
+  max-height: 240px;
+  overflow: auto;
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.line {
+  margin: 0;
+  display: flex;
+  gap: 0.48rem;
+  align-items: flex-start;
+  font-size: 0.92rem;
+}
+
+.tone-system {
+  color: #bbf7d0;
+}
+
+.tone-user {
+  color: #e2e8f0;
+}
+
+.tone-signal {
+  color: #67e8f9;
+}
+
+.glyph {
+  color: #10b981;
+  min-width: 0.8rem;
+}
+
+.command-row {
+  border-top: 1px solid #0f172a;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.75rem 0.85rem;
+}
+
+.command-row input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #d1fae5;
+}
+
+.command-row input::placeholder {
+  color: #64748b;
+}
+
+.tracks-grid {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.68rem;
+  grid-template-columns: 1fr;
+}
+
+.track-card {
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  background: rgba(3, 7, 18, 0.84);
+  padding: 0.85rem;
+}
+
+.track-signal {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.track-card h2 {
+  margin: 0.35rem 0 0;
+  font-size: 1rem;
+}
+
+.track-card p {
+  margin: 0.4rem 0 0;
+  color: #a7f3d0;
+}
+
+.track-card button {
+  margin-top: 0.62rem;
+  border: 1px solid #134e4a;
+  border-radius: 999px;
+  background: #022c22;
+  color: #99f6e4;
+  padding: 0.34rem 0.72rem;
+}
+
+.content-stream {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.post-row {
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.82);
+  padding: 0.7rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.post-row img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #334155;
+}
+
+.post-meta {
+  margin: 0;
+  color: #67e8f9;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.post-row h3 {
+  margin: 0.32rem 0 0;
+  font-size: 1rem;
+}
+
+.post-row p {
+  margin: 0.35rem 0 0;
+  color: #a7f3d0;
+}
+
+.post-row a {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: #bbf7d0;
+  text-decoration: none;
+  border-bottom: 1px dashed #67e8f9;
+}
+
+.shortcut-row {
+  margin-top: 0.85rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
 }
 
-.nav-item {
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
-  border-radius: 999px;
-  background:
-    linear-gradient(
-      140deg,
-      color-mix(in srgb, var(--accent) 12%, var(--surface)),
-      color-mix(in srgb, var(--surface) 90%, transparent)
-    );
-  color: inherit;
+.shortcut-chip {
   text-decoration: none;
-  padding: 0.45rem 0.8rem;
-  font-size: 0.84rem;
+  color: #99f6e4;
+  border: 1px solid #134e4a;
+  border-radius: 999px;
+  background: #052e2b;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.78rem;
 }
 
-.module-stage {
-  margin-top: 1rem;
-  display: grid;
-  gap: var(--module-gap);
-}
-
-.lead-slot,
-.module-slot {
-  animation: rise-in 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  animation-delay: var(--stagger, 0ms);
-}
-
-.lead-slot :deep(.hero-module) {
-  border-radius: calc(var(--radius) + 8px);
-}
-
-.module-columns {
-  display: grid;
-  gap: var(--module-gap);
-}
-
-.feature-stack,
-.support-stack {
-  display: grid;
-  gap: var(--module-gap);
-}
-
-.slot-left {
-  transform-origin: left center;
-}
-
-.slot-right {
-  transform-origin: right center;
-}
-
-.layout-nav-side .shell-nav.nav-side {
-  border-radius: calc(var(--radius) + 2px);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
-  padding: 0.6rem;
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
-}
-
-.profile-atlas .poster-grid,
-.profile-spectral .poster-grid,
-.profile-orbital .poster-grid {
-  grid-auto-flow: dense;
-}
-
-.profile-atlas .poster-1,
-.profile-spectral .poster-3 {
-  grid-column: span 2;
-}
-
-.profile-neo .command-header {
-  border-width: 2px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
-}
-
-.profile-glass .command-header,
-.profile-glass .identity-card,
-.profile-glass .artboard-card {
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
-  backdrop-filter: blur(calc(var(--panel-blur) + 3px));
-}
-
-.reduced-motion .command-header,
-.reduced-motion .hero-stage {
-  transform: none;
-}
-
-.fx-matrix .ambient-grid {
-  opacity: 0.46;
-}
-
-.fx-prism .ambient-node {
-  border-radius: 36% 64% 56% 44%;
-}
-
-.fx-zen .ambient-node {
-  opacity: 0.22;
-}
-
-.texture-grain .ambient-noise {
-  opacity: 0.18;
-}
-
-.texture-soft .ambient-grid {
-  opacity: 0.14;
-}
-
-.energy-high .ambient-node {
-  animation-duration: 10s;
-}
-
-.energy-low .ambient-node {
-  animation-duration: 24s;
-  opacity: 0.24;
-}
-
-.motion-calm .lead-slot,
-.motion-calm .module-slot {
-  animation-duration: 780ms;
-}
-
-.motion-kinetic .lead-slot,
-.motion-kinetic .module-slot {
-  animation-duration: 420ms;
-}
-
-.experience-1 .module-columns {
-  align-items: start;
-}
-
-.experience-2 .lead-slot :deep(.hero-module) {
-  border-style: dashed;
-}
-
-.reduced-motion .ambient-node,
-.reduced-motion .ambient-ring,
-.reduced-motion .module-slot,
-.reduced-motion .lead-slot,
-.reduced-motion .poster-card {
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
-}
-
-.reduced-motion .command-header::before {
-  animation: none;
-}
-
-@keyframes breathe {
-  from {
-    transform: translate(-50%, -50%) scale(0.9);
-  }
-  to {
-    transform: translate(-50%, -50%) scale(1.08);
-  }
-}
-
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes spin-slow {
-  from {
-    transform: translate(-50%, -50%) rotate(0deg);
-  }
-  to {
-    transform: translate(-50%, -50%) rotate(360deg);
-  }
-}
-
-@keyframes spin-halo {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (min-width: 900px) {
-  .shell {
-    padding: 1.2rem 2rem 6.5rem;
+@media (min-width: 860px) {
+  .experience-root {
+    padding: 1.2rem 1.8rem 2rem;
   }
 
-  .command-header {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 1rem;
+  .mission-shell {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr);
   }
 
-  .hero-stage {
-    grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.1fr);
-    align-items: stretch;
+  .tracks-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .shell-nav.nav-side {
-    width: 340px;
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .shell-nav.nav-side .nav-item {
-    width: 100%;
-  }
-
-  .module-columns {
-    grid-template-columns: minmax(0, 1fr) 320px;
-    align-items: start;
-  }
-
-  .support-stack {
-    position: sticky;
-    top: 96px;
+  .content-stream {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
