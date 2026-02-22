@@ -39,6 +39,7 @@ if (!is_array($parts)) {
 $host = strtolower(trim((string) ($parts['host'] ?? '')));
 $allowedHosts = [
     'image.pollinations.ai',
+    'picsum.photos',
     'files.oaiusercontent.com',
     'oaidalleapiprodscus.blob.core.windows.net'
 ];

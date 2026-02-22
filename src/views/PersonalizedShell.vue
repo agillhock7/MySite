@@ -97,6 +97,7 @@ const transcriptHeight = ref(320);
 const imageRenderPending = ref(false);
 const imageRenderPrompt = ref('');
 const mediaLoadState = ref<Record<number, 'loading' | 'ready' | 'error'>>({});
+const blobMediaUrls = ref<string[]>([]);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -177,21 +178,151 @@ function isImageConversationRequest(message: string): boolean {
   return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|thumbnail|portrait)\b/i.test(message);
 }
 
-function resolveAssistantMediaUrl(url: string): string {
+function buildExternalImagePromptUrl(prompt: string): string {
+  const cleanPrompt = prompt.replace(/\s+/g, ' ').trim() || 'futuristic editorial portrait with cinematic lighting';
+  const seed = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(cleanPrompt)}?width=1024&height=1024&nologo=true&enhance=true&seed=${encodeURIComponent(seed)}`;
+}
+
+function buildStockImageFallbackUrl(prompt: string): string {
+  const seed = hashText(prompt.replace(/\s+/g, ' ').trim() || 'mysite-visual').toString(36);
+  return `https://picsum.photos/seed/${encodeURIComponent(seed)}/1024/1024`;
+}
+
+function rememberBlobUrl(url: string): void {
+  if (!url.startsWith('blob:')) {
+    return;
+  }
+  blobMediaUrls.value.push(url);
+}
+
+function canRenderImageUrl(url: string, timeoutMs = 9000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+
+    const done = (value: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(value);
+    };
+
+    const timer = window.setTimeout(() => done(false), timeoutMs);
+    image.onload = () => done(true);
+    image.onerror = () => done(false);
+    image.referrerPolicy = 'no-referrer';
+    image.src = url;
+  });
+}
+
+async function fetchImageThroughProxy(sourceUrl: string): Promise<string | null> {
+  const target = sourceUrl.trim();
+  if (!target) {
+    return null;
+  }
+
+  const proxyUrl = `/api/ai/image-proxy.php?url=${encodeURIComponent(target)}`;
+  try {
+    const response = await fetch(proxyUrl, {
+      method: 'GET',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      return null;
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().includes('image/')) {
+      return null;
+    }
+
+    const blob = await response.blob();
+    if (blob.size === 0) {
+      return null;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    rememberBlobUrl(objectUrl);
+    return objectUrl;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAssistantMediaUrl(url: string, promptContext: string): Promise<string> {
   const cleaned = url.trim();
   if (!cleaned) {
+    return buildTranscriptImageFallback(promptContext);
+  }
+
+  try {
+    if (cleaned.startsWith('data:image/') && !cleaned.startsWith('data:image/svg+xml')) {
+      return cleaned;
+    }
+
+    if (cleaned.startsWith('/api/ai/image-proxy.php?')) {
+      const proxied = await fetch(cleaned, { method: 'GET', cache: 'no-store' });
+      if (!proxied.ok) {
+        return buildTranscriptImageFallback(promptContext);
+      }
+      const type = proxied.headers.get('content-type') ?? '';
+      if (!type.toLowerCase().includes('image/')) {
+        return buildTranscriptImageFallback(promptContext);
+      }
+      const blob = await proxied.blob();
+      if (!blob.size) {
+        return buildTranscriptImageFallback(promptContext);
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      rememberBlobUrl(objectUrl);
+      return objectUrl;
+    }
+
+    if (/^https:\/\//i.test(cleaned)) {
+      if (await canRenderImageUrl(cleaned)) {
+        return cleaned;
+      }
+      const proxied = await fetchImageThroughProxy(cleaned);
+      if (proxied) {
+        return proxied;
+      }
+      return ensureGeneratedImageForPrompt(promptContext);
+    }
+
+    if (cleaned.startsWith('data:image/svg+xml')) {
+      const generated = await ensureGeneratedImageForPrompt(promptContext);
+      return generated || cleaned;
+    }
+
     return cleaned;
+  } catch {
+    return buildTranscriptImageFallback(promptContext);
+  }
+}
+
+async function ensureGeneratedImageForPrompt(prompt: string): Promise<string> {
+  const externalUrl = buildExternalImagePromptUrl(prompt);
+  if (await canRenderImageUrl(externalUrl)) {
+    return externalUrl;
+  }
+  const proxied = await fetchImageThroughProxy(externalUrl);
+  if (proxied) {
+    return proxied;
   }
 
-  if (cleaned.startsWith('data:image/')) {
-    return cleaned;
+  const stockUrl = buildStockImageFallbackUrl(prompt);
+  if (await canRenderImageUrl(stockUrl)) {
+    return stockUrl;
+  }
+  const proxiedStock = await fetchImageThroughProxy(stockUrl);
+  if (proxiedStock) {
+    return proxiedStock;
   }
 
-  if (/^https:\/\//i.test(cleaned)) {
-    return `/api/ai/image-proxy.php?url=${encodeURIComponent(cleaned)}`;
-  }
-
-  return cleaned;
+  return buildTranscriptImageFallback(prompt);
 }
 
 function createConversation(title = 'New Conversation'): SavedConversation {
@@ -446,7 +577,7 @@ function buildTranscriptImageFallback(label: string): string {
     '<rect x="72" y="72" width="880" height="496" rx="20" fill="rgba(2,6,23,0.6)" stroke="rgba(110,231,255,0.45)" stroke-width="2"/>',
     '<text x="114" y="188" fill="#67e8f9" font-family="monospace" font-size="30">MULTIMODAL IMAGE FALLBACK</text>',
     `<text x="114" y="276" fill="#d1fae5" font-family="monospace" font-size="34">${safeLabel}</text>`,
-    '<text x="114" y="342" fill="#86efac" font-family="monospace" font-size="22">Source image failed to load in browser. Showing safe local preview.</text>',
+    '<text x="114" y="342" fill="#86efac" font-family="monospace" font-size="22">Synthesized concept visual generated locally for this prompt.</text>',
     '</svg>'
   ].join('');
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -679,20 +810,20 @@ async function runAssistantConversation(userInput: string): Promise<void> {
 
     await streamAssistantMessage(result.assistantMessage);
 
-    if (result.media.length > 0) {
-      for (const item of result.media) {
-        if (item.type !== 'image') {
-          continue;
-        }
+    const mediaItems = result.media.filter((item) => item.type === 'image');
+    if (mediaItems.length > 0) {
+      for (const item of mediaItems) {
+        const resolvedImage = await resolveAssistantMediaUrl(item.url, userInput);
         addLine('assistant', item.alt || 'Generated image', {
-          imageUrl: resolveAssistantMediaUrl(item.url),
+          imageUrl: resolvedImage,
           imageAlt: item.alt || 'Generated image'
         });
       }
     } else if (expectsImage) {
+      const generatedImage = await ensureGeneratedImageForPrompt(userInput);
       addLine('assistant', 'Generated image preview', {
-        imageUrl: buildTranscriptImageFallback(userInput),
-        imageAlt: 'Generated image fallback'
+        imageUrl: generatedImage,
+        imageAlt: 'Generated image preview'
       });
     }
 
@@ -1758,7 +1889,7 @@ async function handleCommand(raw: string): Promise<void> {
     }
 
     addLine('signal', 'Multimodal request detected. Generating in-thread visual...');
-    await runAssistantConversation(`Generate an image for this request: ${prompt}`);
+    await runAssistantConversation(prompt);
     return;
   }
 
@@ -1809,6 +1940,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
+  for (const url of blobMediaUrls.value) {
+    URL.revokeObjectURL(url);
+  }
+  blobMediaUrls.value = [];
 });
 </script>
 
