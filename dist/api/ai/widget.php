@@ -388,6 +388,138 @@ function fallback_prompt_widget_answer(string $prompt): string
     return 'Focus on this now: ' . $trimmed;
 }
 
+function extract_time_location_from_prompt(string $prompt): string
+{
+    $text = trim($prompt);
+    if ($text === '') {
+        return '';
+    }
+
+    if (preg_match('/(?:current|local)?\s*time\s+(?:in|for)\s+([a-zA-Z][a-zA-Z\s\.\-]{1,70})/i', $text, $matches) === 1) {
+        $raw = trim($matches[1]);
+        $raw = preg_replace('/\b(with|and|using|from)\b.*$/i', '', $raw) ?? $raw;
+        return trim($raw, " \t\n\r\0\x0B.,;:!?");
+    }
+
+    return '';
+}
+
+function resolve_timezone_from_location(string $location, int $timeoutSeconds): array
+{
+    $normalized = strtolower(trim($location));
+    if ($normalized === '') {
+        return ['ok' => false, 'timezone' => '', 'label' => '', 'warning' => 'Location missing.'];
+    }
+
+    $aliases = [
+        'saudi arabia' => ['timezone' => 'Asia/Riyadh', 'label' => 'Saudi Arabia'],
+        'ksa' => ['timezone' => 'Asia/Riyadh', 'label' => 'Saudi Arabia'],
+        'riyadh' => ['timezone' => 'Asia/Riyadh', 'label' => 'Riyadh, Saudi Arabia'],
+        'jeddah' => ['timezone' => 'Asia/Riyadh', 'label' => 'Jeddah, Saudi Arabia'],
+        'dubai' => ['timezone' => 'Asia/Dubai', 'label' => 'Dubai, United Arab Emirates'],
+        'london' => ['timezone' => 'Europe/London', 'label' => 'London, United Kingdom'],
+        'new york' => ['timezone' => 'America/New_York', 'label' => 'New York, United States'],
+        'los angeles' => ['timezone' => 'America/Los_Angeles', 'label' => 'Los Angeles, United States']
+    ];
+
+    if (isset($aliases[$normalized])) {
+        return [
+            'ok' => true,
+            'timezone' => $aliases[$normalized]['timezone'],
+            'label' => $aliases[$normalized]['label'],
+            'warning' => ''
+        ];
+    }
+
+    $query = rawurlencode($location);
+    $geo = http_get_json(
+        'https://geocoding-api.open-meteo.com/v1/search?name=' . $query . '&count=1&language=en&format=json',
+        $timeoutSeconds
+    );
+
+    if (!(bool) ($geo['ok'] ?? false)) {
+        return ['ok' => false, 'timezone' => '', 'label' => '', 'warning' => 'Location lookup unavailable.'];
+    }
+
+    $results = as_array($geo['data']['results'] ?? []);
+    if (count($results) === 0 || !is_array($results[0])) {
+        return ['ok' => false, 'timezone' => '', 'label' => '', 'warning' => 'Location not found.'];
+    }
+
+    $first = $results[0];
+    $timezone = clean_text($first['timezone'] ?? '');
+    if ($timezone === '') {
+        return ['ok' => false, 'timezone' => '', 'label' => '', 'warning' => 'Timezone not available for location.'];
+    }
+
+    $name = clean_text($first['name'] ?? $location, $location);
+    $country = clean_text($first['country'] ?? '', '');
+    $label = $country !== '' ? ($name . ', ' . $country) : $name;
+
+    return [
+        'ok' => true,
+        'timezone' => $timezone,
+        'label' => $label,
+        'warning' => ''
+    ];
+}
+
+function fetch_time_payload(string $location, int $timeoutSeconds): array
+{
+    $resolved = resolve_timezone_from_location($location, $timeoutSeconds);
+    $timezoneName = clean_text($resolved['timezone'] ?? '', 'UTC');
+    $label = clean_text($resolved['label'] ?? '', $location !== '' ? $location : 'UTC');
+    $warning = clean_text($resolved['warning'] ?? '', '');
+
+    if ($label === '') {
+        $label = 'UTC';
+    }
+
+    try {
+        $zone = new DateTimeZone($timezoneName);
+    } catch (Exception $exception) {
+        $zone = new DateTimeZone('UTC');
+        $timezoneName = 'UTC';
+        $warning = 'Timezone fallback to UTC.';
+    }
+
+    $now = new DateTimeImmutable('now', $zone);
+    $offsetSeconds = $zone->getOffset($now);
+    $offsetAbs = abs($offsetSeconds);
+    $offsetHours = intdiv($offsetAbs, 3600);
+    $offsetMinutes = intdiv($offsetAbs % 3600, 60);
+    $offsetLabel = sprintf('%s%02d:%02d', $offsetSeconds >= 0 ? '+' : '-', $offsetHours, $offsetMinutes);
+
+    return [
+        'ok' => true,
+        'payload' => [
+            'location' => $label,
+            'timezone' => $timezoneName,
+            'dateLabel' => $now->format('l, F j, Y'),
+            'time12' => $now->format('g:i A'),
+            'time24' => $now->format('H:i'),
+            'iso' => $now->format(DateTimeInterface::ATOM),
+            'offset' => $offsetLabel,
+            'warning' => $warning
+        ]
+    ];
+}
+
+function detect_prompt_capability(string $prompt): array
+{
+    $normalized = strtolower($prompt);
+    $isTimePrompt = preg_match('/\b(current time|local time|time in|what time|clock)\b/i', $normalized) === 1;
+
+    if ($isTimePrompt) {
+        return [
+            'type' => 'time',
+            'location' => extract_time_location_from_prompt($prompt)
+        ];
+    }
+
+    return ['type' => 'generic', 'location' => ''];
+}
+
 function parse_prompt_widget_response(string $raw, string $fallbackAnswer): array
 {
     $lines = preg_split('/\r\n|\r|\n/', trim($raw)) ?: [];
@@ -546,6 +678,39 @@ if ($widget['type'] === 'weather') {
 } else {
     $prompt = clean_text($widget['config']['prompt'] ?? '');
     if ($prompt !== '') {
+        $capability = detect_prompt_capability($prompt);
+        if (($capability['type'] ?? 'generic') === 'time') {
+            $location = clean_text($capability['location'] ?? '', 'Saudi Arabia');
+            $timeResult = fetch_time_payload($location, $timeoutSeconds);
+            $timePayload = as_array($timeResult['payload'] ?? []);
+
+            $responseText = 'Current time in ' . clean_text($timePayload['location'] ?? $location, $location) .
+                ': ' . clean_text($timePayload['time12'] ?? '--:--', '--:--') .
+                ' (' . clean_text($timePayload['offset'] ?? '+00:00', '+00:00') . ')' .
+                ' on ' . clean_text($timePayload['dateLabel'] ?? '', gmdate('l, F j, Y')) . '.';
+
+            $items = [
+                'Timezone: ' . clean_text($timePayload['timezone'] ?? 'UTC', 'UTC'),
+                '24-hour format: ' . clean_text($timePayload['time24'] ?? '--:--', '--:--'),
+                'Use refresh for real-time updates.'
+            ];
+
+            $warning = clean_text($timePayload['warning'] ?? '', '');
+            if ($warning !== '') {
+                $items[] = 'Note: ' . $warning;
+            }
+
+            $payload = [
+                'mode' => 'prompt',
+                'capability' => 'time',
+                'title' => $widget['title'],
+                'prompt' => $prompt,
+                'response' => $responseText,
+                'items' => array_slice($items, 0, 4),
+                'facts' => $timePayload
+            ];
+            $source = 'external';
+        } else {
         $fallbackAnswer = fallback_prompt_widget_answer($prompt);
         $completion = ai_short_text(
             $config,
@@ -563,6 +728,7 @@ if ($widget['type'] === 'weather') {
             'items' => $parsed['items']
         ];
         $source = $completion['source'];
+        }
     } else {
     $html = sanitize_html(clean_text($widget['html'] ?? '', '<div><p>No HTML provided.</p></div>'));
     $summary = ai_short_text(

@@ -161,6 +161,7 @@ Prompt widget behavior:
 - Store prompt in widget config (`config.prompt`)
 - Refresh sends prompt to LLM through server endpoint
 - Widget card renders structured result (`response` + short `items` list)
+- Runtime capability handlers can inject live data for supported intents (for example, current time by location)
 
 ### `GET /api/content/wp.php`
 
