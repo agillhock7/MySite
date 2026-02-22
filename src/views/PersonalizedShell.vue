@@ -96,6 +96,7 @@ const terminalExpanded = ref(false);
 const transcriptHeight = ref(320);
 const imageRenderPending = ref(false);
 const imageRenderPrompt = ref('');
+const mediaLoadState = ref<Record<number, 'loading' | 'ready' | 'error'>>({});
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -112,6 +113,16 @@ function cloneTerminalLine(line: TerminalLine): TerminalLine {
     imageUrl: line.imageUrl,
     imageAlt: line.imageAlt
   };
+}
+
+function rebuildMediaLoadStateFromTranscript(): void {
+  const next: Record<number, 'loading' | 'ready' | 'error'> = {};
+  for (const line of transcript.value) {
+    if (line.imageUrl) {
+      next[line.id] = 'loading';
+    }
+  }
+  mediaLoadState.value = next;
 }
 
 function sanitizeTerminalLine(value: unknown): TerminalLine | null {
@@ -288,6 +299,7 @@ function initializeConversationThreads(): void {
     conversationThreads.value = [created];
     activeConversationId.value = created.id;
     transcript.value = [];
+    mediaLoadState.value = {};
     assistantSuggestions.value = [];
     return;
   }
@@ -299,6 +311,7 @@ function initializeConversationThreads(): void {
       conversationThreads.value = [created];
       activeConversationId.value = created.id;
       transcript.value = [];
+      mediaLoadState.value = {};
       assistantSuggestions.value = [];
       persistConversationState();
       return;
@@ -322,6 +335,7 @@ function initializeConversationThreads(): void {
       conversationThreads.value = [created];
       activeConversationId.value = created.id;
       transcript.value = [];
+      mediaLoadState.value = {};
       assistantSuggestions.value = [];
       persistConversationState();
       return;
@@ -333,6 +347,7 @@ function initializeConversationThreads(): void {
     conversationThreads.value = conversations;
     activeConversationId.value = selected.id;
     transcript.value = selected.transcript.map(cloneTerminalLine);
+    rebuildMediaLoadStateFromTranscript();
     assistantSuggestions.value = selected.suggestions.slice(0, 3);
     persistConversationState();
   } catch {
@@ -340,6 +355,7 @@ function initializeConversationThreads(): void {
     conversationThreads.value = [created];
     activeConversationId.value = created.id;
     transcript.value = [];
+    mediaLoadState.value = {};
     assistantSuggestions.value = [];
     persistConversationState();
   }
@@ -379,6 +395,7 @@ function startNewConversation(): void {
   conversationThreads.value = [created, ...conversationThreads.value];
   activeConversationId.value = created.id;
   transcript.value = [];
+  mediaLoadState.value = {};
   assistantSuggestions.value = [];
   persistConversationState();
   addLine('signal', `Conversation ${created.id} active. Ask anything or use /widget build.`);
@@ -397,6 +414,7 @@ function switchConversation(conversationId: string): void {
   activeConversationId.value = target.id;
   transcript.value = target.transcript.map(cloneTerminalLine);
   assistantSuggestions.value = target.suggestions.slice(0, 3);
+  rebuildMediaLoadStateFromTranscript();
   scrollTranscriptToEnd();
   persistConversationState();
 }
@@ -441,6 +459,10 @@ function handleTranscriptImageError(event: Event, line: TerminalLine): void {
   }
 
   if (target.dataset.fallbackApplied === '1') {
+    mediaLoadState.value = {
+      ...mediaLoadState.value,
+      [line.id]: 'error'
+    };
     return;
   }
 
@@ -448,7 +470,18 @@ function handleTranscriptImageError(event: Event, line: TerminalLine): void {
   target.dataset.fallbackApplied = '1';
   target.src = fallback;
   line.imageUrl = fallback;
+  mediaLoadState.value = {
+    ...mediaLoadState.value,
+    [line.id]: 'error'
+  };
   persistActiveConversation();
+}
+
+function handleTranscriptImageLoad(line: TerminalLine): void {
+  mediaLoadState.value = {
+    ...mediaLoadState.value,
+    [line.id]: 'ready'
+  };
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -532,6 +565,12 @@ function addLine(
     imageUrl: media?.imageUrl,
     imageAlt: media?.imageAlt
   });
+  if (media?.imageUrl) {
+    mediaLoadState.value = {
+      ...mediaLoadState.value,
+      [lineId]: 'loading'
+    };
+  }
   scrollTranscriptToEnd();
   persistActiveConversation();
   return lineId;
@@ -1665,6 +1704,7 @@ async function handleCommand(raw: string): Promise<void> {
 
   if (input === '/clear') {
     transcript.value = [];
+    mediaLoadState.value = {};
     assistantSuggestions.value = [];
     addLine('system', `Transcript cleared. ${scene.value.codename} remains active.`);
     return;
@@ -1900,14 +1940,21 @@ onUnmounted(() => {
           </span>
           <div class="line-body">
             <span>{{ line.text }}</span>
-            <img
-              v-if="line.imageUrl"
-              class="line-media"
-              :src="line.imageUrl"
-              :alt="line.imageAlt || 'Generated image'"
-              loading="lazy"
-              @error="handleTranscriptImageError($event, line)"
-            />
+            <div v-if="line.imageUrl" class="line-media-shell">
+              <div v-if="mediaLoadState[line.id] !== 'ready'" class="line-media-loading">
+                <div class="line-media-grid"></div>
+                <div class="line-media-pulse"></div>
+                <p>{{ mediaLoadState[line.id] === 'error' ? 'Rebuilding preview...' : 'Generating image...' }}</p>
+              </div>
+              <img
+                class="line-media"
+                :src="line.imageUrl"
+                :alt="line.imageAlt || 'Generated image'"
+                loading="lazy"
+                @load="handleTranscriptImageLoad(line)"
+                @error="handleTranscriptImageError($event, line)"
+              />
+            </div>
           </div>
         </article>
       </div>
@@ -2591,6 +2638,68 @@ h1 {
   border-radius: 10px;
   border: 1px solid rgba(var(--accent-rgb), 0.35);
   box-shadow: 0 14px 28px rgba(2, 6, 23, 0.36);
+}
+
+.line-media-shell {
+  position: relative;
+  width: min(100%, 360px);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  box-shadow: 0 14px 28px rgba(2, 6, 23, 0.36);
+}
+
+.line-media-shell .line-media {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: rgba(2, 6, 23, 0.8);
+}
+
+.line-media-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 6, 23, 0.8);
+  color: var(--text-primary);
+}
+
+.line-media-loading p {
+  margin: 0;
+  position: relative;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+
+.line-media-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(var(--accent-rgb), 0.08) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+.line-media-pulse {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 34%;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0), rgba(var(--accent-rgb), 0.24), rgba(var(--accent-rgb), 0));
+  animation: line-media-scan 1.4s linear infinite;
+}
+
+@keyframes line-media-scan {
+  0% {
+    transform: translateY(-120%);
+  }
+  100% {
+    transform: translateY(220%);
+  }
 }
 
 .tone-system {
