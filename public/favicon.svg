@@ -1,11 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Alexander Gill">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#16c7cf" />
-      <stop offset="100%" stop-color="#0ea5e9" />
+    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6ee7b7" />
+      <stop offset="100%" stop-color="#22c55e" />
+    </linearGradient>
+    <linearGradient id="glyph" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ecfdf5" />
+      <stop offset="100%" stop-color="#bbf7d0" />
     </linearGradient>
   </defs>
-  <rect x="3" y="3" width="58" height="58" rx="14" fill="#050b18" stroke="url(#g)" stroke-width="2" />
-  <path d="M32 14 49 49h-8l-3.5-7H26.5L23 49h-8L32 14Zm0 15-3.1 6.6h6.2L32 29Z" fill="url(#g)" />
-  <circle cx="51" cy="13" r="3" fill="#16c7cf" />
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="#020617" stroke="url(#frame)" stroke-width="2" />
+  <path d="M32 14 49 49h-8l-3.5-7H26.5L23 49h-8L32 14Zm0 15-3.1 6.6h6.2L32 29Z" fill="url(#glyph)" />
+  <path d="M12 50h13" stroke="#34d399" stroke-width="2" stroke-linecap="round" />
+  <path d="M12 46l4-3" stroke="#34d399" stroke-width="2" stroke-linecap="round" />
+  <circle cx="51" cy="13" r="3" fill="#f59e0b" />
 </svg>
