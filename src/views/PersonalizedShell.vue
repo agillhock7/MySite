@@ -42,6 +42,16 @@ interface WidgetBuildSession {
   draft: WidgetBuildDraft;
 }
 
+interface WidgetEditorState {
+  widgetId: string;
+  title: string;
+  prompt: string;
+  outputStyle: WidgetOutputFormat;
+  audience: string;
+  html: string;
+  configEntries: Array<{ key: string; value: string }>;
+}
+
 const router = useRouter();
 const personalization = usePersonalizationStore();
 
@@ -57,6 +67,8 @@ const widgets = ref<DashboardWidget[]>([]);
 const widgetRefreshNonce = ref(0);
 const widgetRefreshKeys = ref<Record<string, number>>({});
 const widgetBuildSession = ref<WidgetBuildSession | null>(null);
+const editingWidgetId = ref('');
+const widgetEditor = ref<WidgetEditorState | null>(null);
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -67,6 +79,35 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   }
 
   return value as Record<string, unknown>;
+}
+
+function clampColor(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const normalized = hex.trim().replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return null;
+  }
+
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16)
+  };
+}
+
+function rgbToCss(rgb: { r: number; g: number; b: number }): string {
+  return `${clampColor(rgb.r)}, ${clampColor(rgb.g)}, ${clampColor(rgb.b)}`;
+}
+
+function mixWithWhite(rgb: { r: number; g: number; b: number }, amount: number): { r: number; g: number; b: number } {
+  return {
+    r: rgb.r + (255 - rgb.r) * amount,
+    g: rgb.g + (255 - rgb.g) * amount,
+    b: rgb.b + (255 - rgb.b) * amount
+  };
 }
 
 function firstStringModuleProp(propName: string): string {
@@ -421,6 +462,149 @@ function handleWidgetBuildModeInput(input: string): boolean {
   return false;
 }
 
+function normalizeConfigEntries(entries: Array<{ key: string; value: string }>): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const entry of entries) {
+    const key = entry.key.trim();
+    const value = entry.value.trim();
+    if (!key || !value) {
+      continue;
+    }
+    next[key] = value;
+  }
+
+  return next;
+}
+
+function inferOutputStyleFromPrompt(prompt: string): WidgetOutputFormat {
+  const normalized = prompt.toLowerCase();
+  if (normalized.includes('checklist')) {
+    return 'checklist';
+  }
+  if (normalized.includes('bullet')) {
+    return 'bullets';
+  }
+  return 'brief';
+}
+
+function extractPromptAudience(prompt: string): string {
+  const match = prompt.match(/context\/focus:\s*([^\.]+)/i);
+  if (!match) {
+    return '';
+  }
+  return match[1].trim();
+}
+
+function buildWidgetEditorState(widget: DashboardWidget): WidgetEditorState {
+  const entries = Object.entries(widget.config).map(([key, value]) => ({ key, value }));
+  const prompt = widget.config.prompt ?? '';
+  const outputStyle = inferOutputStyleFromPrompt(prompt);
+  const audience = extractPromptAudience(prompt);
+
+  return {
+    widgetId: widget.id,
+    title: widget.title,
+    prompt,
+    outputStyle,
+    audience,
+    html: widget.html ?? '',
+    configEntries: entries.length > 0 ? entries : [{ key: '', value: '' }]
+  };
+}
+
+function startEditingWidget(widgetId: string): void {
+  const target = widgets.value.find((widget) => widget.id.toLowerCase() === widgetId.toLowerCase());
+  if (!target) {
+    addLine('system', `Widget ${widgetId} not found.`);
+    return;
+  }
+
+  editingWidgetId.value = target.id;
+  widgetEditor.value = buildWidgetEditorState(target);
+  addLine('signal', `Editing widget ${target.id}. Save to apply tuning changes.`);
+}
+
+function cancelWidgetEdit(): void {
+  editingWidgetId.value = '';
+  widgetEditor.value = null;
+}
+
+function addConfigEntry(): void {
+  if (!widgetEditor.value) {
+    return;
+  }
+
+  widgetEditor.value.configEntries.push({ key: '', value: '' });
+}
+
+function removeConfigEntry(index: number): void {
+  if (!widgetEditor.value) {
+    return;
+  }
+
+  widgetEditor.value.configEntries.splice(index, 1);
+  if (widgetEditor.value.configEntries.length === 0) {
+    widgetEditor.value.configEntries.push({ key: '', value: '' });
+  }
+}
+
+function optimizePromptDraft(): void {
+  if (!widgetEditor.value) {
+    return;
+  }
+
+  const basePrompt = widgetEditor.value.prompt.trim();
+  const objective = basePrompt || 'Deliver practical, high-value insight for this widget.';
+  const audience = widgetEditor.value.audience.trim() || 'dashboard visitor';
+  const formatGuide = formatInstruction(widgetEditor.value.outputStyle);
+
+  widgetEditor.value.prompt = [
+    `Objective: ${objective}`,
+    `Audience/context: ${audience}`,
+    `Formatting: ${formatGuide}`,
+    'Quality bar: include concrete facts when available, avoid placeholders, and keep output directly actionable.'
+  ].join(' ');
+}
+
+function saveWidgetEdit(): void {
+  if (!widgetEditor.value || !editingWidgetId.value) {
+    return;
+  }
+
+  const widgetIndex = widgets.value.findIndex((widget) => widget.id === editingWidgetId.value);
+  if (widgetIndex === -1) {
+    addLine('system', `Widget ${editingWidgetId.value} not found.`);
+    cancelWidgetEdit();
+    return;
+  }
+
+  const existing = widgets.value[widgetIndex];
+  const normalizedTitle = widgetEditor.value.title.trim() || existing.title;
+  const config = normalizeConfigEntries(widgetEditor.value.configEntries);
+
+  if (existing.config.mode === 'prompt' || widgetEditor.value.prompt.trim().length > 0) {
+    config.mode = 'prompt';
+    config.prompt = widgetEditor.value.prompt.trim() || existing.config.prompt || '';
+    config.outputStyle = widgetEditor.value.outputStyle;
+    config.audience = widgetEditor.value.audience.trim();
+  }
+
+  const nextWidget: DashboardWidget = {
+    ...existing,
+    title: normalizedTitle,
+    config,
+    html: existing.type === 'customHtml' && existing.config.mode !== 'prompt'
+      ? sanitizeWidgetHtml(widgetEditor.value.html || existing.html || '')
+      : existing.html
+  };
+
+  widgets.value.splice(widgetIndex, 1, nextWidget);
+  persistWidgets();
+  const refreshed = refreshWidgetRuntime(nextWidget.id);
+  addLine('signal', `Saved tuning for ${nextWidget.id}. ${refreshed ? 'Runtime refresh queued.' : ''}`);
+  cancelWidgetEdit();
+}
+
 function removeWidgetById(widgetId: string): boolean {
   const nextWidgets = widgets.value.filter((widget) => widget.id.toLowerCase() !== widgetId.toLowerCase());
   if (nextWidgets.length === widgets.value.length) {
@@ -433,6 +617,10 @@ function removeWidgetById(widgetId: string): boolean {
     const nextRefreshKeys = { ...widgetRefreshKeys.value };
     delete nextRefreshKeys[widgetId];
     widgetRefreshKeys.value = nextRefreshKeys;
+  }
+
+  if (editingWidgetId.value.toLowerCase() === widgetId.toLowerCase()) {
+    cancelWidgetEdit();
   }
   return true;
 }
@@ -507,6 +695,59 @@ const focusTopics = computed(() => {
   }
 
   return ['Identity', 'Ideas', 'Momentum'];
+});
+
+const personalizationMode = computed(() => blueprint.value?.theme.mode ?? 'dark');
+const personalizationDensity = computed(() => blueprint.value?.layout.density ?? 'medium');
+const personalizationNav = computed(() => blueprint.value?.layout.nav ?? 'top');
+const personalizationAccent = computed(() => blueprint.value?.theme.accent ?? '#16c7cf');
+const personalizationProfile = computed(() => firstStringModuleProp('profile') || 'adaptive');
+const personalizationProfileClass = computed(() =>
+  personalizationProfile.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'adaptive'
+);
+
+const shellClassName = computed(() => [
+  `mode-${personalizationMode.value}`,
+  `density-${personalizationDensity.value}`,
+  `nav-${personalizationNav.value}`,
+  `profile-${personalizationProfileClass.value}`
+]);
+
+const shellVisualStyle = computed<Record<string, string>>(() => {
+  const accentRgb = hexToRgb(personalizationAccent.value) ?? { r: 22, g: 199, b: 207 };
+  const soft = mixWithWhite(accentRgb, 0.32);
+  const sharp = mixWithWhite(accentRgb, 0.08);
+
+  return {
+    '--accent-rgb': rgbToCss(accentRgb),
+    '--accent-soft-rgb': rgbToCss(soft),
+    '--accent-sharp-rgb': rgbToCss(sharp)
+  };
+});
+
+const impressionOrbs = computed(() => {
+  const orbitCount = personalizationDensity.value === 'high' ? 9 : personalizationDensity.value === 'low' ? 5 : 7;
+  const baseSeed = `${designSignature.value}:${focusTopics.value.join('|')}:${personalizationProfile.value}`;
+
+  return Array.from({ length: orbitCount }, (_, index) => {
+    const seed = hashText(`${baseSeed}:${index}`);
+    const top = (seed % 84) + 6;
+    const left = ((seed >>> 4) % 84) + 4;
+    const size = 120 + ((seed >>> 9) % 190);
+    const drift = 12 + ((seed >>> 13) % 36);
+    const duration = 12 + ((seed >>> 15) % 20);
+    const delay = (seed >>> 7) % 7;
+
+    return {
+      top: `${top}%`,
+      left: `${left}%`,
+      width: `${size}px`,
+      height: `${size}px`,
+      '--drift': `${drift}px`,
+      '--duration': `${duration}s`,
+      '--delay': `${delay}s`
+    } as Record<string, string>;
+  });
 });
 
 const designSignature = computed(() => {
@@ -678,6 +919,7 @@ function handleWidgetCommand(input: string): boolean {
   if (input === '/widget clear') {
     widgets.value = [];
     widgetRefreshKeys.value = {};
+    cancelWidgetEdit();
     persistWidgets();
     addLine('signal', 'All deployed widgets cleared.');
     return true;
@@ -733,6 +975,17 @@ function handleWidgetCommand(input: string): boolean {
 
     const removed = removeWidgetById(id);
     addLine(removed ? 'signal' : 'system', removed ? `Removed widget ${id}.` : `Widget ${id} not found.`);
+    return true;
+  }
+
+  if (input.startsWith('/widget edit ')) {
+    const widgetId = input.slice('/widget edit '.length).trim();
+    if (!widgetId) {
+      addLine('system', 'Usage: /widget edit <widget-id>');
+      return true;
+    }
+
+    startEditingWidget(widgetId);
     return true;
   }
 
@@ -819,7 +1072,7 @@ function handleWidgetCommand(input: string): boolean {
 
   addLine(
     'system',
-    'Widget commands: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
+    'Widget commands: /widget list, /widget build [intent], /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
   );
   return true;
 }
@@ -841,7 +1094,7 @@ async function handleCommand(raw: string): Promise<void> {
     addLine('system', 'Core: /help, /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
-      'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
+      'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
     );
     addLine('system', `Widget limit: ${MAX_DASHBOARD_WIDGETS} total. Tip: type "/widget build" and I will guide the questions.`);
     return;
@@ -950,7 +1203,11 @@ onMounted(async () => {
     </section>
   </main>
 
-  <main v-else-if="blueprint" class="experience-root">
+  <main v-else-if="blueprint" class="experience-root" :class="shellClassName" :style="shellVisualStyle">
+    <div class="fx-stage" aria-hidden="true">
+      <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
+    </div>
+
     <header class="topbar">
       <a class="brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
         <img :src="brandIconUrl" alt="" loading="lazy" />
@@ -962,6 +1219,7 @@ onMounted(async () => {
 
       <div class="topbar-meta">
         <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
+        <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
         <button type="button" @click="resetPersonalization">Reset Personalization</button>
       </div>
     </header>
@@ -972,6 +1230,9 @@ onMounted(async () => {
         <h1>{{ scene.mission }}</h1>
         <p class="voice-line">{{ scene.voice }}</p>
         <p class="pulse-line">{{ scene.pulse }}</p>
+        <div class="topic-row">
+          <span v-for="topic in focusTopics.slice(0, 5)" :key="topic">{{ topic }}</span>
+        </div>
         <p v-if="wordpressError" class="warning-line">{{ wordpressError }}</p>
         <p v-if="initializationError" class="warning-line">{{ initializationError }}</p>
       </article>
@@ -1036,6 +1297,7 @@ onMounted(async () => {
         <p>/widget add weather Austin</p>
         <p>/widget add horoscope</p>
         <p>/widget add sports NHL</p>
+        <p>/widget edit W-ABC123 (or use the Edit button)</p>
         <p>/widget html Daily Brief || &lt;section&gt;&lt;h4&gt;Daily Brief&lt;/h4&gt;&lt;p&gt;Write one clear prompt goal.&lt;/p&gt;&lt;/section&gt;</p>
         <p>Limit: {{ MAX_DASHBOARD_WIDGETS }} widgets total</p>
       </div>
@@ -1043,10 +1305,79 @@ onMounted(async () => {
       <article v-for="widget in widgets" :key="widget.id" class="widget-row">
         <div class="widget-head">
           <p class="widget-id">{{ widget.id }}</p>
-          <button type="button" class="remove-widget" @click="removeWidget(widget.id)">Remove</button>
+          <div class="widget-controls">
+            <button
+              type="button"
+              class="edit-widget"
+              @click="editingWidgetId === widget.id ? cancelWidgetEdit() : startEditingWidget(widget.id)"
+            >
+              {{ editingWidgetId === widget.id ? 'Close Editor' : 'Edit' }}
+            </button>
+            <button type="button" class="remove-widget" @click="removeWidget(widget.id)">Remove</button>
+          </div>
         </div>
         <h3>{{ widget.title }}</h3>
         <DashboardWidgetRenderer :widget="widget" :signature="widgetRuntimeSignature(widget.id)" />
+
+        <form
+          v-if="editingWidgetId === widget.id && widgetEditor"
+          class="widget-editor"
+          @submit.prevent="saveWidgetEdit"
+        >
+          <label>
+            <span>Widget Title</span>
+            <input v-model="widgetEditor.title" type="text" maxlength="80" />
+          </label>
+
+          <label v-if="widget.config.mode === 'prompt' || widgetEditor.prompt">
+            <span>Prompt</span>
+            <textarea v-model="widgetEditor.prompt" rows="4"></textarea>
+          </label>
+
+          <div v-if="widget.config.mode === 'prompt' || widgetEditor.prompt" class="editor-grid">
+            <label>
+              <span>Output Style</span>
+              <select v-model="widgetEditor.outputStyle">
+                <option value="brief">brief</option>
+                <option value="bullets">bullets</option>
+                <option value="checklist">checklist</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Audience / Context</span>
+              <input v-model="widgetEditor.audience" type="text" placeholder="founder, reader, investor, etc." />
+            </label>
+          </div>
+
+          <label v-if="widget.type === 'customHtml' && widget.config.mode !== 'prompt'">
+            <span>HTML Markup</span>
+            <textarea v-model="widgetEditor.html" rows="4"></textarea>
+          </label>
+
+          <div class="editor-config">
+            <p>Runtime Config</p>
+            <div v-for="(entry, idx) in widgetEditor.configEntries" :key="`${widget.id}:cfg:${idx}`" class="cfg-row">
+              <input v-model="entry.key" type="text" placeholder="key" />
+              <input v-model="entry.value" type="text" placeholder="value" />
+              <button type="button" class="cfg-remove" @click="removeConfigEntry(idx)">x</button>
+            </div>
+            <button type="button" class="cfg-add" @click="addConfigEntry">+ Add Field</button>
+          </div>
+
+          <div class="editor-actions">
+            <button
+              v-if="widget.config.mode === 'prompt' || widgetEditor.prompt"
+              type="button"
+              class="tune-btn"
+              @click="optimizePromptDraft"
+            >
+              Optimize Prompt
+            </button>
+            <button type="button" class="cancel-btn" @click="cancelWidgetEdit">Cancel</button>
+            <button type="submit" class="save-btn">Save + Re-Run</button>
+          </div>
+        </form>
       </article>
     </section>
 
@@ -1088,14 +1419,27 @@ onMounted(async () => {
 
 <style scoped>
 .experience-root {
+  --accent-rgb: 22, 199, 207;
+  --accent-soft-rgb: 120, 224, 228;
+  --accent-sharp-rgb: 16, 153, 178;
+  --surface-main: rgba(2, 6, 23, 0.78);
+  --surface-card: rgba(2, 10, 28, 0.78);
+  --surface-elevated: rgba(3, 7, 18, 0.84);
+  --border-tone: rgba(var(--accent-rgb), 0.32);
+  --text-primary: #d1fae5;
+  --text-secondary: #a7f3d0;
+  --text-signal: rgb(var(--accent-soft-rgb));
   min-height: 100vh;
   background:
-    radial-gradient(circle at 90% -16%, rgba(16, 185, 129, 0.2), transparent 42%),
-    radial-gradient(circle at -12% 88%, rgba(14, 165, 233, 0.15), transparent 50%),
+    radial-gradient(circle at 12% -12%, rgba(var(--accent-rgb), 0.25), transparent 38%),
+    radial-gradient(circle at 88% 118%, rgba(var(--accent-soft-rgb), 0.2), transparent 42%),
+    radial-gradient(circle at 50% 50%, rgba(var(--accent-sharp-rgb), 0.1), transparent 58%),
     #000000;
-  color: #d1fae5;
-  font-family: 'IBM Plex Mono', 'Fira Code', monospace;
+  color: var(--text-primary);
+  font-family: 'Space Mono', 'IBM Plex Mono', 'Fira Code', monospace;
   padding: 1rem;
+  position: relative;
+  isolation: isolate;
 }
 
 .loading-root {
@@ -1103,11 +1447,56 @@ onMounted(async () => {
   place-items: center;
 }
 
+.mode-light.experience-root {
+  --surface-main: rgba(255, 255, 255, 0.84);
+  --surface-card: rgba(245, 250, 255, 0.85);
+  --surface-elevated: rgba(250, 253, 255, 0.9);
+  --border-tone: rgba(var(--accent-rgb), 0.35);
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-signal: rgb(var(--accent-sharp-rgb));
+  background:
+    radial-gradient(circle at 12% -12%, rgba(var(--accent-rgb), 0.18), transparent 38%),
+    radial-gradient(circle at 88% 118%, rgba(var(--accent-soft-rgb), 0.15), transparent 42%),
+    #eef3fb;
+}
+
+.fx-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: -1;
+}
+
+.fx-orb {
+  position: absolute;
+  display: block;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.27), rgba(var(--accent-rgb), 0.05) 62%, transparent 78%);
+  filter: blur(10px);
+  opacity: 0.7;
+  animation: orb-drift var(--duration) ease-in-out infinite;
+  animation-delay: var(--delay);
+}
+
+@keyframes orb-drift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.36;
+  }
+  50% {
+    transform: translate3d(var(--drift), calc(var(--drift) * -0.6), 0) scale(1.08);
+    opacity: 0.62;
+  }
+}
+
 .loading-card {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 14px;
   padding: 0.95rem 1rem;
-  background: #040404;
+  background: var(--surface-main);
+  backdrop-filter: blur(10px);
 }
 
 .topbar {
@@ -1115,10 +1504,12 @@ onMounted(async () => {
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 0.8rem;
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 14px;
-  background: rgba(3, 7, 18, 0.78);
+  background: var(--surface-main);
   padding: 0.8rem 0.9rem;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
 }
 
 .brand {
@@ -1133,7 +1524,8 @@ onMounted(async () => {
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  border: 1px solid #334155;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.1);
 }
 
 .brand span {
@@ -1150,7 +1542,7 @@ onMounted(async () => {
 .brand em {
   font-style: normal;
   font-size: 0.72rem;
-  color: #67e8f9;
+  color: var(--text-signal);
 }
 
 .topbar-meta {
@@ -1161,17 +1553,31 @@ onMounted(async () => {
 
 .topbar-meta p {
   margin: 0;
-  color: #86efac;
+  color: var(--text-secondary);
   font-size: 0.74rem;
   letter-spacing: 0.06em;
+  text-align: right;
+}
+
+.persona-line {
+  color: var(--text-signal) !important;
+  font-size: 0.7rem !important;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
 }
 
 .topbar-meta button {
-  border: 1px solid #134e4a;
+  border: 1px solid var(--border-tone);
   border-radius: 999px;
-  background: #022c22;
-  color: #99f6e4;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text-primary);
   padding: 0.38rem 0.75rem;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+
+.topbar-meta button:hover {
+  transform: translateY(-1px);
+  background: rgba(var(--accent-rgb), 0.24);
 }
 
 .mission-shell {
@@ -1189,10 +1595,12 @@ onMounted(async () => {
 .mission-card,
 .prompt-card,
 .dashboard-card {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 14px;
-  background: rgba(2, 6, 23, 0.82);
+  background: var(--surface-card);
   padding: 0.9rem;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 28px rgba(2, 6, 23, 0.35);
 }
 
 .mission-kicker {
@@ -1200,7 +1608,7 @@ onMounted(async () => {
   font-size: 0.73rem;
   text-transform: uppercase;
   letter-spacing: 0.09em;
-  color: #67e8f9;
+  color: var(--text-signal);
 }
 
 h1 {
@@ -1213,11 +1621,27 @@ h1 {
 .pulse-line,
 .warning-line {
   margin: 0.45rem 0 0;
-  color: #86efac;
+  color: var(--text-secondary);
 }
 
 .warning-line {
   color: #fca5a5;
+}
+
+.topic-row {
+  margin-top: 0.52rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.topic-row span {
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--text-primary);
+  background: rgba(var(--accent-rgb), 0.14);
 }
 
 .prompt-card ul {
@@ -1225,7 +1649,7 @@ h1 {
   padding-left: 1.1rem;
   display: grid;
   gap: 0.35rem;
-  color: #a7f3d0;
+  color: var(--text-secondary);
 }
 
 .stats-grid {
@@ -1236,15 +1660,15 @@ h1 {
 }
 
 .stat-card {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 10px;
-  background: rgba(3, 7, 18, 0.84);
+  background: var(--surface-elevated);
   padding: 0.58rem;
 }
 
 .stat-label {
   margin: 0;
-  color: #67e8f9;
+  color: var(--text-signal);
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1258,24 +1682,25 @@ h1 {
 
 .stat-detail {
   margin: 0.28rem 0 0;
-  color: #a7f3d0;
+  color: var(--text-secondary);
   font-size: 0.8rem;
 }
 
 .terminal-shell {
   margin-top: 0.85rem;
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 14px;
-  background: #020617;
+  background: var(--surface-main);
   overflow: hidden;
+  backdrop-filter: blur(14px);
 }
 
 .build-mode-banner {
   margin: 0;
   padding: 0.6rem 0.85rem;
-  border-bottom: 1px solid #134e4a;
-  background: rgba(6, 78, 59, 0.38);
-  color: #a7f3d0;
+  border-bottom: 1px solid var(--border-tone);
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--text-primary);
   font-size: 0.78rem;
   letter-spacing: 0.03em;
 }
@@ -1297,24 +1722,24 @@ h1 {
 }
 
 .tone-system {
-  color: #bbf7d0;
+  color: var(--text-secondary);
 }
 
 .tone-user {
-  color: #e2e8f0;
+  color: var(--text-primary);
 }
 
 .tone-signal {
-  color: #67e8f9;
+  color: var(--text-signal);
 }
 
 .glyph {
-  color: #10b981;
+  color: rgb(var(--accent-rgb));
   min-width: 0.8rem;
 }
 
 .command-row {
-  border-top: 1px solid #0f172a;
+  border-top: 1px solid var(--border-tone);
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 0.45rem;
@@ -1327,21 +1752,22 @@ h1 {
   border: none;
   outline: none;
   background: transparent;
-  color: #d1fae5;
+  color: var(--text-primary);
 }
 
 .command-row input::placeholder {
-  color: #64748b;
+  color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
 }
 
 .widget-studio {
   margin-top: 0.85rem;
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 14px;
-  background: rgba(2, 6, 23, 0.82);
+  background: var(--surface-card);
   padding: 0.9rem;
   display: grid;
   gap: 0.68rem;
+  backdrop-filter: blur(14px);
 }
 
 .studio-head {
@@ -1353,29 +1779,30 @@ h1 {
 
 .studio-meta {
   margin: 0;
-  color: #86efac;
+  color: var(--text-secondary);
   font-size: 0.76rem;
 }
 
 .empty-widgets {
-  border: 1px dashed #334155;
+  border: 1px dashed rgba(var(--accent-rgb), 0.35);
   border-radius: 10px;
   padding: 0.65rem;
 }
 
 .empty-widgets p {
   margin: 0.25rem 0 0;
-  color: #a7f3d0;
+  color: var(--text-secondary);
   font-size: 0.82rem;
 }
 
 .widget-row {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 10px;
-  background: rgba(3, 7, 18, 0.84);
+  background: var(--surface-elevated);
   padding: 0.66rem;
   display: grid;
   gap: 0.45rem;
+  box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.12);
 }
 
 .widget-head {
@@ -1387,15 +1814,30 @@ h1 {
 
 .widget-id {
   margin: 0;
-  color: #67e8f9;
+  color: var(--text-signal);
   font-size: 0.74rem;
   letter-spacing: 0.07em;
 }
 
-.remove-widget {
-  border: 1px solid #7f1d1d;
+.widget-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.edit-widget {
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
   border-radius: 999px;
-  background: #450a0a;
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--text-primary);
+  padding: 0.24rem 0.58rem;
+  font-size: 0.72rem;
+}
+
+.remove-widget {
+  border: 1px solid rgba(220, 38, 38, 0.55);
+  border-radius: 999px;
+  background: rgba(69, 10, 10, 0.78);
   color: #fecaca;
   padding: 0.24rem 0.58rem;
   font-size: 0.72rem;
@@ -1406,6 +1848,107 @@ h1 {
   font-size: 0.98rem;
 }
 
+.widget-editor {
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(2, 6, 23, 0.58);
+  display: grid;
+  gap: 0.5rem;
+}
+
+.widget-editor label {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.widget-editor span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-signal);
+}
+
+.widget-editor input,
+.widget-editor textarea,
+.widget-editor select {
+  width: 100%;
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--text-primary);
+  padding: 0.42rem 0.48rem;
+  font-family: inherit;
+}
+
+.editor-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.editor-config {
+  border: 1px dashed rgba(var(--accent-rgb), 0.35);
+  border-radius: 8px;
+  padding: 0.45rem;
+}
+
+.editor-config p {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-signal);
+}
+
+.cfg-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1fr) auto;
+  gap: 0.34rem;
+  margin-top: 0.34rem;
+}
+
+.cfg-add,
+.cfg-remove {
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  border-radius: 8px;
+  padding: 0.3rem 0.42rem;
+  font-size: 0.72rem;
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.tune-btn,
+.cancel-btn,
+.save-btn {
+  border-radius: 999px;
+  padding: 0.3rem 0.72rem;
+  font-size: 0.74rem;
+}
+
+.tune-btn {
+  border: 1px solid rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--text-primary);
+}
+
+.cancel-btn {
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(15, 23, 42, 0.8);
+  color: #e2e8f0;
+}
+
+.save-btn {
+  border: 1px solid rgba(var(--accent-rgb), 0.58);
+  background: linear-gradient(120deg, rgba(var(--accent-rgb), 0.68), rgba(var(--accent-sharp-rgb), 0.76));
+  color: #04101a;
+  font-weight: 700;
+}
+
 .tracks-grid {
   margin-top: 0.85rem;
   display: grid;
@@ -1414,15 +1957,15 @@ h1 {
 }
 
 .track-card {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 12px;
-  background: rgba(3, 7, 18, 0.84);
+  background: var(--surface-elevated);
   padding: 0.85rem;
 }
 
 .track-signal {
   margin: 0;
-  color: #67e8f9;
+  color: var(--text-signal);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.09em;
@@ -1435,15 +1978,15 @@ h1 {
 
 .track-card p {
   margin: 0.4rem 0 0;
-  color: #a7f3d0;
+  color: var(--text-secondary);
 }
 
 .track-card button {
   margin-top: 0.62rem;
-  border: 1px solid #134e4a;
+  border: 1px solid var(--border-tone);
   border-radius: 999px;
-  background: #022c22;
-  color: #99f6e4;
+  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--text-primary);
   padding: 0.34rem 0.72rem;
 }
 
@@ -1454,9 +1997,9 @@ h1 {
 }
 
 .post-row {
-  border: 1px solid #1f2937;
+  border: 1px solid var(--border-tone);
   border-radius: 12px;
-  background: rgba(2, 6, 23, 0.82);
+  background: var(--surface-card);
   padding: 0.7rem;
   display: grid;
   gap: 0.65rem;
@@ -1467,12 +2010,12 @@ h1 {
   max-height: 220px;
   object-fit: cover;
   border-radius: 10px;
-  border: 1px solid #334155;
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
 }
 
 .post-meta {
   margin: 0;
-  color: #67e8f9;
+  color: var(--text-signal);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1485,15 +2028,15 @@ h1 {
 
 .post-row p {
   margin: 0.35rem 0 0;
-  color: #a7f3d0;
+  color: var(--text-secondary);
 }
 
 .post-row a {
   display: inline-block;
   margin-top: 0.5rem;
-  color: #bbf7d0;
+  color: var(--text-primary);
   text-decoration: none;
-  border-bottom: 1px dashed #67e8f9;
+  border-bottom: 1px dashed rgb(var(--accent-soft-rgb));
 }
 
 .shortcut-row {
@@ -1505,10 +2048,10 @@ h1 {
 
 .shortcut-chip {
   text-decoration: none;
-  color: #99f6e4;
-  border: 1px solid #134e4a;
+  color: var(--text-primary);
+  border: 1px solid var(--border-tone);
   border-radius: 999px;
-  background: #052e2b;
+  background: rgba(var(--accent-rgb), 0.16);
   padding: 0.3rem 0.65rem;
   font-size: 0.78rem;
 }
@@ -1525,6 +2068,10 @@ h1 {
   .dashboard-shell {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: start;
+  }
+
+  .editor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .widget-studio {
