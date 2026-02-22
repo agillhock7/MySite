@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DashboardWidget } from '@/dashboard/engine';
 import { refreshWidgetRuntime, type WidgetRuntimePayload } from '@/api/widgetRuntime';
 
@@ -11,6 +11,11 @@ const props = defineProps<{
 const loading = ref(false);
 const error = ref('');
 const runtime = ref<WidgetRuntimePayload | null>(null);
+const autoRefreshEnabled = ref(false);
+const autoRefreshCountdown = ref(0);
+let autoRefreshTimer: number | null = null;
+
+const AUTO_REFRESH_SECONDS = 45;
 
 const refreshedAtLabel = computed(() => {
   if (!runtime.value?.refreshedAt) {
@@ -64,16 +69,68 @@ const promptPayload = computed(() => {
   const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
   const response = typeof payload.response === 'string' ? payload.response : '';
   const mode = typeof payload.mode === 'string' ? payload.mode : '';
+  const capability = typeof payload.capability === 'string' ? payload.capability : 'generic';
   const actions = Array.isArray(payload.items)
     ? payload.items.filter((item): item is string => typeof item === 'string').slice(0, 4)
     : [];
+  const facts =
+    payload.facts && typeof payload.facts === 'object' && !Array.isArray(payload.facts)
+      ? (payload.facts as Record<string, unknown>)
+      : {};
 
   return {
     mode,
+    capability,
     prompt,
     response,
-    actions
+    actions,
+    facts
   };
+});
+
+const protocolLabel = computed(() => {
+  if (promptPayload.value.mode !== 'prompt') {
+    return '';
+  }
+
+  const capability = promptPayload.value.capability;
+  if (capability === 'time') {
+    return 'Protocol: Time Runtime';
+  }
+
+  if (capability === 'weather') {
+    return 'Protocol: Weather Runtime';
+  }
+
+  if (capability === 'crypto') {
+    return 'Protocol: Market Runtime';
+  }
+
+  return 'Protocol: AI Prompt';
+});
+
+const promptFacts = computed(() => {
+  if (promptPayload.value.mode !== 'prompt') {
+    return [];
+  }
+
+  const entries = Object.entries(promptPayload.value.facts)
+    .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+    .slice(0, 6)
+    .map(([key, value]) => {
+      const normalizedKey = key
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/_/g, ' ')
+        .trim()
+        .replace(/^./, (char) => char.toUpperCase());
+      return {
+        key,
+        label: normalizedKey,
+        value: String(value)
+      };
+    });
+
+  return entries;
 });
 
 const htmlPayload = computed(() => {
@@ -95,15 +152,61 @@ async function refresh(): Promise<void> {
   }
 
   runtime.value = payload;
+  autoRefreshCountdown.value = AUTO_REFRESH_SECONDS;
+}
+
+function stopAutoRefresh(): void {
+  if (autoRefreshTimer !== null) {
+    window.clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
+
+function startAutoRefresh(): void {
+  stopAutoRefresh();
+  autoRefreshCountdown.value = AUTO_REFRESH_SECONDS;
+  autoRefreshTimer = window.setInterval(async () => {
+    if (!autoRefreshEnabled.value) {
+      return;
+    }
+
+    if (loading.value) {
+      return;
+    }
+
+    autoRefreshCountdown.value -= 1;
+    if (autoRefreshCountdown.value <= 0) {
+      await refresh();
+    }
+  }, 1000);
+}
+
+function toggleAutoRefresh(): void {
+  autoRefreshEnabled.value = !autoRefreshEnabled.value;
 }
 
 onMounted(async () => {
   await refresh();
 });
 
+onBeforeUnmount(() => {
+  stopAutoRefresh();
+});
+
+watch(autoRefreshEnabled, (enabled) => {
+  if (enabled) {
+    startAutoRefresh();
+    return;
+  }
+
+  stopAutoRefresh();
+  autoRefreshCountdown.value = 0;
+});
+
 watch(
   () => [props.widget.id, props.widget.title, props.widget.type, JSON.stringify(props.widget.config), props.signature],
   async () => {
+    autoRefreshCountdown.value = AUTO_REFRESH_SECONDS;
     await refresh();
   }
 );
@@ -115,6 +218,9 @@ watch(
       <p class="widget-type">{{ widget.type }}</p>
       <div class="meta-right">
         <span v-if="refreshedAtLabel" class="refresh-meta">{{ sourceLabel }} · {{ refreshedAtLabel }}</span>
+        <button type="button" class="refresh-btn ghost" @click="toggleAutoRefresh">
+          {{ autoRefreshEnabled ? `Auto ${autoRefreshCountdown}s` : 'Auto' }}
+        </button>
         <button type="button" class="refresh-btn" :disabled="loading" @click="refresh">
           {{ loading ? 'Refreshing...' : 'Refresh' }}
         </button>
@@ -155,8 +261,15 @@ watch(
 
     <template v-else>
       <template v-if="promptPayload.mode === 'prompt'">
+        <p class="protocol">{{ protocolLabel }}</p>
         <p v-if="promptPayload.prompt" class="secondary"><strong>Prompt:</strong> {{ promptPayload.prompt }}</p>
         <p class="primary">{{ promptPayload.response || textPayload || 'No response yet.' }}</p>
+        <div v-if="promptFacts.length > 0" class="facts-grid">
+          <p v-for="fact in promptFacts" :key="fact.key" class="fact">
+            <span>{{ fact.label }}</span>
+            <strong>{{ fact.value }}</strong>
+          </p>
+        </div>
         <ul v-if="promptPayload.actions.length > 0">
           <li v-for="item in promptPayload.actions" :key="item">{{ item }}</li>
         </ul>
@@ -211,6 +324,12 @@ watch(
   font-size: 0.72rem;
 }
 
+.refresh-btn.ghost {
+  background: #082f49;
+  border-color: #155e75;
+  color: #a5f3fc;
+}
+
 .refresh-btn:disabled {
   opacity: 0.55;
 }
@@ -226,6 +345,14 @@ watch(
   color: #a7f3d0;
 }
 
+.protocol {
+  margin: 0.34rem 0 0;
+  color: #22d3ee;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .error-line {
   margin: 0.4rem 0 0;
   color: #fca5a5;
@@ -237,6 +364,35 @@ ul {
   color: #a7f3d0;
   display: grid;
   gap: 0.24rem;
+}
+
+.facts-grid {
+  margin-top: 0.45rem;
+  display: grid;
+  gap: 0.38rem;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.fact {
+  margin: 0;
+  border: 1px solid #164e63;
+  border-radius: 8px;
+  padding: 0.34rem 0.42rem;
+  background: rgba(8, 47, 73, 0.28);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.fact span {
+  font-size: 0.68rem;
+  color: #67e8f9;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.fact strong {
+  font-size: 0.8rem;
+  color: #d1fae5;
 }
 
 .html-preview :deep(h1),

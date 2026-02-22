@@ -107,7 +107,8 @@ function http_get_json(string $url, int $timeoutSeconds): array
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_TIMEOUT => $timeoutSeconds,
         CURLOPT_HTTPHEADER => [
-            'Accept: application/json'
+            'Accept: application/json',
+            'User-Agent: MySiteWidgetRuntime/1.0'
         ]
     ]);
 
@@ -215,6 +216,11 @@ function fetch_weather_payload(string $city, int $timeoutSeconds): array
             'condition' => weather_code_label($weatherCode)
         ]
     ];
+}
+
+function celsius_to_fahrenheit(float $valueC): float
+{
+    return ($valueC * 9 / 5) + 32;
 }
 
 function league_to_espn_path(string $league): array
@@ -388,6 +394,77 @@ function fallback_prompt_widget_answer(string $prompt): string
     return 'Focus on this now: ' . $trimmed;
 }
 
+function extract_weather_location_from_prompt(string $prompt): string
+{
+    $text = trim($prompt);
+    if ($text === '') {
+        return '';
+    }
+
+    if (preg_match('/(?:weather|forecast|temperature)\s+(?:in|for)\s+([a-zA-Z][a-zA-Z\s\.\-]{1,70})/i', $text, $matches) === 1) {
+        $raw = trim($matches[1]);
+        $raw = preg_replace('/\b(with|and|using|from)\b.*$/i', '', $raw) ?? $raw;
+        return trim($raw, " \t\n\r\0\x0B.,;:!?");
+    }
+
+    return '';
+}
+
+function detect_crypto_symbol_from_prompt(string $prompt): string
+{
+    $normalized = strtolower($prompt);
+    if (strpos($normalized, 'bitcoin') !== false || preg_match('/\bbtc\b/i', $normalized) === 1) {
+        return 'bitcoin';
+    }
+
+    if (strpos($normalized, 'ethereum') !== false || preg_match('/\beth\b/i', $normalized) === 1) {
+        return 'ethereum';
+    }
+
+    return '';
+}
+
+function fetch_crypto_price_payload(string $coinId, int $timeoutSeconds): array
+{
+    $supported = ['bitcoin', 'ethereum'];
+    if (!in_array($coinId, $supported, true)) {
+        $coinId = 'bitcoin';
+    }
+
+    $url = 'https://api.coingecko.com/api/v3/simple/price?ids=' . rawurlencode($coinId) . '&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true';
+    $response = http_get_json($url, $timeoutSeconds);
+    if (!(bool) ($response['ok'] ?? false)) {
+        return [
+            'ok' => false,
+            'error' => 'Unable to fetch crypto pricing right now.'
+        ];
+    }
+
+    $root = as_array($response['data'][$coinId] ?? []);
+    if (count($root) === 0) {
+        return [
+            'ok' => false,
+            'error' => 'No crypto pricing data returned.'
+        ];
+    }
+
+    $priceUsd = isset($root['usd']) ? (float) $root['usd'] : 0.0;
+    $change24 = isset($root['usd_24h_change']) ? (float) $root['usd_24h_change'] : 0.0;
+    $updatedAtUnix = isset($root['last_updated_at']) ? (int) $root['last_updated_at'] : 0;
+    $updatedAtIso = $updatedAtUnix > 0 ? gmdate('c', $updatedAtUnix) : gmdate('c');
+
+    return [
+        'ok' => true,
+        'payload' => [
+            'coinId' => $coinId,
+            'symbol' => $coinId === 'bitcoin' ? 'BTC' : 'ETH',
+            'priceUsd' => $priceUsd,
+            'change24hPct' => $change24,
+            'updatedAt' => $updatedAtIso
+        ]
+    ];
+}
+
 function extract_time_location_from_prompt(string $prompt): string
 {
     $text = trim($prompt);
@@ -508,7 +585,24 @@ function fetch_time_payload(string $location, int $timeoutSeconds): array
 function detect_prompt_capability(string $prompt): array
 {
     $normalized = strtolower($prompt);
+    $isWeatherPrompt = preg_match('/\b(weather|forecast|temperature)\b/i', $normalized) === 1;
     $isTimePrompt = preg_match('/\b(current time|local time|time in|what time|clock)\b/i', $normalized) === 1;
+    $coinId = detect_crypto_symbol_from_prompt($prompt);
+
+    if ($coinId !== '') {
+        return [
+            'type' => 'crypto',
+            'coinId' => $coinId,
+            'location' => ''
+        ];
+    }
+
+    if ($isWeatherPrompt) {
+        return [
+            'type' => 'weather',
+            'location' => extract_weather_location_from_prompt($prompt)
+        ];
+    }
 
     if ($isTimePrompt) {
         return [
@@ -517,7 +611,7 @@ function detect_prompt_capability(string $prompt): array
         ];
     }
 
-    return ['type' => 'generic', 'location' => ''];
+    return ['type' => 'generic', 'location' => '', 'coinId' => ''];
 }
 
 function parse_prompt_widget_response(string $raw, string $fallbackAnswer): array
@@ -710,6 +804,86 @@ if ($widget['type'] === 'weather') {
                 'facts' => $timePayload
             ];
             $source = 'external';
+        } elseif (($capability['type'] ?? 'generic') === 'weather') {
+            $location = clean_text($capability['location'] ?? '', 'New York');
+            $weather = fetch_weather_payload($location, $timeoutSeconds);
+
+            if (!(bool) ($weather['ok'] ?? false)) {
+                $payload = [
+                    'mode' => 'prompt',
+                    'capability' => 'weather',
+                    'title' => $widget['title'],
+                    'prompt' => $prompt,
+                    'response' => clean_text($weather['error'] ?? 'Weather data unavailable right now.', 'Weather data unavailable right now.'),
+                    'items' => ['Try refresh for a new pull.', 'Check location spelling for best results.'],
+                    'facts' => [
+                        'location' => $location
+                    ]
+                ];
+                $source = 'fallback';
+            } else {
+                $weatherPayload = as_array($weather['payload'] ?? []);
+                $tempC = isset($weatherPayload['temperatureC']) ? (float) $weatherPayload['temperatureC'] : 0.0;
+                $tempF = celsius_to_fahrenheit($tempC);
+                $responseText = 'Current weather in ' . clean_text($weatherPayload['city'] ?? $location, $location) .
+                    ': ' . number_format($tempF, 1) . 'F (' . number_format($tempC, 1) . 'C), ' .
+                    clean_text($weatherPayload['condition'] ?? 'conditions unavailable', 'conditions unavailable') . '.';
+
+                $payload = [
+                    'mode' => 'prompt',
+                    'capability' => 'weather',
+                    'title' => $widget['title'],
+                    'prompt' => $prompt,
+                    'response' => $responseText,
+                    'items' => [
+                        'Feels like: ' . number_format((float) ($weatherPayload['feelsLikeC'] ?? 0.0), 1) . 'C',
+                        'Wind: ' . number_format((float) ($weatherPayload['windKph'] ?? 0.0), 1) . ' kph',
+                        'Daily range: ' . number_format((float) ($weatherPayload['lowC'] ?? 0.0), 1) . 'C to ' . number_format((float) ($weatherPayload['highC'] ?? 0.0), 1) . 'C'
+                    ],
+                    'facts' => $weatherPayload
+                ];
+                $source = 'external';
+            }
+        } elseif (($capability['type'] ?? 'generic') === 'crypto') {
+            $coinId = clean_text($capability['coinId'] ?? '', 'bitcoin');
+            $crypto = fetch_crypto_price_payload($coinId, $timeoutSeconds);
+
+            if (!(bool) ($crypto['ok'] ?? false)) {
+                $payload = [
+                    'mode' => 'prompt',
+                    'capability' => 'crypto',
+                    'title' => $widget['title'],
+                    'prompt' => $prompt,
+                    'response' => clean_text($crypto['error'] ?? 'Crypto price unavailable right now.', 'Crypto price unavailable right now.'),
+                    'items' => ['Try refresh for a live pull.', 'Confirm the requested coin symbol is supported.'],
+                    'facts' => [
+                        'coinId' => $coinId
+                    ]
+                ];
+                $source = 'fallback';
+            } else {
+                $cryptoPayload = as_array($crypto['payload'] ?? []);
+                $symbol = clean_text($cryptoPayload['symbol'] ?? strtoupper($coinId), strtoupper($coinId));
+                $priceUsd = (float) ($cryptoPayload['priceUsd'] ?? 0.0);
+                $change24 = (float) ($cryptoPayload['change24hPct'] ?? 0.0);
+                $changePrefix = $change24 >= 0 ? '+' : '';
+                $responseText = $symbol . ' price: $' . number_format($priceUsd, 2) . ' USD';
+
+                $payload = [
+                    'mode' => 'prompt',
+                    'capability' => 'crypto',
+                    'title' => $widget['title'],
+                    'prompt' => $prompt,
+                    'response' => $responseText,
+                    'items' => [
+                        '24h change: ' . $changePrefix . number_format($change24, 2) . '%',
+                        'Updated: ' . clean_text($cryptoPayload['updatedAt'] ?? gmdate('c'), gmdate('c')),
+                        'Use refresh for the latest market tick.'
+                    ],
+                    'facts' => $cryptoPayload
+                ];
+                $source = 'external';
+            }
         } else {
         $fallbackAnswer = fallback_prompt_widget_answer($prompt);
         $completion = ai_short_text(
