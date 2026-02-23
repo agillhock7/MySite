@@ -138,6 +138,11 @@ const assistantPrimaryCta = {
   label: 'Access more AI tools + free web hosting',
   action: 'https://hiops.darkhorsevirtue.io'
 } as const;
+const missionNavigation = [
+  { id: 'ai-conversations', label: 'AI Conversations' },
+  { id: 'ai-skill-game', label: 'AI Skill Game' },
+  { id: 'blog-posts', label: 'Blog Posts' }
+] as const;
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -1825,6 +1830,17 @@ const shellVisualStyle = computed<Record<string, string>>(() => {
   };
 });
 
+const gameThemeStyle = computed<Record<string, string>>(() => ({
+  '--game-accent-rgb': shellVisualStyle.value['--accent-rgb'] ?? '22, 199, 207',
+  '--game-accent-soft-rgb': shellVisualStyle.value['--accent-soft-rgb'] ?? '120, 224, 228',
+  '--game-accent-sharp-rgb': shellVisualStyle.value['--accent-sharp-rgb'] ?? '16, 153, 178',
+  '--game-text-primary': personalizationMode.value === 'light' ? '#0f172a' : '#d1fae5',
+  '--game-text-secondary': personalizationMode.value === 'light' ? '#334155' : '#a7f3d0',
+  '--game-surface-main': personalizationMode.value === 'light' ? 'rgba(247, 252, 255, 0.92)' : 'rgba(2, 8, 24, 0.86)',
+  '--game-surface-card': personalizationMode.value === 'light' ? 'rgba(255, 255, 255, 0.9)' : 'rgba(2, 10, 28, 0.72)',
+  '--game-surface-elevated': personalizationMode.value === 'light' ? 'rgba(255, 255, 255, 0.94)' : 'rgba(2, 8, 23, 0.74)'
+}));
+
 const visualSeed = computed(() =>
   hashText(`${designSignature.value}:${sceneNonce.value}:${focusTopics.value.join('|')}:${personalizationProfile.value}`)
 );
@@ -2105,6 +2121,18 @@ function runCommandHint(command: string): void {
 function toggleTerminalExpanded(): void {
   terminalExpanded.value = !terminalExpanded.value;
   transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
+}
+
+function scrollToSection(sectionId: string): void {
+  const target = document.getElementById(sectionId);
+  if (!target) {
+    return;
+  }
+
+  target.scrollIntoView({
+    behavior: prefersReducedMotion.value ? 'auto' : 'smooth',
+    block: 'start'
+  });
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
@@ -2596,13 +2624,26 @@ onUnmounted(() => {
 
     <section class="mission-shell reveal-surface" style="--reveal-order: 2">
       <article class="mission-card">
-        <p class="mission-kicker">Mission Brief</p>
+        <p class="mission-kicker">About MySite</p>
         <h1>{{ scene.mission }}</h1>
+        <p class="mysite-explainer">
+          MySite is a sample of AI capabilities for creating custom workspaces tailored to each visitor.
+        </p>
         <p class="voice-line">{{ scene.voice }}</p>
         <p class="pulse-line">{{ scene.pulse }}</p>
         <div class="topic-row">
           <span v-for="topic in focusTopics.slice(0, 5)" :key="topic">{{ topic }}</span>
         </div>
+        <nav class="mission-nav" aria-label="MySite sections">
+          <button
+            v-for="item in missionNavigation"
+            :key="item.id"
+            type="button"
+            @click="scrollToSection(item.id)"
+          >
+            {{ item.label }}
+          </button>
+        </nav>
         <p v-if="wordpressError" class="warning-line">{{ wordpressError }}</p>
         <p v-if="initializationError" class="warning-line">{{ initializationError }}</p>
       </article>
@@ -2627,10 +2668,17 @@ onUnmounted(() => {
         </div>
       </article>
 
-      <AiPromptGame :signature="designSignature" :topics="focusTopics" />
+      <div id="ai-skill-game" class="game-anchor">
+        <AiPromptGame
+          :signature="designSignature"
+          :topics="focusTopics"
+          :theme-style="gameThemeStyle"
+          :theme-mode="personalizationMode"
+        />
+      </div>
     </section>
 
-    <section class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
+    <section id="ai-conversations" class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
       <p v-if="widgetBuildSession" class="build-mode-banner">
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
@@ -2898,7 +2946,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="content-stream reveal-surface" style="--reveal-order: 7">
+    <section id="blog-posts" class="content-stream reveal-surface" style="--reveal-order: 7">
       <article v-for="post in posts" :key="post.id" class="post-row">
         <img v-if="post.imageUrl" :src="post.imageUrl" alt="" loading="lazy" />
         <div>
@@ -3289,6 +3337,13 @@ h1 {
   color: var(--text-secondary);
 }
 
+.mysite-explainer {
+  margin: 0.45rem 0 0;
+  color: var(--text-primary);
+  line-height: 1.45;
+  max-width: 70ch;
+}
+
 .warning-line {
   color: #fca5a5;
 }
@@ -3307,6 +3362,30 @@ h1 {
   font-size: 0.72rem;
   color: var(--text-primary);
   background: rgba(var(--accent-rgb), 0.14);
+}
+
+.mission-nav {
+  margin-top: 0.58rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mission-nav button {
+  border: 1px solid rgba(var(--accent-rgb), 0.46);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.28rem 0.68rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.03em;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.mission-nav button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.74);
+  background: rgba(var(--accent-rgb), 0.28);
 }
 
 .prompt-card ul {
@@ -3356,6 +3435,10 @@ h1 {
   margin: 0.28rem 0 0;
   color: var(--text-secondary);
   font-size: 0.8rem;
+}
+
+.game-anchor {
+  min-width: 0;
 }
 
 .terminal-shell {

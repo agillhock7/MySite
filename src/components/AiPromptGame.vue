@@ -31,10 +31,13 @@ interface CompletionBadge {
 const props = defineProps<{
   signature: string;
   topics: string[];
+  themeStyle?: Record<string, string>;
+  themeMode?: 'dark' | 'light';
 }>();
 
 const BADGE_STORAGE_KEY = 'mysite.ai-skill.badges.v1';
 const ROUND_SECONDS = 36;
+const SHARE_STATUS_TIMEOUT_MS = 2600;
 
 const questionBank: PromptQuestion[] = [
   {
@@ -186,6 +189,7 @@ function safeParseBadges(raw: string | null): CompletionBadge[] {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
           return null;
         }
+
         const record = entry as Record<string, unknown>;
         const id = typeof record.id === 'string' ? record.id : '';
         const label = typeof record.label === 'string' ? record.label : '';
@@ -254,6 +258,8 @@ const gameExpanded = ref(false);
 const earnedBadges = ref<CompletionBadge[]>([]);
 const sessionBadge = ref<CompletionBadge | null>(null);
 const badgeAwardedThisRun = ref(false);
+const shareStatus = ref('');
+let shareStatusTimer: number | null = null;
 
 const complete = computed(() => currentIndex.value >= orderedQuestions.value.length);
 const currentQuestion = computed(() => (complete.value ? null : orderedQuestions.value[currentIndex.value] ?? null));
@@ -261,12 +267,14 @@ const progressPercent = computed(() => {
   if (orderedQuestions.value.length === 0) {
     return 0;
   }
+
   return Math.round((Math.min(currentIndex.value, orderedQuestions.value.length) / orderedQuestions.value.length) * 100);
 });
 const masteryPercent = computed(() => {
   if (orderedQuestions.value.length === 0) {
     return 0;
   }
+
   return Math.round((score.value / orderedQuestions.value.length) * 100);
 });
 const timePercent = computed(() => Math.max(0, Math.round((roundTimeLeft.value / ROUND_SECONDS) * 100)));
@@ -338,11 +346,117 @@ const celebrationParticles = computed(() => {
   });
 });
 
+const victoryRings = computed(() =>
+  Array.from({ length: 4 }, (_, idx) => ({
+    '--delay': `${idx * 0.34}s`,
+    '--duration': `${2.1 + idx * 0.35}s`
+  }))
+);
+
 const progressRingStyle = computed<Record<string, string>>(() => ({
   '--progress-angle': `${Math.max(0, Math.min(100, progressPercent.value)) * 3.6}deg`
 }));
 
 const latestEarnedBadge = computed(() => earnedBadges.value[0] ?? null);
+
+const mergedThemeStyle = computed<Record<string, string>>(() => ({
+  '--game-accent-rgb': '22, 199, 207',
+  '--game-accent-soft-rgb': '120, 224, 228',
+  '--game-accent-sharp-rgb': '16, 153, 178',
+  '--game-text-primary': '#d1fae5',
+  '--game-text-secondary': '#a7f3d0',
+  '--game-surface-main': 'rgba(2, 8, 24, 0.86)',
+  '--game-surface-card': 'rgba(2, 10, 28, 0.72)',
+  '--game-surface-elevated': 'rgba(2, 8, 23, 0.74)',
+  ...(props.themeStyle ?? {})
+}));
+
+const gameClassName = computed(() => [
+  props.themeMode === 'light' ? 'theme-light' : 'theme-dark',
+  {
+    'is-fullscreen': gameExpanded.value,
+    'is-started': gameStarted.value,
+    'is-complete': complete.value && gameStarted.value
+  }
+]);
+
+function setShareStatus(message: string): void {
+  shareStatus.value = message;
+  if (shareStatusTimer !== null) {
+    window.clearTimeout(shareStatusTimer);
+  }
+
+  shareStatusTimer = window.setTimeout(() => {
+    if (shareStatus.value === message) {
+      shareStatus.value = '';
+    }
+  }, SHARE_STATUS_TIMEOUT_MS);
+}
+
+function buildSharePayload(): { title: string; text: string; url: string } {
+  const scoreLine = `${score.value}/${orderedQuestions.value.length}`;
+  const text = `I completed the MySite Prompt Ops Simulator with ${masteryPercent.value}% mastery (${scoreLine}) and ${xp.value} XP. Try it here:`;
+
+  if (typeof window === 'undefined') {
+    return {
+      title: 'MySite AI Skill Game Score',
+      text,
+      url: ''
+    };
+  }
+
+  const shareUrl = new URL('/app', window.location.origin);
+  shareUrl.searchParams.set('ref', 'ai-skill-game');
+  shareUrl.searchParams.set('score', scoreLine);
+  shareUrl.searchParams.set('mastery', `${masteryPercent.value}`);
+
+  return {
+    title: 'MySite AI Skill Game Score',
+    text,
+    url: shareUrl.toString()
+  };
+}
+
+async function shareScore(): Promise<void> {
+  if (!complete.value || !gameStarted.value) {
+    setShareStatus('Finish the run before sharing.');
+    return;
+  }
+
+  const payload = buildSharePayload();
+
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      await navigator.share(payload);
+      setShareStatus('Score shared.');
+      return;
+    }
+
+    const intent = new URL('https://twitter.com/intent/tweet');
+    intent.searchParams.set('text', `${payload.text} ${payload.url}`.trim());
+    window.open(intent.toString(), '_blank', 'noopener,noreferrer');
+    setShareStatus('Share intent opened.');
+  } catch {
+    setShareStatus('Share cancelled.');
+  }
+}
+
+async function copyShareLink(): Promise<void> {
+  if (!complete.value || !gameStarted.value) {
+    setShareStatus('Finish the run before copying a link.');
+    return;
+  }
+
+  const payload = buildSharePayload();
+  const value = `${payload.text} ${payload.url}`.trim();
+
+  try {
+    await navigator.clipboard.writeText(value);
+    setShareStatus('Share text copied.');
+  } catch {
+    setShareStatus('Clipboard blocked.');
+  }
+}
 
 function stopRoundTimer(): void {
   if (roundTimer.value !== null) {
@@ -428,6 +542,7 @@ function startGame(): void {
   bestStreak.value = 0;
   sessionBadge.value = null;
   badgeAwardedThisRun.value = false;
+  shareStatus.value = '';
   prepareRound();
 }
 
@@ -500,13 +615,17 @@ onMounted(() => {
 onUnmounted(() => {
   stopRoundTimer();
   applyBodyScrollLock(false);
+  if (shareStatusTimer !== null) {
+    window.clearTimeout(shareStatusTimer);
+    shareStatusTimer = null;
+  }
   window.removeEventListener('keydown', handleGlobalKeydown);
 });
 </script>
 
 <template>
   <Teleport to="body" :disabled="!gameExpanded">
-    <article class="game-card" :class="{ 'is-fullscreen': gameExpanded, 'is-started': gameStarted, 'is-complete': complete && gameStarted }">
+    <article class="game-card" :class="gameClassName" :style="mergedThemeStyle">
       <div class="aurora-layer" aria-hidden="true">
         <span v-for="(orb, index) in visualOrbs" :key="`orb-${index}`" class="aurora-orb" :style="orb"></span>
       </div>
@@ -626,6 +745,9 @@ onUnmounted(() => {
         <div class="celebration-layer" aria-hidden="true">
           <span v-for="(particle, index) in celebrationParticles" :key="`p-${index}`" class="particle" :style="particle"></span>
         </div>
+        <div class="victory-rings" aria-hidden="true">
+          <span v-for="(ring, index) in victoryRings" :key="`ring-${index}`" :style="ring"></span>
+        </div>
 
         <p class="result-score">Score: {{ score }} / {{ orderedQuestions.length }}</p>
         <h3>{{ grade }}</h3>
@@ -655,10 +777,14 @@ onUnmounted(() => {
 
         <div class="result-actions">
           <button type="button" class="game-btn primary" @click="restartGame">Run Again</button>
+          <button type="button" class="game-btn" @click="shareScore">Share Score</button>
+          <button type="button" class="game-btn" @click="copyShareLink">Copy Share Text</button>
           <button type="button" class="game-btn" @click="toggleFullscreen">
             {{ gameExpanded ? 'Keep Focus Mode' : 'Replay in Fullscreen' }}
           </button>
         </div>
+
+        <p v-if="shareStatus" class="share-status">{{ shareStatus }}</p>
       </div>
     </article>
   </Teleport>
@@ -666,19 +792,29 @@ onUnmounted(() => {
 
 <style scoped>
 .game-card {
+  --game-accent-rgb: 22, 199, 207;
+  --game-accent-soft-rgb: 120, 224, 228;
+  --game-accent-sharp-rgb: 16, 153, 178;
+  --game-text-primary: #d1fae5;
+  --game-text-secondary: #a7f3d0;
+  --game-surface-main: rgba(2, 8, 24, 0.86);
+  --game-surface-card: rgba(2, 10, 28, 0.72);
+  --game-surface-elevated: rgba(2, 8, 23, 0.74);
+
   position: relative;
-  border: 1px solid rgba(8, 145, 178, 0.38);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.38);
   border-radius: 18px;
   background:
-    radial-gradient(circle at 16% -12%, rgba(6, 182, 212, 0.18), transparent 42%),
-    radial-gradient(circle at 84% 116%, rgba(16, 185, 129, 0.16), transparent 46%),
-    rgba(2, 8, 24, 0.86);
+    radial-gradient(circle at 16% -12%, rgba(var(--game-accent-rgb), 0.18), transparent 42%),
+    radial-gradient(circle at 84% 116%, rgba(var(--game-accent-soft-rgb), 0.14), transparent 46%),
+    var(--game-surface-main);
+  color: var(--game-text-primary);
   padding: 1rem;
   overflow: hidden;
   min-height: 520px;
   display: grid;
   gap: 0.9rem;
-  box-shadow: 0 22px 44px rgba(2, 6, 23, 0.44), inset 0 1px 0 rgba(148, 250, 255, 0.1);
+  box-shadow: 0 22px 44px rgba(2, 6, 23, 0.44), inset 0 1px 0 rgba(var(--game-accent-soft-rgb), 0.18);
 }
 
 .game-card.is-fullscreen {
@@ -701,7 +837,7 @@ onUnmounted(() => {
 .aurora-orb {
   position: absolute;
   border-radius: 999px;
-  background: radial-gradient(circle at 30% 30%, rgba(125, 245, 255, 0.24), rgba(7, 21, 45, 0));
+  background: radial-gradient(circle at 30% 30%, rgba(var(--game-accent-soft-rgb), 0.3), rgba(7, 21, 45, 0));
   transform: translate3d(-50%, -50%, 0);
   animation: orb-drift var(--duration, 12s) ease-in-out infinite;
   animation-delay: var(--delay, 0s);
@@ -740,19 +876,19 @@ onUnmounted(() => {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
 }
 
 .game-header h2 {
   margin: 0.3rem 0 0;
   font-size: clamp(1.05rem, 2vw, 1.36rem);
   letter-spacing: 0.02em;
-  color: #ecfeff;
+  color: var(--game-text-primary);
 }
 
 .game-subtitle {
   margin: 0.42rem 0 0;
-  color: #a7f3d0;
+  color: var(--game-text-secondary);
   max-width: 66ch;
   line-height: 1.46;
 }
@@ -763,11 +899,11 @@ onUnmounted(() => {
 }
 
 .head-btn {
-  border: 1px solid rgba(103, 232, 249, 0.46);
+  border: 1px solid rgba(var(--game-accent-soft-rgb), 0.52);
   border-radius: 999px;
   padding: 0.34rem 0.74rem;
-  background: rgba(8, 145, 178, 0.14);
-  color: #d1fae5;
+  background: rgba(var(--game-accent-rgb), 0.14);
+  color: var(--game-text-primary);
   font-size: 0.72rem;
   letter-spacing: 0.03em;
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
@@ -775,8 +911,8 @@ onUnmounted(() => {
 
 .head-btn:hover {
   transform: translateY(-1px);
-  border-color: rgba(103, 232, 249, 0.7);
-  background: rgba(8, 145, 178, 0.26);
+  border-color: rgba(var(--game-accent-soft-rgb), 0.76);
+  background: rgba(var(--game-accent-rgb), 0.26);
 }
 
 .head-btn.ghost {
@@ -790,9 +926,9 @@ onUnmounted(() => {
 }
 
 .telemetry-card {
-  border: 1px solid rgba(45, 212, 191, 0.24);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.3);
   border-radius: 12px;
-  background: rgba(2, 10, 28, 0.72);
+  background: var(--game-surface-card);
   padding: 0.58rem 0.62rem;
   min-height: 84px;
   display: grid;
@@ -811,7 +947,7 @@ onUnmounted(() => {
   width: 52px;
   height: 52px;
   border-radius: 999px;
-  background: conic-gradient(rgba(45, 212, 191, 0.94) var(--progress-angle), rgba(30, 41, 59, 0.7) 0deg);
+  background: conic-gradient(rgba(var(--game-accent-rgb), 0.94) var(--progress-angle), rgba(30, 41, 59, 0.7) 0deg);
   display: grid;
   place-items: center;
   flex: 0 0 52px;
@@ -824,9 +960,9 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   font-size: 0.64rem;
-  color: #d1fae5;
+  color: var(--game-text-primary);
   background: rgba(2, 6, 23, 0.92);
-  border: 1px solid rgba(45, 212, 191, 0.24);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.24);
 }
 
 .telemetry-label {
@@ -834,20 +970,20 @@ onUnmounted(() => {
   font-size: 0.68rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
 }
 
 .telemetry-value {
   margin: 0;
   font-size: 1.04rem;
-  color: #f0fdfa;
+  color: var(--game-text-primary);
   font-weight: 600;
 }
 
 .telemetry-detail {
   margin: 0;
   font-size: 0.72rem;
-  color: #99f6e4;
+  color: var(--game-text-secondary);
 }
 
 .timer-bar {
@@ -855,7 +991,7 @@ onUnmounted(() => {
   height: 7px;
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(45, 212, 191, 0.22);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.22);
   overflow: hidden;
 }
 
@@ -863,17 +999,17 @@ onUnmounted(() => {
   display: block;
   height: 100%;
   width: 100%;
-  background: linear-gradient(90deg, #14b8a6, #67e8f9);
+  background: linear-gradient(90deg, rgba(var(--game-accent-rgb), 0.88), rgba(var(--game-accent-soft-rgb), 0.95));
   transition: width 0.28s ease;
 }
 
 .game-intro,
 .game-round,
 .game-results {
-  border: 1px solid rgba(45, 212, 191, 0.24);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.24);
   border-radius: 14px;
   padding: 0.86rem;
-  background: rgba(2, 8, 23, 0.74);
+  background: var(--game-surface-elevated);
   display: grid;
   gap: 0.62rem;
 }
@@ -884,12 +1020,13 @@ onUnmounted(() => {
 .feedback,
 .result-copy {
   margin: 0;
-  color: #d1fae5;
+  color: var(--game-text-primary);
   line-height: 1.48;
 }
 
-.intro-note {
-  color: #99f6e4;
+.intro-note,
+.share-status {
+  color: var(--game-text-secondary);
 }
 
 .intro-actions,
@@ -900,10 +1037,10 @@ onUnmounted(() => {
 }
 
 .game-btn {
-  border: 1px solid rgba(45, 212, 191, 0.46);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.46);
   border-radius: 999px;
-  background: rgba(6, 78, 59, 0.32);
-  color: #d1fae5;
+  background: rgba(var(--game-accent-rgb), 0.16);
+  color: var(--game-text-primary);
   padding: 0.42rem 0.86rem;
   font-size: 0.74rem;
   letter-spacing: 0.03em;
@@ -911,13 +1048,13 @@ onUnmounted(() => {
 }
 
 .game-btn.primary {
-  background: linear-gradient(120deg, rgba(20, 184, 166, 0.42), rgba(8, 145, 178, 0.32));
+  background: linear-gradient(120deg, rgba(var(--game-accent-rgb), 0.42), rgba(var(--game-accent-sharp-rgb), 0.32));
 }
 
 .game-btn:hover {
   transform: translateY(-1px);
-  border-color: rgba(103, 232, 249, 0.78);
-  background: rgba(20, 184, 166, 0.3);
+  border-color: rgba(var(--game-accent-soft-rgb), 0.84);
+  background: rgba(var(--game-accent-rgb), 0.28);
 }
 
 .game-btn:disabled {
@@ -928,9 +1065,9 @@ onUnmounted(() => {
 
 .last-badge,
 .badge-card {
-  border: 1px solid rgba(103, 232, 249, 0.32);
+  border: 1px solid rgba(var(--game-accent-soft-rgb), 0.34);
   border-radius: 12px;
-  background: linear-gradient(130deg, rgba(8, 145, 178, 0.18), rgba(2, 6, 23, 0.62));
+  background: linear-gradient(130deg, rgba(var(--game-accent-rgb), 0.18), rgba(2, 6, 23, 0.62));
   padding: 0.64rem;
 }
 
@@ -940,24 +1077,23 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.09em;
   font-size: 0.66rem;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
 }
 
 .last-badge h3,
 .badge-card h4 {
   margin: 0.35rem 0 0;
-  color: #ecfeff;
+  color: var(--game-text-primary);
 }
 
 .last-badge p,
 .badge-card p {
   margin: 0.28rem 0 0;
-  color: #a7f3d0;
+  color: var(--game-text-secondary);
 }
 
 .badge-id {
   font-size: 0.73rem;
-  color: #99f6e4;
 }
 
 .round-head {
@@ -969,7 +1105,7 @@ onUnmounted(() => {
 
 .round-meta {
   margin: 0;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -995,23 +1131,23 @@ onUnmounted(() => {
 
 .option-card {
   text-align: left;
-  border: 1px solid rgba(45, 212, 191, 0.3);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.3);
   border-radius: 11px;
   background: linear-gradient(145deg, rgba(3, 14, 36, 0.9), rgba(2, 8, 23, 0.82));
-  color: #d1fae5;
+  color: var(--game-text-primary);
   padding: 0.66rem;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
 .option-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(103, 232, 249, 0.66);
+  border-color: rgba(var(--game-accent-soft-rgb), 0.76);
   box-shadow: 0 14px 26px rgba(2, 6, 23, 0.28);
 }
 
 .option-title {
   margin: 0;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
   font-size: 0.74rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1019,13 +1155,13 @@ onUnmounted(() => {
 
 .option-prompt {
   margin: 0.34rem 0 0;
-  color: #d1fae5;
+  color: var(--game-text-primary);
   line-height: 1.48;
   font-size: 0.84rem;
 }
 
 .option-card.selected {
-  border-color: rgba(103, 232, 249, 0.76);
+  border-color: rgba(var(--game-accent-soft-rgb), 0.78);
 }
 
 .option-card.correct {
@@ -1048,14 +1184,14 @@ onUnmounted(() => {
 
 .feedback {
   max-width: 62ch;
-  color: #bbf7d0;
 }
 
 .game-results {
   position: relative;
 }
 
-.celebration-layer {
+.celebration-layer,
+.victory-rings {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -1066,10 +1202,37 @@ onUnmounted(() => {
   position: absolute;
   top: -20px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(110, 231, 255, 0.96), rgba(45, 212, 191, 0.2));
+  background: linear-gradient(180deg, rgba(var(--game-accent-soft-rgb), 0.96), rgba(var(--game-accent-rgb), 0.2));
   animation: confetti-fall var(--duration, 2.4s) ease-in infinite;
   animation-delay: var(--delay, 0s);
   opacity: 0.82;
+}
+
+.victory-rings span {
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  width: 120px;
+  height: 120px;
+  border: 1px solid rgba(var(--game-accent-soft-rgb), 0.4);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  animation: ring-burst var(--duration, 2.3s) ease-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+@keyframes ring-burst {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.42);
+  }
+  15% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(2.2);
+  }
 }
 
 @keyframes confetti-fall {
@@ -1088,13 +1251,13 @@ onUnmounted(() => {
 
 .result-score {
   margin: 0;
-  color: #67e8f9;
+  color: rgb(var(--game-accent-soft-rgb));
 }
 
 .game-results h3 {
   margin: 0;
   font-size: 1.2rem;
-  color: #f0fdfa;
+  color: var(--game-text-primary);
 }
 
 .results-grid {
@@ -1104,10 +1267,14 @@ onUnmounted(() => {
 }
 
 .results-grid article {
-  border: 1px solid rgba(45, 212, 191, 0.32);
+  border: 1px solid rgba(var(--game-accent-rgb), 0.32);
   border-radius: 10px;
-  background: rgba(2, 10, 28, 0.68);
+  background: var(--game-surface-card);
   padding: 0.54rem;
+}
+
+.theme-light .head-btn.ghost {
+  background: rgba(255, 255, 255, 0.65);
 }
 
 @media (max-width: 980px) {
@@ -1164,7 +1331,8 @@ onUnmounted(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .aurora-orb,
-  .particle {
+  .particle,
+  .victory-rings span {
     animation: none;
   }
 
