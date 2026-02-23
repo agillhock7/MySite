@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import AiPromptGame from '@/components/AiPromptGame.vue';
 import DashboardWidgetRenderer from '@/components/DashboardWidgetRenderer.vue';
+import HoloBackdrop from '@/components/effects/HoloBackdrop.vue';
 import {
   MAX_DASHBOARD_WIDGETS,
   createPromptWidgetFromPrompt,
@@ -26,6 +27,7 @@ interface TerminalLine {
   id: number;
   tone: 'system' | 'user' | 'signal' | 'assistant';
   text: string;
+  createdAt: string;
   imageUrl?: string;
   imageAlt?: string;
 }
@@ -98,6 +100,10 @@ const imageRenderPending = ref(false);
 const imageRenderPrompt = ref('');
 const mediaLoadState = ref<Record<number, 'loading' | 'ready' | 'error'>>({});
 const blobMediaUrls = ref<string[]>([]);
+const prefersReducedMotion = ref(false);
+const commandHistory = ref<string[]>([]);
+const commandHistoryCursor = ref(-1);
+let motionMediaQuery: MediaQueryList | null = null;
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -111,6 +117,7 @@ function cloneTerminalLine(line: TerminalLine): TerminalLine {
     id: line.id,
     tone: line.tone,
     text: line.text,
+    createdAt: line.createdAt,
     imageUrl: line.imageUrl,
     imageAlt: line.imageAlt
   };
@@ -136,6 +143,7 @@ function sanitizeTerminalLine(value: unknown): TerminalLine | null {
   const id = typeof idRaw === 'number' ? idRaw : Number.parseInt(String(idRaw ?? ''), 10);
   const toneRaw = typeof record.tone === 'string' ? record.tone.trim() : '';
   const text = typeof record.text === 'string' ? record.text : '';
+  const createdAtRaw = typeof record.createdAt === 'string' ? record.createdAt.trim() : '';
   const imageUrl = typeof record.imageUrl === 'string' ? record.imageUrl.trim() : '';
   const imageAlt = typeof record.imageAlt === 'string' ? record.imageAlt.trim() : '';
 
@@ -143,10 +151,14 @@ function sanitizeTerminalLine(value: unknown): TerminalLine | null {
     return null;
   }
 
+  const fallbackCreatedAt = new Date(id).toISOString();
+  const parsedCreatedAt = new Date(createdAtRaw);
+
   return {
     id,
     tone: toneRaw as TerminalLine['tone'],
     text: text.trim(),
+    createdAt: Number.isFinite(parsedCreatedAt.getTime()) ? parsedCreatedAt.toISOString() : fallbackCreatedAt,
     imageUrl: imageUrl || undefined,
     imageAlt: imageAlt || undefined
   };
@@ -179,6 +191,36 @@ function toneLabel(tone: TerminalLine['tone']): string {
   if (tone === 'user') return 'You';
   if (tone === 'signal') return 'System Signal';
   return 'System';
+}
+
+const lineTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit'
+});
+
+function formatLineTime(line: TerminalLine): string {
+  const parsed = new Date(line.createdAt);
+  if (!Number.isFinite(parsed.getTime())) {
+    return '--:--';
+  }
+  return lineTimeFormatter.format(parsed);
+}
+
+function formatRelativeTime(isoTime: string): string {
+  const parsed = new Date(isoTime);
+  if (!Number.isFinite(parsed.getTime())) {
+    return 'just now';
+  }
+
+  const diffMs = Date.now() - parsed.getTime();
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return parsed.toLocaleDateString();
 }
 
 function isImageConversationRequest(message: string): boolean {
@@ -714,11 +756,13 @@ function addLine(
   text: string,
   media?: { imageUrl?: string; imageAlt?: string }
 ): number {
-  const lineId = Date.now() + Math.floor(Math.random() * 1000);
+  const now = Date.now();
+  const lineId = now + Math.floor(Math.random() * 1000);
   transcript.value.push({
     id: lineId,
     tone,
     text,
+    createdAt: new Date(now).toISOString(),
     imageUrl: media?.imageUrl,
     imageAlt: media?.imageAlt
   });
@@ -1413,6 +1457,10 @@ const shellVisualStyle = computed<Record<string, string>>(() => {
   };
 });
 
+const visualSeed = computed(() =>
+  hashText(`${designSignature.value}:${sceneNonce.value}:${focusTopics.value.join('|')}:${personalizationProfile.value}`)
+);
+
 const impressionOrbs = computed(() => {
   const orbitCount = personalizationDensity.value === 'high' ? 9 : personalizationDensity.value === 'low' ? 5 : 7;
   const baseSeed = `${designSignature.value}:${focusTopics.value.join('|')}:${personalizationProfile.value}`;
@@ -1558,6 +1606,16 @@ const dashboardStats = computed(() => [
   }
 ]);
 
+const activeConversation = computed(() =>
+  conversationThreads.value.find((conversation) => conversation.id === activeConversationId.value) ?? null
+);
+const activeConversationSummary = computed(() => {
+  if (!activeConversation.value) {
+    return 'No active conversation';
+  }
+  return `${activeConversation.value.title} · ${formatRelativeTime(activeConversation.value.updatedAt)}`;
+});
+
 const widgetBuildStepLabel = computed(() => {
   const step = widgetBuildSession.value?.step;
   if (!step) {
@@ -1577,9 +1635,34 @@ const commandPlaceholder = computed(() =>
     : 'Chat with multimodal AI or build widgets (type /help)'
 );
 
+const commandHints = computed(() => {
+  if (widgetBuildSession.value) {
+    return [
+      { label: 'Cancel Build', command: '/widget cancel' },
+      { label: 'Help', command: '/help' },
+      { label: 'New Thread', command: '/thread new' }
+    ];
+  }
+
+  return [
+    { label: 'Help', command: '/help' },
+    { label: 'New Thread', command: '/thread new' },
+    { label: 'Widget Build', command: '/widget build' },
+    { label: 'Image Prompt', command: '/image cinematic desert skyline at dawn' },
+    { label: 'Shuffle Scene', command: '/shuffle' }
+  ];
+});
+
+const commandStatus = computed(() =>
+  assistantStreaming.value
+    ? 'Assistant is responding...'
+    : `Enter to send · History ${Math.min(commandHistory.value.length, 99)}`
+);
+
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
 const terminalShellStyle = computed<Record<string, string>>(() => ({
-  '--terminal-transcript-height': `${transcriptHeight.value}px`
+  '--terminal-transcript-height': `${transcriptHeight.value}px`,
+  '--reveal-order': '4'
 }));
 
 function clampTranscriptHeight(height: number): number {
@@ -1588,6 +1671,58 @@ function clampTranscriptHeight(height: number): number {
 
 function adjustTranscriptHeight(delta: number): void {
   transcriptHeight.value = clampTranscriptHeight(transcriptHeight.value + delta);
+}
+
+function rememberCommand(input: string): void {
+  if (!input.trim()) {
+    return;
+  }
+
+  const previous = commandHistory.value[commandHistory.value.length - 1] ?? '';
+  if (previous !== input) {
+    commandHistory.value.push(input);
+    if (commandHistory.value.length > 80) {
+      commandHistory.value = commandHistory.value.slice(-80);
+    }
+  }
+  commandHistoryCursor.value = -1;
+}
+
+function handleCommandInputKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
+    return;
+  }
+
+  if (commandHistory.value.length === 0) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (event.key === 'ArrowUp') {
+    if (commandHistoryCursor.value === -1) {
+      commandHistoryCursor.value = commandHistory.value.length - 1;
+    } else {
+      commandHistoryCursor.value = Math.max(0, commandHistoryCursor.value - 1);
+    }
+  } else if (commandHistoryCursor.value === -1) {
+    return;
+  } else if (commandHistoryCursor.value >= commandHistory.value.length - 1) {
+    commandHistoryCursor.value = -1;
+    commandInput.value = '';
+    return;
+  } else {
+    commandHistoryCursor.value += 1;
+  }
+
+  if (commandHistoryCursor.value !== -1) {
+    commandInput.value = commandHistory.value[commandHistoryCursor.value] ?? '';
+  }
+}
+
+function runCommandHint(command: string): void {
+  commandInput.value = command;
+  void handleCommand(command);
 }
 
 function toggleTerminalExpanded(): void {
@@ -1600,6 +1735,23 @@ function handleGlobalKeydown(event: KeyboardEvent): void {
     terminalExpanded.value = false;
     transcriptHeight.value = clampTranscriptHeight(320);
   }
+}
+
+function updateMotionPreference(): void {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    prefersReducedMotion.value = false;
+    return;
+  }
+
+  if (!motionMediaQuery) {
+    motionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+  }
+
+  prefersReducedMotion.value = motionMediaQuery.matches;
+}
+
+function handleMotionPreferenceChange(): void {
+  updateMotionPreference();
 }
 
 async function resetPersonalization(): Promise<void> {
@@ -1842,6 +1994,7 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
+  rememberCommand(input);
   addLine('user', input);
   commandInput.value = '';
 
@@ -1948,6 +2101,14 @@ function removeWidget(widgetId: string): void {
 onMounted(async () => {
   await initializePersonalization();
   window.addEventListener('keydown', handleGlobalKeydown);
+  updateMotionPreference();
+  if (motionMediaQuery) {
+    if (typeof motionMediaQuery.addEventListener === 'function') {
+      motionMediaQuery.addEventListener('change', handleMotionPreferenceChange);
+    } else if (typeof motionMediaQuery.addListener === 'function') {
+      motionMediaQuery.addListener(handleMotionPreferenceChange);
+    }
+  }
 
   if (!blueprint.value) {
     return;
@@ -1966,6 +2127,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
+  if (motionMediaQuery) {
+    if (typeof motionMediaQuery.removeEventListener === 'function') {
+      motionMediaQuery.removeEventListener('change', handleMotionPreferenceChange);
+    } else if (typeof motionMediaQuery.removeListener === 'function') {
+      motionMediaQuery.removeListener(handleMotionPreferenceChange);
+    }
+  }
+  motionMediaQuery = null;
   for (const url of blobMediaUrls.value) {
     URL.revokeObjectURL(url);
   }
@@ -1982,10 +2151,11 @@ onUnmounted(() => {
 
   <main v-else-if="blueprint" class="experience-root" :class="shellClassName" :style="shellVisualStyle">
     <div class="fx-stage" aria-hidden="true">
+      <HoloBackdrop class="fx-canvas" :accent="personalizationAccent" :seed="visualSeed" :reduced-motion="prefersReducedMotion" />
       <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
     </div>
 
-    <header class="topbar">
+    <header class="topbar reveal-surface" style="--reveal-order: 1">
       <a class="brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
         <img :src="brandIconUrl" alt="" loading="lazy" />
         <span>
@@ -2001,7 +2171,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <section class="mission-shell">
+    <section class="mission-shell reveal-surface" style="--reveal-order: 2">
       <article class="mission-card">
         <p class="mission-kicker">Mission Brief</p>
         <h1>{{ scene.mission }}</h1>
@@ -2022,7 +2192,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="dashboard-shell">
+    <section class="dashboard-shell reveal-surface" style="--reveal-order: 3">
       <article class="dashboard-card">
         <p class="mission-kicker">Visitor Dashboard</p>
         <div class="stats-grid">
@@ -2037,7 +2207,7 @@ onUnmounted(() => {
       <AiPromptGame :signature="designSignature" :topics="focusTopics" />
     </section>
 
-    <section class="terminal-shell" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
+    <section class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
       <p v-if="widgetBuildSession" class="build-mode-banner">
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
@@ -2056,6 +2226,7 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+        <p class="conversation-active">{{ activeConversationSummary }}</p>
         <div class="conversation-actions">
           <button
             v-for="thread in conversationThreads"
@@ -2095,13 +2266,20 @@ onUnmounted(() => {
       </div>
 
       <div ref="transcriptRef" class="transcript" aria-live="polite">
-        <article v-for="line in transcript" :key="line.id" class="line" :class="`tone-${line.tone}`">
+        <article
+          v-for="(line, lineIndex) in transcript"
+          :key="line.id"
+          class="line"
+          :class="`tone-${line.tone}`"
+          :style="{ '--line-order': `${Math.min(lineIndex, 22)}` }"
+        >
           <span class="glyph">
             {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
           </span>
           <div class="line-body">
             <div class="line-meta">
               <span class="line-role">{{ toneLabel(line.tone) }}</span>
+              <span class="line-time">{{ formatLineTime(line) }}</span>
             </div>
             <p class="line-text">{{ line.text }}</p>
             <div v-if="line.imageUrl" class="line-media-shell">
@@ -2130,8 +2308,23 @@ onUnmounted(() => {
           type="text"
           autocomplete="off"
           :placeholder="commandPlaceholder"
+          @keydown="handleCommandInputKeydown"
         />
       </form>
+      <div class="command-meta">
+        <p>{{ commandStatus }}</p>
+      </div>
+      <div class="command-hints">
+        <button
+          v-for="hint in commandHints"
+          :key="hint.command"
+          type="button"
+          :disabled="assistantStreaming"
+          @click="runCommandHint(hint.command)"
+        >
+          {{ hint.label }}
+        </button>
+      </div>
 
       <div v-if="assistantSuggestions.length > 0" class="assistant-actions">
         <button
@@ -2145,7 +2338,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="widget-studio">
+    <section class="widget-studio reveal-surface" style="--reveal-order: 5">
       <header class="studio-head">
         <p class="mission-kicker">Widget Studio</p>
         <p class="studio-meta">Deployable widgets: {{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }}</p>
@@ -2244,7 +2437,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="tracks-grid">
+    <section class="tracks-grid reveal-surface" style="--reveal-order: 6">
       <article v-for="track in scene.tracks" :key="track.id" class="track-card">
         <p class="track-signal">{{ track.signal }}</p>
         <h2>{{ track.label }}</h2>
@@ -2253,7 +2446,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="content-stream">
+    <section class="content-stream reveal-surface" style="--reveal-order: 7">
       <article v-for="post in posts" :key="post.id" class="post-row">
         <img v-if="post.imageUrl" :src="post.imageUrl" alt="" loading="lazy" />
         <div>
@@ -2265,7 +2458,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="shortcut-row">
+    <section class="shortcut-row reveal-surface" style="--reveal-order: 8">
       <a
         v-for="shortcut in shortcuts"
         :key="`${shortcut.label}:${shortcut.action}`"
@@ -2288,6 +2481,7 @@ onUnmounted(() => {
   --surface-main: rgba(2, 6, 23, 0.78);
   --surface-card: rgba(2, 10, 28, 0.78);
   --surface-elevated: rgba(3, 7, 18, 0.84);
+  --surface-terminal: rgba(2, 8, 22, 0.92);
   --border-tone: rgba(var(--accent-rgb), 0.32);
   --text-primary: #d1fae5;
   --text-secondary: #a7f3d0;
@@ -2303,6 +2497,7 @@ onUnmounted(() => {
   padding: 1rem;
   position: relative;
   isolation: isolate;
+  overflow: hidden;
 }
 
 .loading-root {
@@ -2314,6 +2509,7 @@ onUnmounted(() => {
   --surface-main: rgba(255, 255, 255, 0.84);
   --surface-card: rgba(245, 250, 255, 0.85);
   --surface-elevated: rgba(250, 253, 255, 0.9);
+  --surface-terminal: rgba(248, 252, 255, 0.95);
   --border-tone: rgba(var(--accent-rgb), 0.35);
   --text-primary: #0f172a;
   --text-secondary: #334155;
@@ -2324,12 +2520,63 @@ onUnmounted(() => {
     #eef3fb;
 }
 
+.experience-root::before,
+.experience-root::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.experience-root::before {
+  background:
+    linear-gradient(120deg, rgba(var(--accent-rgb), 0.08), transparent 32%, rgba(var(--accent-soft-rgb), 0.07) 66%, transparent),
+    radial-gradient(circle at 22% 18%, rgba(var(--accent-rgb), 0.12), transparent 46%),
+    radial-gradient(circle at 78% 72%, rgba(var(--accent-soft-rgb), 0.1), transparent 44%);
+  mix-blend-mode: screen;
+  animation: aurora-shift 24s linear infinite;
+}
+
+.experience-root::after {
+  background:
+    linear-gradient(transparent 90%, rgba(var(--accent-rgb), 0.07) 100%),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 12px,
+      rgba(var(--accent-rgb), 0.03) 13px,
+      transparent 14px
+    );
+  opacity: 0.35;
+}
+
+@keyframes aurora-shift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translate3d(0, -1.4%, 0) scale(1.04);
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.55;
+  }
+}
+
 .fx-stage {
   position: absolute;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
   z-index: -1;
+}
+
+.fx-canvas {
+  opacity: 0.42;
+  mix-blend-mode: screen;
 }
 
 .fx-orb {
@@ -2354,6 +2601,26 @@ onUnmounted(() => {
   }
 }
 
+.reveal-surface {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0) scale(0.992);
+  animation: section-in 0.64s cubic-bezier(0.2, 0.92, 0.18, 1) forwards;
+  animation-delay: calc(80ms + (var(--reveal-order, 0) * 80ms));
+}
+
+@keyframes section-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.992);
+    filter: saturate(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: saturate(1);
+  }
+}
+
 .loading-card {
   border: 1px solid var(--border-tone);
   border-radius: 14px;
@@ -2373,6 +2640,13 @@ onUnmounted(() => {
   padding: 0.8rem 0.9rem;
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
+  transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
+}
+
+.topbar:hover {
+  border-color: rgba(var(--accent-rgb), 0.56);
+  box-shadow: 0 26px 52px rgba(0, 0, 0, 0.34);
+  transform: translateY(-1px);
 }
 
 .brand {
@@ -2435,12 +2709,13 @@ onUnmounted(() => {
   background: rgba(var(--accent-rgb), 0.14);
   color: var(--text-primary);
   padding: 0.38rem 0.75rem;
-  transition: transform 0.18s ease, background 0.18s ease;
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
 .topbar-meta button:hover {
   transform: translateY(-1px);
   background: rgba(var(--accent-rgb), 0.24);
+  border-color: rgba(var(--accent-rgb), 0.6);
 }
 
 .mission-shell {
@@ -2464,6 +2739,15 @@ onUnmounted(() => {
   padding: 0.9rem;
   backdrop-filter: blur(14px);
   box-shadow: 0 14px 28px rgba(2, 6, 23, 0.35);
+  transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;
+}
+
+.mission-card:hover,
+.prompt-card:hover,
+.dashboard-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.52);
+  box-shadow: 0 22px 42px rgba(2, 6, 23, 0.46);
+  transform: translateY(-2px);
 }
 
 .mission-kicker {
@@ -2527,6 +2811,13 @@ h1 {
   border-radius: 10px;
   background: var(--surface-elevated);
   padding: 0.58rem;
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(var(--accent-rgb), 0.62);
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface-elevated) 86%, rgba(var(--accent-rgb), 0.18));
 }
 
 .stat-label {
@@ -2553,9 +2844,16 @@ h1 {
   margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
   border-radius: 14px;
-  background: var(--surface-main);
+  background: var(--surface-terminal);
   overflow: hidden;
   backdrop-filter: blur(14px);
+  box-shadow: 0 20px 42px rgba(2, 6, 23, 0.42);
+  transition: border-color 0.24s ease, box-shadow 0.24s ease;
+}
+
+.terminal-shell:hover {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow: 0 28px 56px rgba(2, 6, 23, 0.52);
 }
 
 .terminal-shell.expanded {
@@ -2582,7 +2880,8 @@ h1 {
   padding: 0.62rem 0.85rem 0.74rem;
   display: grid;
   gap: 0.45rem;
-  background: rgba(var(--accent-rgb), 0.08);
+  background:
+    linear-gradient(120deg, rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.06) 48%, rgba(var(--accent-soft-rgb), 0.12));
 }
 
 .conversation-head {
@@ -2596,6 +2895,14 @@ h1 {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.72rem;
+}
+
+.conversation-active {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 86%, rgb(var(--accent-soft-rgb)));
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding-right: 0.35rem;
 }
 
 .conversation-meta {
@@ -2618,20 +2925,30 @@ h1 {
   padding: 0.16rem 0.48rem;
   font-size: 0.68rem;
   letter-spacing: 0.04em;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
 
 .terminal-tool-btn:hover {
   background: rgba(var(--accent-rgb), 0.3);
+  border-color: rgba(var(--accent-rgb), 0.64);
+  transform: translateY(-1px);
 }
 
 .conversation-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.35rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding-bottom: 0.15rem;
+  scroll-snap-type: x proximity;
 }
 
 .thread-chip,
 .thread-new {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
   border-radius: 999px;
   border: 1px solid var(--border-tone);
   background: rgba(var(--accent-rgb), 0.13);
@@ -2642,11 +2959,20 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .thread-chip.active {
   border-color: rgba(var(--accent-rgb), 0.66);
   background: rgba(var(--accent-rgb), 0.26);
+  box-shadow: 0 8px 20px rgba(var(--accent-rgb), 0.18);
+}
+
+.thread-chip:hover,
+.thread-new:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  background: rgba(var(--accent-rgb), 0.24);
 }
 
 .stream-shell {
@@ -2769,10 +3095,15 @@ h1 {
   min-height: 200px;
   max-height: var(--terminal-transcript-height, 320px);
   overflow: auto;
-  padding: 0.85rem;
+  padding: 0.85rem 0.85rem 1rem;
   display: grid;
   gap: 0.42rem;
   transition: max-height 0.2s ease;
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.08), rgba(2, 6, 23, 0.15) 22%, transparent 42%),
+    radial-gradient(circle at 90% 0%, rgba(var(--accent-rgb), 0.08), transparent 50%);
+  scroll-behavior: smooth;
+  scroll-padding-bottom: 1rem;
 }
 
 .terminal-shell.expanded .transcript {
@@ -2785,6 +3116,19 @@ h1 {
   gap: 0.5rem;
   align-items: stretch;
   font-size: 0.92rem;
+  animation: line-in 0.28s cubic-bezier(0.19, 0.92, 0.22, 1) both;
+  animation-delay: calc(var(--line-order, 0) * 9ms);
+}
+
+@keyframes line-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .line-body {
@@ -2796,12 +3140,14 @@ h1 {
   background: rgba(2, 6, 23, 0.58);
   padding: 0.48rem 0.58rem 0.56rem;
   box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.1);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .line-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.4rem;
 }
 
 .line-role {
@@ -2809,6 +3155,13 @@ h1 {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgb(var(--accent-soft-rgb));
+}
+
+.line-time {
+  font-size: 0.65rem;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--text-secondary) 88%, rgb(var(--accent-soft-rgb)));
+  white-space: nowrap;
 }
 
 .line-text {
@@ -2825,6 +3178,7 @@ h1 {
 .tone-assistant .line-body {
   border-color: rgba(var(--accent-rgb), 0.34);
   background: linear-gradient(140deg, rgba(var(--accent-rgb), 0.12), rgba(2, 6, 23, 0.74) 58%);
+  box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.24), 0 12px 22px rgba(2, 6, 23, 0.32);
 }
 
 .tone-signal .line-body {
@@ -2851,6 +3205,31 @@ h1 {
   overflow: hidden;
   border: 1px solid rgba(var(--accent-rgb), 0.35);
   box-shadow: 0 14px 28px rgba(2, 6, 23, 0.36);
+}
+
+.line-media-shell::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -38%;
+  width: 35%;
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0), rgba(var(--accent-soft-rgb), 0.22), rgba(var(--accent-rgb), 0));
+  pointer-events: none;
+  animation: media-glint 2.8s ease-in-out infinite;
+}
+
+@keyframes media-glint {
+  0%,
+  60%,
+  100% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  22% {
+    transform: translateX(220%);
+    opacity: 0.95;
+  }
 }
 
 .line-media-shell .line-media {
@@ -2943,18 +3322,70 @@ h1 {
   gap: 0.45rem;
   align-items: center;
   padding: 0.75rem 0.85rem;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.06), rgba(var(--accent-rgb), 0.02));
 }
 
 .command-row input {
   width: 100%;
-  border: none;
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
   outline: none;
-  background: transparent;
+  background: rgba(2, 6, 23, 0.46);
   color: var(--text-primary);
+  border-radius: 10px;
+  padding: 0.46rem 0.58rem;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.command-row input:focus-visible {
+  border-color: rgba(var(--accent-rgb), 0.74);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+  background: rgba(2, 6, 23, 0.62);
 }
 
 .command-row input::placeholder {
   color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+
+.command-meta {
+  border-top: 1px solid rgba(var(--accent-rgb), 0.14);
+  padding: 0.2rem 0.85rem 0.45rem;
+}
+
+.command-meta p {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: color-mix(in srgb, var(--text-secondary) 86%, rgb(var(--accent-soft-rgb)));
+}
+
+.command-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+  padding: 0 0.85rem 0.62rem;
+}
+
+.command-hints button {
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text-primary);
+  padding: 0.22rem 0.58rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.command-hints button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  background: rgba(var(--accent-rgb), 0.24);
+}
+
+.command-hints button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .assistant-actions {
@@ -2982,6 +3413,10 @@ h1 {
   box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.16);
 }
 
+.assistant-actions button:active {
+  transform: translateY(0);
+}
+
 .widget-studio {
   margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
@@ -2991,6 +3426,7 @@ h1 {
   display: grid;
   gap: 0.68rem;
   backdrop-filter: blur(14px);
+  box-shadow: 0 18px 36px rgba(2, 6, 23, 0.35);
 }
 
 .studio-head {
@@ -3026,6 +3462,13 @@ h1 {
   display: grid;
   gap: 0.45rem;
   box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.12);
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.widget-row:hover {
+  transform: translateY(-2px);
+  border-color: rgba(var(--accent-rgb), 0.56);
+  box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.18), 0 16px 26px rgba(2, 6, 23, 0.35);
 }
 
 .widget-head {
@@ -3055,6 +3498,7 @@ h1 {
   color: var(--text-primary);
   padding: 0.24rem 0.58rem;
   font-size: 0.72rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
 .remove-widget {
@@ -3064,6 +3508,16 @@ h1 {
   color: #fecaca;
   padding: 0.24rem 0.58rem;
   font-size: 0.72rem;
+  transition: transform 0.16s ease, filter 0.16s ease;
+}
+
+.edit-widget:hover,
+.remove-widget:hover {
+  transform: translateY(-1px);
+}
+
+.remove-widget:hover {
+  filter: saturate(1.06);
 }
 
 .widget-row h3 {
@@ -3184,6 +3638,13 @@ h1 {
   border-radius: 12px;
   background: var(--surface-elevated);
   padding: 0.85rem;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.track-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(var(--accent-rgb), 0.58);
+  box-shadow: 0 16px 28px rgba(2, 6, 23, 0.36);
 }
 
 .track-signal {
@@ -3211,6 +3672,13 @@ h1 {
   background: rgba(var(--accent-rgb), 0.15);
   color: var(--text-primary);
   padding: 0.34rem 0.72rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.track-card button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  background: rgba(var(--accent-rgb), 0.26);
 }
 
 .content-stream {
@@ -3226,6 +3694,13 @@ h1 {
   padding: 0.7rem;
   display: grid;
   gap: 0.65rem;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.post-row:hover {
+  transform: translateY(-2px);
+  border-color: rgba(var(--accent-rgb), 0.56);
+  box-shadow: 0 16px 28px rgba(2, 6, 23, 0.34);
 }
 
 .post-row img {
@@ -3234,6 +3709,12 @@ h1 {
   object-fit: cover;
   border-radius: 10px;
   border: 1px solid rgba(var(--accent-rgb), 0.28);
+  transition: transform 0.24s ease, filter 0.24s ease;
+}
+
+.post-row:hover img {
+  transform: scale(1.02);
+  filter: saturate(1.08);
 }
 
 .post-meta {
@@ -3260,6 +3741,12 @@ h1 {
   color: var(--text-primary);
   text-decoration: none;
   border-bottom: 1px dashed rgb(var(--accent-soft-rgb));
+  transition: color 0.16s ease, border-color 0.16s ease;
+}
+
+.post-row a:hover {
+  color: rgb(var(--accent-soft-rgb));
+  border-bottom-color: rgba(var(--accent-rgb), 0.85);
 }
 
 .shortcut-row {
@@ -3277,6 +3764,31 @@ h1 {
   background: rgba(var(--accent-rgb), 0.16);
   padding: 0.3rem 0.65rem;
   font-size: 0.78rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.shortcut-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  background: rgba(var(--accent-rgb), 0.28);
+  box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.16);
+}
+
+.experience-root :is(button, input, textarea, select, a):focus-visible {
+  outline: 2px solid rgba(var(--accent-soft-rgb), 0.82);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-surface,
+  .line,
+  .fx-orb,
+  .pipeline-pulse::after,
+  .stream-bars span,
+  .line-media-shell::after,
+  .experience-root::before {
+    animation: none !important;
+  }
 }
 
 @media (min-width: 860px) {
