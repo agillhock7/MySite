@@ -123,6 +123,8 @@ const commandHistoryCursor = ref(-1);
 const pendingAttachments = ref<PendingAttachment[]>([]);
 const imagePreview = ref<ImagePreviewState | null>(null);
 const lineActionStatus = ref<Record<number, string>>({});
+const sceneRefreshEpoch = ref(0);
+const sceneStyleToken = ref(Math.floor(Math.random() * 1_000_000));
 let motionMediaQuery: MediaQueryList | null = null;
 
 const blueprint = computed(() => personalization.blueprint);
@@ -370,12 +372,6 @@ async function copyLineText(line: TerminalLine): Promise<void> {
   } catch {
     setLineActionStatus(line.id, 'Copy blocked');
   }
-}
-
-function downloadLineText(line: TerminalLine): void {
-  const blob = new Blob([line.text], { type: 'text/plain;charset=utf-8' });
-  triggerDownloadFromBlob(blob, safeFilename(`${line.tone}-message`, 'txt'));
-  setLineActionStatus(line.id, 'Downloaded');
 }
 
 async function downloadLineImage(line: TerminalLine): Promise<void> {
@@ -1783,7 +1779,10 @@ const personalizationProfile = computed(() => firstStringModuleProp('profile') |
 const personalizationProfileClass = computed(() =>
   personalizationProfile.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'adaptive'
 );
-const sceneVariant = computed(() => Math.abs(sceneNonce.value % 6));
+const sceneVariant = computed(() => {
+  const token = hashText(`${sceneStyleToken.value}:${sceneNonce.value}:${designSignature.value}`);
+  return token % 8;
+});
 
 const shellClassName = computed(() => [
   `mode-${personalizationMode.value}`,
@@ -1801,22 +1800,26 @@ const shellVisualStyle = computed<Record<string, string>>(() => {
     { r: 45, g: 212, b: 191 },
     { r: 74, g: 222, b: 128 },
     { r: 244, g: 114, b: 182 },
-    { r: 196, g: 181, b: 253 }
+    { r: 196, g: 181, b: 253 },
+    { r: 251, g: 146, b: 60 },
+    { r: 250, g: 204, b: 21 }
   ];
-  const blendRatios = [0.08, 0.3, 0.24, 0.22, 0.26, 0.25];
+  const blendRatios = [0.12, 0.64, 0.58, 0.54, 0.66, 0.6, 0.62, 0.57];
   const variant = sceneVariant.value;
   const accentRgb = mixRgb(baseAccent, accentTargets[variant], blendRatios[variant]);
   const soft = mixWithWhite(accentRgb, 0.32);
   const sharp = mixWithWhite(accentRgb, 0.08);
-  const gridOpacity = variant === 0 ? 0.03 : variant === 4 ? 0.06 : 0.045;
-  const panelRadius = variant === 2 ? '20px' : variant === 5 ? '16px' : '14px';
+  const gridOpacity = variant === 0 ? 0.03 : variant === 4 ? 0.065 : variant === 7 ? 0.07 : 0.05;
+  const panelRadius = variant === 2 ? '20px' : variant === 5 ? '16px' : variant === 7 ? '22px' : '14px';
+  const glowStrength = variant === 6 || variant === 7 ? '0.32' : variant === 4 ? '0.28' : '0.2';
 
   return {
     '--accent-rgb': rgbToCss(accentRgb),
     '--accent-soft-rgb': rgbToCss(soft),
     '--accent-sharp-rgb': rgbToCss(sharp),
     '--scene-grid-opacity': `${gridOpacity}`,
-    '--scene-panel-radius': panelRadius
+    '--scene-panel-radius': panelRadius,
+    '--scene-glow-strength': glowStrength
   };
 });
 
@@ -2026,8 +2029,7 @@ const commandStatus = computed(() =>
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
 const terminalShellStyle = computed<Record<string, string>>(() => ({
   '--terminal-transcript-height': `${transcriptHeight.value}px`,
-  '--reveal-order': '4',
-  '--scene-refresh-token': `${sceneNonce.value}`
+  '--reveal-order': '4'
 }));
 
 function clampTranscriptHeight(height: number): number {
@@ -2036,6 +2038,14 @@ function clampTranscriptHeight(height: number): number {
 
 function adjustTranscriptHeight(delta: number): void {
   transcriptHeight.value = clampTranscriptHeight(transcriptHeight.value + delta);
+}
+
+function applySceneShuffle(): void {
+  sceneNonce.value += 1;
+  sceneStyleToken.value = Date.now() + Math.floor(Math.random() * 10_000);
+  sceneRefreshEpoch.value += 1;
+  forcedFocus.value = '';
+  closeImagePreview();
 }
 
 function rememberCommand(input: string): void {
@@ -2096,6 +2106,11 @@ function toggleTerminalExpanded(): void {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && imagePreview.value) {
+    closeImagePreview();
+    return;
+  }
+
   if (event.key === 'Escape' && terminalExpanded.value) {
     terminalExpanded.value = false;
     transcriptHeight.value = clampTranscriptHeight(320);
@@ -2386,9 +2401,9 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input === '/shuffle') {
-    sceneNonce.value += 1;
-    forcedFocus.value = '';
-    addLine('signal', `Scene recompiled -> ${scene.value.codename} · style variant ${sceneVariant.value + 1}/6`);
+    applySceneShuffle();
+    addLine('signal', `Scene recompiled -> ${scene.value.codename} · style variant ${sceneVariant.value + 1}/8`);
+    addLine('signal', 'Visual refresh applied.');
     return;
   }
 
@@ -2537,8 +2552,14 @@ onUnmounted(() => {
     </section>
   </main>
 
-  <main v-else-if="blueprint" class="experience-root" :class="shellClassName" :style="shellVisualStyle">
-    <div class="fx-stage" aria-hidden="true" :key="`fx-${sceneNonce}`">
+  <main
+    v-else-if="blueprint"
+    :key="`scene-${sceneRefreshEpoch}`"
+    class="experience-root"
+    :class="shellClassName"
+    :style="shellVisualStyle"
+  >
+    <div class="fx-stage" aria-hidden="true" :key="`fx-${sceneRefreshEpoch}`">
       <HoloBackdrop class="fx-canvas" :accent="personalizationAccent" :seed="visualSeed" :reduced-motion="prefersReducedMotion" />
       <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
     </div>
@@ -2671,7 +2692,6 @@ onUnmounted(() => {
             </div>
             <div class="line-actions">
               <button type="button" @click="copyLineText(line)">Copy</button>
-              <button type="button" @click="downloadLineText(line)">Download</button>
               <button v-if="line.imageUrl" type="button" @click="openImagePreview(line)">Expand</button>
               <button v-if="line.imageUrl" type="button" @click="copyLineImage(line)">Copy Image</button>
               <button v-if="line.imageUrl" type="button" @click="downloadLineImage(line)">Download Image</button>
@@ -2753,27 +2773,6 @@ onUnmounted(() => {
         <button type="button" @click="openAction(assistantPrimaryCta.action)">
           {{ assistantPrimaryCta.label }}
         </button>
-      </div>
-
-      <div
-        v-if="imagePreview"
-        class="image-viewer"
-        role="dialog"
-        aria-modal="true"
-        @click.self="closeImagePreview"
-      >
-        <article class="image-viewer-card">
-          <header>
-            <p>{{ imagePreview.alt }}</p>
-            <button type="button" @click="closeImagePreview">Close</button>
-          </header>
-          <img :src="imagePreview.url" :alt="imagePreview.alt" />
-          <div class="image-viewer-actions">
-            <button type="button" @click="copyPreviewImage">Copy Image</button>
-            <button type="button" @click="downloadPreviewImage">Download</button>
-            <button type="button" @click="openPreviewImageTab">Open Tab</button>
-          </div>
-        </article>
       </div>
     </section>
 
@@ -2909,6 +2908,29 @@ onUnmounted(() => {
         {{ shortcut.label }}
       </a>
     </section>
+
+    <Teleport to="body">
+      <div
+        v-if="imagePreview"
+        class="image-viewer"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeImagePreview"
+      >
+        <article class="image-viewer-card">
+          <header>
+            <p>{{ imagePreview.alt }}</p>
+            <button type="button" @click="closeImagePreview">Close</button>
+          </header>
+          <img :src="imagePreview.url" :alt="imagePreview.alt" />
+          <div class="image-viewer-actions">
+            <button type="button" @click="copyPreviewImage">Copy Image</button>
+            <button type="button" @click="downloadPreviewImage">Download</button>
+            <button type="button" @click="openPreviewImageTab">Open Tab</button>
+          </div>
+        </article>
+      </div>
+    </Teleport>
   </main>
 </template>
 
@@ -2923,15 +2945,16 @@ onUnmounted(() => {
   --surface-terminal: rgba(2, 8, 22, 0.92);
   --scene-grid-opacity: 0.03;
   --scene-panel-radius: 14px;
+  --scene-glow-strength: 0.2;
   --border-tone: rgba(var(--accent-rgb), 0.32);
   --text-primary: #d1fae5;
   --text-secondary: #a7f3d0;
   --text-signal: rgb(var(--accent-soft-rgb));
   min-height: 100vh;
   background:
-    radial-gradient(circle at 12% -12%, rgba(var(--accent-rgb), 0.25), transparent 38%),
-    radial-gradient(circle at 88% 118%, rgba(var(--accent-soft-rgb), 0.2), transparent 42%),
-    radial-gradient(circle at 50% 50%, rgba(var(--accent-sharp-rgb), 0.1), transparent 58%),
+    radial-gradient(circle at 12% -12%, rgba(var(--accent-rgb), var(--scene-glow-strength)), transparent 38%),
+    radial-gradient(circle at 88% 118%, rgba(var(--accent-soft-rgb), calc(var(--scene-glow-strength) * 0.88)), transparent 42%),
+    radial-gradient(circle at 50% 50%, rgba(var(--accent-sharp-rgb), calc(var(--scene-glow-strength) * 0.54)), transparent 58%),
     #000000;
   color: var(--text-primary);
   font-family: 'Space Mono', 'IBM Plex Mono', 'Fira Code', monospace;
@@ -2962,7 +2985,9 @@ onUnmounted(() => {
 }
 
 .scene-variant-1.experience-root {
+  --scene-panel-radius: 12px;
   --scene-grid-opacity: 0.045;
+  --scene-glow-strength: 0.26;
 }
 
 .scene-variant-2.experience-root {
@@ -2972,16 +2997,31 @@ onUnmounted(() => {
 
 .scene-variant-3.experience-root {
   --scene-grid-opacity: 0.04;
+  --scene-glow-strength: 0.3;
 }
 
 .scene-variant-4.experience-root {
   --scene-panel-radius: 16px;
   --scene-grid-opacity: 0.06;
+  --scene-glow-strength: 0.32;
 }
 
 .scene-variant-5.experience-root {
   --scene-panel-radius: 20px;
   --scene-grid-opacity: 0.05;
+  --scene-glow-strength: 0.28;
+}
+
+.scene-variant-6.experience-root {
+  --scene-panel-radius: 12px;
+  --scene-grid-opacity: 0.06;
+  --scene-glow-strength: 0.34;
+}
+
+.scene-variant-7.experience-root {
+  --scene-panel-radius: 22px;
+  --scene-grid-opacity: 0.07;
+  --scene-glow-strength: 0.38;
 }
 
 .experience-root::before,
