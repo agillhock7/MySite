@@ -312,11 +312,37 @@ async function ensureGeneratedImageForPrompt(prompt: string): Promise<string> {
     const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     const endpointImage = payload && typeof payload.imageDataUrl === 'string' ? payload.imageDataUrl.trim() : '';
     if (endpointImage.startsWith('data:image/')) {
+      const provider = payload && typeof payload.provider === 'string' ? payload.provider.trim() : '';
+      const model = payload && typeof payload.model === 'string' ? payload.model.trim() : '';
+      if (provider || model) {
+        addLine('signal', `Image runtime: ${provider || 'provider'} ${model || ''}`.trim());
+      }
       return endpointImage;
     }
     const endpointError = payload && typeof payload.error === 'string' ? payload.error.trim() : '';
     if (endpointError) {
       addLine('signal', `Image runtime notice: ${endpointError}`);
+    }
+    const attempts = payload && Array.isArray(payload.attempts) ? payload.attempts : [];
+    if (attempts.length > 0) {
+      const summary = attempts
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            return null;
+          }
+          const item = entry as Record<string, unknown>;
+          const model = typeof item.model === 'string' ? item.model : '';
+          const status = typeof item.status === 'string' ? item.status : '';
+          if (!model && !status) {
+            return null;
+          }
+          return `${model || 'model'}:${status || 'unknown'}`;
+        })
+        .filter((part): part is string => part !== null)
+        .slice(0, 3);
+      if (summary.length > 0) {
+        addLine('signal', `Image attempts: ${summary.join(', ')}`);
+      }
     }
   } catch {
     addLine('signal', 'Image runtime notice: endpoint request failed. Showing local generated fallback.');

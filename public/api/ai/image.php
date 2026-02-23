@@ -37,13 +37,47 @@ function build_fallback_data_uri(string $prompt): string
     }
 
     $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $promptLower = strtolower($prompt);
+    $isSpace = preg_match('/\b(space|outerspace|galaxy|cosmic|astronaut|planet)\b/', $promptLower) === 1;
+    $isHockey = preg_match('/\b(hockey|rink|puck|stick)\b/', $promptLower) === 1;
+    $isDog = preg_match('/\b(dog|puppy|canine)\b/', $promptLower) === 1;
+    $sceneTag = $isSpace
+        ? 'SPACE SCENE'
+        : ($isHockey ? 'SPORT SCENE' : ($isDog ? 'PET SCENE' : 'CONCEPT SCENE'));
+
+    $backgroundToneA = $isSpace ? '#080b25' : '#03151f';
+    $backgroundToneB = $isSpace ? '#1a0f3a' : '#0f172a';
+    $stars = '';
+    if ($isSpace) {
+        $stars = '<circle cx="180" cy="130" r="2" fill="#dbeafe"/>' .
+            '<circle cx="320" cy="180" r="1.6" fill="#bfdbfe"/>' .
+            '<circle cx="640" cy="118" r="2" fill="#e0f2fe"/>' .
+            '<circle cx="820" cy="210" r="1.7" fill="#dbeafe"/>' .
+            '<circle cx="1040" cy="150" r="2.1" fill="#bfdbfe"/>';
+    }
+
+    $sceneShapes = '';
+    if ($isDog) {
+        $sceneShapes .= '<ellipse cx="450" cy="430" rx="110" ry="92" fill="rgba(14,116,144,0.38)" stroke="rgba(103,232,249,0.65)" stroke-width="3"/>';
+        $sceneShapes .= '<circle cx="410" cy="360" r="32" fill="rgba(34,197,94,0.25)" stroke="rgba(110,231,183,0.7)" stroke-width="2"/>';
+        $sceneShapes .= '<circle cx="488" cy="360" r="32" fill="rgba(34,197,94,0.25)" stroke="rgba(110,231,183,0.7)" stroke-width="2"/>';
+    }
+    if ($isHockey) {
+        $sceneShapes .= '<rect x="660" y="420" width="180" height="10" rx="5" fill="rgba(248,250,252,0.7)" transform="rotate(-22 660 420)"/>';
+        $sceneShapes .= '<rect x="795" y="358" width="18" height="72" rx="4" fill="rgba(248,250,252,0.8)" transform="rotate(-22 795 358)"/>';
+        $sceneShapes .= '<circle cx="740" cy="500" r="16" fill="rgba(15,23,42,0.88)" stroke="rgba(148,163,184,0.6)" stroke-width="2"/>';
+    }
+
     $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">' .
-        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#03151f"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>' .
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="' . $backgroundToneA . '"/><stop offset="100%" stop-color="' . $backgroundToneB . '"/></linearGradient></defs>' .
         '<rect width="1280" height="720" fill="url(#g)"/>' .
+        $stars .
         '<circle cx="120" cy="130" r="180" fill="rgba(6,182,212,0.25)"/>' .
         '<circle cx="1080" cy="620" r="240" fill="rgba(16,185,129,0.2)"/>' .
         '<rect x="86" y="90" width="1108" height="540" rx="24" fill="rgba(2,6,23,0.58)" stroke="rgba(110,231,255,0.45)" stroke-width="2"/>' .
+        $sceneShapes .
         '<text x="130" y="205" fill="#99f6e4" font-family="monospace" font-size="32">MULTIMODAL IMAGE FALLBACK</text>' .
+        '<text x="130" y="248" fill="#67e8f9" font-family="monospace" font-size="22">' . htmlspecialchars($sceneTag, ENT_QUOTES, 'UTF-8') . '</text>' .
         '<text x="130" y="295" fill="#d1fae5" font-family="monospace" font-size="38">' . $safeTitle . '</text>' .
         '<text x="130" y="375" fill="#67e8f9" font-family="monospace" font-size="25">OpenAI image provider unavailable or timed out.</text>' .
         '</svg>';
@@ -125,7 +159,7 @@ if ($timeoutSeconds > 120) {
 }
 
 if (!$enabled || $apiKey === '') {
-    send_json(503, [
+    send_json(200, [
         'ok' => false,
         'error' => 'OpenAI image provider is not configured.',
         'imageDataUrl' => build_fallback_data_uri($prompt),
@@ -134,78 +168,89 @@ if (!$enabled || $apiKey === '') {
     ]);
 }
 
-$imageModel = clean_text($openAiConfig['image_model'] ?? 'gpt-image-1', 'gpt-image-1');
+$primaryModel = clean_text($openAiConfig['image_model'] ?? 'gpt-image-1', 'gpt-image-1');
 $imageApiUrl = clean_text($openAiConfig['images_api_url'] ?? 'https://api.openai.com/v1/images/generations', 'https://api.openai.com/v1/images/generations');
+$modelCandidates = array_values(array_unique(array_filter([
+    $primaryModel,
+    'gpt-image-1',
+    'dall-e-3',
+    'dall-e-2'
+])));
 
-$payload = [
-    'model' => $imageModel,
-    'prompt' => $prompt,
-    'size' => '1024x1024'
-];
+$lastError = 'Image provider returned no usable image payload.';
+$attempts = [];
 
-$curl = curl_init($imageApiUrl);
-curl_setopt_array($curl, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_HTTPHEADER => [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $apiKey
-    ],
-    CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => $timeoutSeconds
-]);
+foreach ($modelCandidates as $modelCandidate) {
+    $payload = [
+        'model' => $modelCandidate,
+        'prompt' => $prompt,
+        'size' => '1024x1024'
+    ];
 
-$result = curl_exec($curl);
-if ($result === false) {
+    $curl = curl_init($imageApiUrl);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => $timeoutSeconds
+    ]);
+
+    $result = curl_exec($curl);
+    if ($result === false) {
+        $curlError = trim((string) curl_error($curl));
+        curl_close($curl);
+        $attempts[] = ['model' => $modelCandidate, 'status' => 'curl_error'];
+        $lastError = $curlError !== '' ? ('Image request failed: ' . $curlError) : 'Image request failed at network layer.';
+        continue;
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
-    send_json(502, [
-        'ok' => false,
-        'error' => 'Image generation provider request failed.',
-        'imageDataUrl' => build_fallback_data_uri($prompt),
-        'provider' => 'fallback',
-        'model' => 'placeholder'
-    ]);
-}
 
-$statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-curl_close($curl);
+    $decodedResult = json_decode((string) $result, true);
+    if ($statusCode >= 400) {
+        $providerMessage = clean_text((string) (((is_array($decodedResult['error'] ?? null) ? $decodedResult['error']['message'] ?? '' : '') ?: '')));
+        $attempts[] = ['model' => $modelCandidate, 'status' => (string) $statusCode];
+        $lastError = $providerMessage !== '' ? $providerMessage : ('Image provider returned HTTP ' . (string) $statusCode . '.');
+        continue;
+    }
 
-if ($statusCode >= 400) {
-    send_json(502, [
-        'ok' => false,
-        'error' => 'Image generation provider returned an error.',
-        'imageDataUrl' => build_fallback_data_uri($prompt),
-        'provider' => 'fallback',
-        'model' => 'placeholder'
-    ]);
-}
+    $data = is_array($decodedResult['data'] ?? null) ? $decodedResult['data'] : [];
+    $first = is_array($data[0] ?? null) ? $data[0] : [];
+    $url = clean_text($first['url'] ?? '');
+    $b64 = clean_text($first['b64_json'] ?? '');
 
-$decodedResult = json_decode((string) $result, true);
-$data = is_array($decodedResult['data'] ?? null) ? $decodedResult['data'] : [];
-$first = is_array($data[0] ?? null) ? $data[0] : [];
-$url = clean_text($first['url'] ?? '');
-$b64 = clean_text($first['b64_json'] ?? '');
+    $imageDataUrl = '';
+    if ($b64 !== '') {
+        $imageDataUrl = 'data:image/png;base64,' . $b64;
+    } elseif ($url !== '') {
+        $imageDataUrl = fetch_binary_image_data_uri($url, $timeoutSeconds);
+    }
 
-$imageDataUrl = '';
-if ($b64 !== '') {
-    $imageDataUrl = 'data:image/png;base64,' . $b64;
-} elseif ($url !== '') {
-    $imageDataUrl = fetch_binary_image_data_uri($url, $timeoutSeconds);
-}
+    if ($imageDataUrl === '') {
+        $attempts[] = ['model' => $modelCandidate, 'status' => 'empty_payload'];
+        $lastError = 'Image provider returned no usable image payload.';
+        continue;
+    }
 
-if ($imageDataUrl === '') {
-    send_json(502, [
-        'ok' => false,
-        'error' => 'Image provider returned no usable image payload.',
-        'imageDataUrl' => build_fallback_data_uri($prompt),
-        'provider' => 'fallback',
-        'model' => 'placeholder'
+    send_json(200, [
+        'ok' => true,
+        'imageDataUrl' => $imageDataUrl,
+        'provider' => 'openai',
+        'model' => $modelCandidate,
+        'attempts' => $attempts
     ]);
 }
 
 send_json(200, [
-    'ok' => true,
-    'imageDataUrl' => $imageDataUrl,
-    'provider' => 'openai',
-    'model' => $imageModel
+    'ok' => false,
+    'error' => $lastError,
+    'imageDataUrl' => build_fallback_data_uri($prompt),
+    'provider' => 'fallback',
+    'model' => 'placeholder',
+    'attempts' => $attempts
 ]);
