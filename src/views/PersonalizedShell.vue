@@ -3387,7 +3387,6 @@ onUnmounted(() => {
 .topbar:hover {
   border-color: rgba(var(--accent-rgb), 0.56);
   box-shadow: 0 26px 52px rgba(0, 0, 0, 0.34);
-  transform: translateY(-1px);
 }
 
 .brand {
@@ -3426,6 +3425,7 @@ onUnmounted(() => {
 .topbar-head h2 {
   margin: 0.34rem 0 0;
   font-size: clamp(1rem, 2.3vw, 1.3rem);
+  overflow-wrap: anywhere;
 }
 
 .topbar-copy {
@@ -3436,6 +3436,7 @@ onUnmounted(() => {
 }
 
 .topbar-quick-nav {
+  grid-area: nav;
   display: flex;
   flex-wrap: wrap;
   gap: 0.36rem;
@@ -3463,6 +3464,7 @@ onUnmounted(() => {
 }
 
 .topbar-meta {
+  grid-area: meta;
   display: grid;
   gap: 0.4rem;
   justify-items: start;
@@ -4837,22 +4839,30 @@ h1 {
   }
 
   .topbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+    grid-template-areas:
+      'head meta'
+      'nav meta';
+    column-gap: 1rem;
+    row-gap: 0.55rem;
     align-items: start;
   }
 
   .topbar-head {
-    grid-column: 1 / -1;
+    grid-area: head;
+    min-width: 0;
   }
 
   .topbar-quick-nav {
     justify-self: start;
-    align-self: center;
+    align-self: start;
+    max-width: 100%;
   }
 
   .topbar-meta {
     justify-items: end;
     justify-self: end;
+    align-self: start;
   }
 
   .topbar-meta p {
@@ -4908,13 +4918,4 @@ h1 {
   }
 }
 
-@media (min-width: 1400px) {
-  .topbar {
-    grid-template-columns: minmax(0, 1.2fr) auto auto;
-  }
-
-  .topbar-head {
-    grid-column: auto;
-  }
-}
 </style>
