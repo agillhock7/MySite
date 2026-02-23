@@ -3265,10 +3265,14 @@ onUnmounted(() => {
 .app-main {
   min-width: 0;
   display: grid;
+  gap: 0.85rem;
 }
 
 .view-stage {
   min-width: 0;
+  display: grid;
+  gap: 0.85rem;
+  align-content: start;
 }
 
 .view-swap-enter-active,
@@ -3495,13 +3499,11 @@ onUnmounted(() => {
 }
 
 .mission-shell {
-  margin-top: 0.85rem;
   display: grid;
   gap: 0.7rem;
 }
 
 .dashboard-shell {
-  margin-top: 0.85rem;
   display: grid;
   gap: 0.7rem;
 }
@@ -3661,7 +3663,6 @@ h1 {
 }
 
 .terminal-shell {
-  margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
   border-radius: var(--scene-panel-radius);
   background: var(--surface-terminal);
@@ -4435,7 +4436,6 @@ h1 {
 }
 
 .widget-studio {
-  margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
   border-radius: var(--scene-panel-radius);
   background: var(--surface-card);
@@ -4644,7 +4644,6 @@ h1 {
 }
 
 .tracks-grid {
-  margin-top: 0.85rem;
   display: grid;
   gap: 0.68rem;
   grid-template-columns: 1fr;
@@ -4699,7 +4698,6 @@ h1 {
 }
 
 .content-stream {
-  margin-top: 0.85rem;
   display: grid;
   gap: 0.65rem;
 }
@@ -4767,7 +4765,6 @@ h1 {
 }
 
 .shortcut-row {
-  margin-top: 0.85rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
@@ -4840,8 +4837,12 @@ h1 {
   }
 
   .topbar {
-    grid-template-columns: minmax(0, 1.2fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
+  }
+
+  .topbar-head {
+    grid-column: 1 / -1;
   }
 
   .topbar-quick-nav {
@@ -4851,6 +4852,7 @@ h1 {
 
   .topbar-meta {
     justify-items: end;
+    justify-self: end;
   }
 
   .topbar-meta p {
@@ -4903,6 +4905,16 @@ h1 {
 
   .topbar {
     top: 1.2rem;
+  }
+}
+
+@media (min-width: 1400px) {
+  .topbar {
+    grid-template-columns: minmax(0, 1.2fr) auto auto;
+  }
+
+  .topbar-head {
+    grid-column: auto;
   }
 }
 </style>
