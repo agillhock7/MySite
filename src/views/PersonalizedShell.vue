@@ -42,6 +42,12 @@ interface PendingAttachment {
   textPreview?: string;
 }
 
+interface ImagePreviewState {
+  lineId: number;
+  url: string;
+  alt: string;
+}
+
 type WidgetOutputFormat = 'brief' | 'bullets' | 'checklist';
 
 interface WidgetBuildDraft {
@@ -115,10 +121,16 @@ const prefersReducedMotion = ref(false);
 const commandHistory = ref<string[]>([]);
 const commandHistoryCursor = ref(-1);
 const pendingAttachments = ref<PendingAttachment[]>([]);
+const imagePreview = ref<ImagePreviewState | null>(null);
+const lineActionStatus = ref<Record<number, string>>({});
 let motionMediaQuery: MediaQueryList | null = null;
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
+const assistantPrimaryCta = {
+  label: 'Access more AI tools + free web hosting',
+  action: 'https://hiops.darkhorsevirtue.io'
+} as const;
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -293,6 +305,167 @@ function toAssistantAttachments(items: PendingAttachment[]): AssistantAttachment
     dataUrl: item.dataUrl,
     textPreview: item.textPreview
   }));
+}
+
+function setLineActionStatus(lineId: number, status: string): void {
+  lineActionStatus.value = {
+    ...lineActionStatus.value,
+    [lineId]: status
+  };
+  window.setTimeout(() => {
+    if (lineActionStatus.value[lineId] === status) {
+      const next = { ...lineActionStatus.value };
+      delete next[lineId];
+      lineActionStatus.value = next;
+    }
+  }, 1800);
+}
+
+function openImagePreview(line: TerminalLine): void {
+  if (!line.imageUrl) {
+    return;
+  }
+  imagePreview.value = {
+    lineId: line.id,
+    url: line.imageUrl,
+    alt: line.imageAlt || line.text || 'Generated image'
+  };
+}
+
+function closeImagePreview(): void {
+  imagePreview.value = null;
+}
+
+function safeFilename(base: string, ext: string): string {
+  const clean = base
+    .replace(/[^\w\s.-]/g, ' ')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+    .slice(0, 50);
+  return `${clean || 'asset'}-${Date.now()}.${ext}`;
+}
+
+function triggerDownloadFromUrl(url: string, filename: string): void {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener noreferrer';
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function triggerDownloadFromBlob(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  triggerDownloadFromUrl(objectUrl, filename);
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+async function copyLineText(line: TerminalLine): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(line.text);
+    setLineActionStatus(line.id, 'Copied');
+  } catch {
+    setLineActionStatus(line.id, 'Copy blocked');
+  }
+}
+
+function downloadLineText(line: TerminalLine): void {
+  const blob = new Blob([line.text], { type: 'text/plain;charset=utf-8' });
+  triggerDownloadFromBlob(blob, safeFilename(`${line.tone}-message`, 'txt'));
+  setLineActionStatus(line.id, 'Downloaded');
+}
+
+async function downloadLineImage(line: TerminalLine): Promise<void> {
+  if (!line.imageUrl) {
+    return;
+  }
+
+  try {
+    if (line.imageUrl.startsWith('data:image/')) {
+      triggerDownloadFromUrl(line.imageUrl, safeFilename(line.imageAlt || 'image', 'png'));
+      setLineActionStatus(line.id, 'Downloaded');
+      return;
+    }
+
+    const response = await fetch(line.imageUrl, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('fetch failed');
+    }
+    const blob = await response.blob();
+    const ext = blob.type.includes('jpeg') ? 'jpg' : blob.type.includes('webp') ? 'webp' : 'png';
+    triggerDownloadFromBlob(blob, safeFilename(line.imageAlt || 'image', ext));
+    setLineActionStatus(line.id, 'Downloaded');
+  } catch {
+    setLineActionStatus(line.id, 'Download failed');
+  }
+}
+
+async function copyLineImage(line: TerminalLine): Promise<void> {
+  if (!line.imageUrl) {
+    return;
+  }
+
+  try {
+    if (typeof ClipboardItem === 'undefined') {
+      await navigator.clipboard.writeText(line.imageUrl);
+      setLineActionStatus(line.id, 'URL copied');
+      return;
+    }
+
+    const response = await fetch(line.imageUrl, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('fetch failed');
+    }
+    const blob = await response.blob();
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [blob.type || 'image/png']: blob
+      })
+    ]);
+    setLineActionStatus(line.id, 'Image copied');
+  } catch {
+    try {
+      await navigator.clipboard.writeText(line.imageUrl);
+      setLineActionStatus(line.id, 'URL copied');
+    } catch {
+      setLineActionStatus(line.id, 'Copy blocked');
+    }
+  }
+}
+
+function toPreviewLine(preview: ImagePreviewState): TerminalLine {
+  return {
+    id: preview.lineId,
+    tone: 'assistant',
+    text: preview.alt,
+    createdAt: new Date().toISOString(),
+    imageUrl: preview.url,
+    imageAlt: preview.alt
+  };
+}
+
+async function copyPreviewImage(): Promise<void> {
+  if (!imagePreview.value) {
+    return;
+  }
+  await copyLineImage(toPreviewLine(imagePreview.value));
+}
+
+async function downloadPreviewImage(): Promise<void> {
+  if (!imagePreview.value) {
+    return;
+  }
+  await downloadLineImage(toPreviewLine(imagePreview.value));
+}
+
+function openPreviewImageTab(): void {
+  if (!imagePreview.value) {
+    return;
+  }
+  window.open(imagePreview.value.url, '_blank', 'noopener,noreferrer');
 }
 
 async function handleFileSelection(event: Event): Promise<void> {
@@ -821,6 +994,9 @@ function handleTranscriptImageLoad(line: TerminalLine): void {
     ...mediaLoadState.value,
     [line.id]: 'ready'
   };
+  if (!imagePreview.value && line.imageUrl) {
+    openImagePreview(line);
+  }
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -1850,7 +2026,8 @@ const commandStatus = computed(() =>
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
 const terminalShellStyle = computed<Record<string, string>>(() => ({
   '--terminal-transcript-height': `${transcriptHeight.value}px`,
-  '--reveal-order': '4'
+  '--reveal-order': '4',
+  '--scene-refresh-token': `${sceneNonce.value}`
 }));
 
 function clampTranscriptHeight(height: number): number {
@@ -2361,7 +2538,7 @@ onUnmounted(() => {
   </main>
 
   <main v-else-if="blueprint" class="experience-root" :class="shellClassName" :style="shellVisualStyle">
-    <div class="fx-stage" aria-hidden="true">
+    <div class="fx-stage" aria-hidden="true" :key="`fx-${sceneNonce}`">
       <HoloBackdrop class="fx-canvas" :accent="personalizationAccent" :seed="visualSeed" :reduced-motion="prefersReducedMotion" />
       <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
     </div>
@@ -2492,6 +2669,14 @@ onUnmounted(() => {
               <span class="line-role">{{ toneLabel(line.tone) }}</span>
               <span class="line-time">{{ formatLineTime(line) }}</span>
             </div>
+            <div class="line-actions">
+              <button type="button" @click="copyLineText(line)">Copy</button>
+              <button type="button" @click="downloadLineText(line)">Download</button>
+              <button v-if="line.imageUrl" type="button" @click="openImagePreview(line)">Expand</button>
+              <button v-if="line.imageUrl" type="button" @click="copyLineImage(line)">Copy Image</button>
+              <button v-if="line.imageUrl" type="button" @click="downloadLineImage(line)">Download Image</button>
+              <span v-if="lineActionStatus[line.id]" class="line-action-status">{{ lineActionStatus[line.id] }}</span>
+            </div>
             <p class="line-text">{{ line.text }}</p>
             <div v-if="line.imageUrl" class="line-media-shell">
               <div v-if="mediaLoadState[line.id] !== 'ready'" class="line-media-loading">
@@ -2504,6 +2689,7 @@ onUnmounted(() => {
                 :src="line.imageUrl"
                 :alt="line.imageAlt || 'Generated image'"
                 loading="lazy"
+                @click="openImagePreview(line)"
                 @load="handleTranscriptImageLoad(line)"
                 @error="handleTranscriptImageError($event, line)"
               />
@@ -2563,15 +2749,31 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div v-if="assistantSuggestions.length > 0" class="assistant-actions">
-        <button
-          v-for="suggestion in assistantSuggestions"
-          :key="`${suggestion.label}:${suggestion.action}`"
-          type="button"
-          @click="openAction(suggestion.action)"
-        >
-          {{ suggestion.label }}
+      <div class="assistant-actions">
+        <button type="button" @click="openAction(assistantPrimaryCta.action)">
+          {{ assistantPrimaryCta.label }}
         </button>
+      </div>
+
+      <div
+        v-if="imagePreview"
+        class="image-viewer"
+        role="dialog"
+        aria-modal="true"
+        @click.self="closeImagePreview"
+      >
+        <article class="image-viewer-card">
+          <header>
+            <p>{{ imagePreview.alt }}</p>
+            <button type="button" @click="closeImagePreview">Close</button>
+          </header>
+          <img :src="imagePreview.url" :alt="imagePreview.alt" />
+          <div class="image-viewer-actions">
+            <button type="button" @click="copyPreviewImage">Copy Image</button>
+            <button type="button" @click="downloadPreviewImage">Download</button>
+            <button type="button" @click="openPreviewImageTab">Open Tab</button>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -3432,6 +3634,35 @@ h1 {
   line-height: 1.45;
 }
 
+.line-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  align-items: center;
+}
+
+.line-actions button {
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--text-primary);
+  padding: 0.1rem 0.46rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  transition: transform 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+}
+
+.line-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.64);
+  background: rgba(var(--accent-rgb), 0.24);
+}
+
+.line-action-status {
+  font-size: 0.62rem;
+  color: rgb(var(--accent-soft-rgb));
+}
+
 .tone-user .line-body {
   border-color: rgba(var(--accent-rgb), 0.4);
   background: linear-gradient(140deg, rgba(var(--accent-rgb), 0.18), rgba(2, 6, 23, 0.82) 52%);
@@ -3501,6 +3732,7 @@ h1 {
   border-radius: 0;
   box-shadow: none;
   background: rgba(2, 6, 23, 0.8);
+  cursor: zoom-in;
 }
 
 .line-media-loading {
@@ -3739,6 +3971,80 @@ h1 {
 
 .assistant-actions button:active {
   transform: translateY(0);
+}
+
+.image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 78;
+  background: rgba(2, 6, 23, 0.76);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.image-viewer-card {
+  width: min(980px, 100%);
+  max-height: min(92vh, 980px);
+  border: 1px solid rgba(var(--accent-rgb), 0.56);
+  border-radius: 16px;
+  background: rgba(2, 8, 22, 0.95);
+  box-shadow: 0 26px 52px rgba(2, 6, 23, 0.62);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+}
+
+.image-viewer-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.34);
+}
+
+.image-viewer-card header p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.image-viewer-card header button {
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.2rem 0.62rem;
+}
+
+.image-viewer-card img {
+  width: 100%;
+  height: 100%;
+  max-height: min(68vh, 720px);
+  object-fit: contain;
+  background: rgba(2, 6, 23, 0.85);
+}
+
+.image-viewer-actions {
+  border-top: 1px solid rgba(var(--accent-rgb), 0.34);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.7rem 0.85rem 0.85rem;
+}
+
+.image-viewer-actions button {
+  border: 1px solid rgba(var(--accent-rgb), 0.46);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--text-primary);
+  padding: 0.26rem 0.68rem;
+  font-size: 0.72rem;
 }
 
 .widget-studio {
