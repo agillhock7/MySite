@@ -405,7 +405,7 @@ function buildSharePayload(): { title: string; text: string; url: string } {
     };
   }
 
-  const shareUrl = new URL('/app', window.location.origin);
+  const shareUrl = new URL('/app/skill-game', window.location.origin);
   shareUrl.searchParams.set('ref', 'ai-skill-game');
   shareUrl.searchParams.set('score', scoreLine);
   shareUrl.searchParams.set('mastery', `${masteryPercent.value}`);

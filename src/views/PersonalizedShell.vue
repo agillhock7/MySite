@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { fetchWordpressContentBundle } from '@/api/wp';
 import AiPromptGame from '@/components/AiPromptGame.vue';
 import DashboardWidgetRenderer from '@/components/DashboardWidgetRenderer.vue';
@@ -94,6 +94,7 @@ const CONVERSATION_STORAGE_KEY = 'mysite.assistant.conversations.v1';
 const MAX_SAVED_CONVERSATIONS = 5;
 
 const router = useRouter();
+const route = useRoute();
 const personalization = usePersonalizationStore();
 
 const initializing = ref(true);
@@ -139,20 +140,18 @@ const assistantPrimaryCta = {
   action: 'https://hiops.darkhorsevirtue.io'
 } as const;
 const appNavSections = [
-  { id: 'mission-hub', label: 'Mission Hub' },
-  { id: 'ai-conversations', label: 'AI Conversations' },
-  { id: 'ai-skill-game', label: 'AI Skill Game' },
-  { id: 'widget-studio', label: 'Widget Studio' },
-  { id: 'blog-posts', label: 'Blog Feed' }
+  { id: 'home', label: 'Mission Hub', path: '/app/home' },
+  { id: 'conversations', label: 'AI Conversations', path: '/app/conversations' },
+  { id: 'skill-game', label: 'AI Skill Game', path: '/app/skill-game' },
+  { id: 'widgets', label: 'Widget Studio', path: '/app/widgets' },
+  { id: 'blog', label: 'Blog Feed', path: '/app/blog' }
 ] as const;
 const missionNavigation = [
-  { id: 'ai-conversations', label: 'AI Conversations' },
-  { id: 'ai-skill-game', label: 'AI Skill Game' },
-  { id: 'blog-posts', label: 'Blog Posts' }
+  { id: 'conversations', label: 'AI Conversations', path: '/app/conversations' },
+  { id: 'skill-game', label: 'AI Skill Game', path: '/app/skill-game' },
+  { id: 'blog', label: 'Blog Posts', path: '/app/blog' }
 ] as const;
 type AppNavSectionId = (typeof appNavSections)[number]['id'];
-const activeSectionId = ref<AppNavSectionId>('mission-hub');
-let sectionObserver: IntersectionObserver | null = null;
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -1156,7 +1155,7 @@ async function openAction(url: string): Promise<void> {
   }
 
   if (url.startsWith('/')) {
-    await router.push(url);
+    await router.push(url === '/app' ? '/app/home' : url);
     return;
   }
 
@@ -2059,6 +2058,16 @@ const terminalShellStyle = computed<Record<string, string>>(() => ({
   '--terminal-transcript-height': `${transcriptHeight.value}px`,
   '--reveal-order': '4'
 }));
+const currentAppView = computed<AppNavSectionId>(() => {
+  const match = appNavSections.find((section) => route.path === section.path);
+  return match?.id ?? 'home';
+});
+const activeSectionId = computed<AppNavSectionId>(() => currentAppView.value);
+const isHomeView = computed(() => currentAppView.value === 'home');
+const isConversationView = computed(() => currentAppView.value === 'conversations');
+const isSkillGameView = computed(() => currentAppView.value === 'skill-game');
+const isWidgetsView = computed(() => currentAppView.value === 'widgets');
+const isBlogView = computed(() => currentAppView.value === 'blog');
 
 function clampTranscriptHeight(height: number): number {
   return Math.max(220, Math.min(860, Math.round(height)));
@@ -2133,67 +2142,11 @@ function toggleTerminalExpanded(): void {
   transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
 }
 
-function isAppNavSectionId(value: string): value is AppNavSectionId {
-  return appNavSections.some((section) => section.id === value);
-}
-
-function observeAppSections(): void {
-  if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') {
+async function navigateToView(path: string): Promise<void> {
+  if (route.path === path) {
     return;
   }
-
-  sectionObserver?.disconnect();
-  sectionObserver = null;
-
-  const targets = appNavSections
-    .map((section) => document.getElementById(section.id))
-    .filter((element): element is HTMLElement => element instanceof HTMLElement);
-
-  if (targets.length === 0) {
-    return;
-  }
-
-  sectionObserver = new IntersectionObserver(
-    (entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((left, right) => right.intersectionRatio - left.intersectionRatio);
-
-      if (visible.length === 0) {
-        return;
-      }
-
-      const id = visible[0].target.id;
-      if (isAppNavSectionId(id)) {
-        activeSectionId.value = id;
-      }
-    },
-    {
-      root: null,
-      rootMargin: '-20% 0px -55% 0px',
-      threshold: [0.2, 0.4, 0.6]
-    }
-  );
-
-  for (const target of targets) {
-    sectionObserver.observe(target);
-  }
-}
-
-function scrollToSection(sectionId: string): void {
-  const target = document.getElementById(sectionId);
-  if (!target) {
-    return;
-  }
-
-  if (isAppNavSectionId(sectionId)) {
-    activeSectionId.value = sectionId;
-  }
-
-  target.scrollIntoView({
-    behavior: prefersReducedMotion.value ? 'auto' : 'smooth',
-    block: 'start'
-  });
+  await router.push(path);
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
@@ -2629,14 +2582,9 @@ onMounted(async () => {
     addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
     addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
   }
-
-  await nextTick();
-  observeAppSections();
 });
 
 onUnmounted(() => {
-  sectionObserver?.disconnect();
-  sectionObserver = null;
   window.removeEventListener('keydown', handleGlobalKeydown);
   if (motionMediaQuery) {
     if (typeof motionMediaQuery.removeEventListener === 'function') {
@@ -2689,7 +2637,7 @@ onUnmounted(() => {
             :key="section.id"
             type="button"
             :class="{ active: activeSectionId === section.id }"
-            @click="scrollToSection(section.id)"
+            @click="navigateToView(section.path)"
           >
             <span>{{ section.label }}</span>
           </button>
@@ -2716,7 +2664,7 @@ onUnmounted(() => {
               :key="`top-${item.id}`"
               type="button"
               :class="{ active: activeSectionId === item.id }"
-              @click="scrollToSection(item.id)"
+              @click="navigateToView(item.path)"
             >
               {{ item.label }}
             </button>
@@ -2729,7 +2677,9 @@ onUnmounted(() => {
           </div>
         </header>
 
-    <section id="mission-hub" class="mission-shell reveal-surface" style="--reveal-order: 2">
+    <Transition name="view-swap" mode="out-in">
+      <div :key="currentAppView" class="view-stage">
+    <section v-if="isHomeView" id="mission-hub" class="mission-shell reveal-surface" style="--reveal-order: 2">
       <article class="mission-card">
         <p class="mission-kicker">About MySite</p>
         <h1>{{ scene.mission }}</h1>
@@ -2746,7 +2696,7 @@ onUnmounted(() => {
             v-for="item in missionNavigation"
             :key="item.id"
             type="button"
-            @click="scrollToSection(item.id)"
+            @click="navigateToView(item.path)"
           >
             {{ item.label }}
           </button>
@@ -2763,9 +2713,9 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section id="dashboard-hub" class="dashboard-shell reveal-surface" style="--reveal-order: 3">
+    <section v-if="isHomeView || isSkillGameView" id="dashboard-hub" class="dashboard-shell reveal-surface" style="--reveal-order: 3">
       <article class="dashboard-card">
-        <p class="mission-kicker">Visitor Dashboard</p>
+        <p class="mission-kicker">{{ isSkillGameView ? 'Skill Mission Stats' : 'Visitor Dashboard' }}</p>
         <div class="stats-grid">
           <section v-for="stat in dashboardStats" :key="stat.label" class="stat-card">
             <p class="stat-label">{{ stat.label }}</p>
@@ -2775,7 +2725,7 @@ onUnmounted(() => {
         </div>
       </article>
 
-      <div id="ai-skill-game" class="game-anchor">
+      <div v-if="isHomeView || isSkillGameView" id="ai-skill-game" class="game-anchor">
         <AiPromptGame
           :signature="designSignature"
           :topics="focusTopics"
@@ -2785,7 +2735,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section id="ai-conversations" class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
+    <section v-if="isHomeView || isConversationView" id="ai-conversations" class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
       <p v-if="widgetBuildSession" class="build-mode-banner">
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
@@ -2945,7 +2895,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section id="widget-studio" class="widget-studio reveal-surface" style="--reveal-order: 5">
+    <section v-if="isHomeView || isWidgetsView" id="widget-studio" class="widget-studio reveal-surface" style="--reveal-order: 5">
       <header class="studio-head">
         <p class="mission-kicker">Widget Studio</p>
         <p class="studio-meta">Deployable widgets: {{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }}</p>
@@ -3044,7 +2994,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="tracks-grid reveal-surface" style="--reveal-order: 6">
+    <section v-if="isHomeView || isBlogView" class="tracks-grid reveal-surface" style="--reveal-order: 6">
       <article v-for="track in scene.tracks" :key="track.id" class="track-card">
         <p class="track-signal">{{ track.signal }}</p>
         <h2>{{ track.label }}</h2>
@@ -3053,7 +3003,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section id="blog-posts" class="content-stream reveal-surface" style="--reveal-order: 7">
+    <section v-if="isHomeView || isBlogView" id="blog-posts" class="content-stream reveal-surface" style="--reveal-order: 7">
       <article v-for="post in posts" :key="post.id" class="post-row">
         <img v-if="post.imageUrl" :src="post.imageUrl" alt="" loading="lazy" />
         <div>
@@ -3065,7 +3015,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="shortcut-row reveal-surface" style="--reveal-order: 8">
+    <section v-if="isHomeView || isBlogView" class="shortcut-row reveal-surface" style="--reveal-order: 8">
       <a
         v-for="shortcut in shortcuts"
         :key="`${shortcut.label}:${shortcut.action}`"
@@ -3077,6 +3027,8 @@ onUnmounted(() => {
         {{ shortcut.label }}
       </a>
     </section>
+      </div>
+    </Transition>
       </div>
     </div>
 
@@ -3313,6 +3265,21 @@ onUnmounted(() => {
 .app-main {
   min-width: 0;
   display: grid;
+}
+
+.view-stage {
+  min-width: 0;
+}
+
+.view-swap-enter-active,
+.view-swap-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.view-swap-enter-from,
+.view-swap-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 10px, 0);
 }
 
 .app-sidebar {
@@ -4838,6 +4805,11 @@ h1 {
   .line-media-shell::after,
   .experience-root::before {
     animation: none !important;
+  }
+
+  .view-swap-enter-active,
+  .view-swap-leave-active {
+    transition: none !important;
   }
 }
 

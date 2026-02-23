@@ -23,6 +23,31 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/app',
     name: 'app',
+    redirect: '/app/home'
+  },
+  {
+    path: '/app/home',
+    name: 'app-home',
+    component: PersonalizedShell
+  },
+  {
+    path: '/app/conversations',
+    name: 'app-conversations',
+    component: PersonalizedShell
+  },
+  {
+    path: '/app/skill-game',
+    name: 'app-skill-game',
+    component: PersonalizedShell
+  },
+  {
+    path: '/app/widgets',
+    name: 'app-widgets',
+    component: PersonalizedShell
+  },
+  {
+    path: '/app/blog',
+    name: 'app-blog',
     component: PersonalizedShell
   },
   {
@@ -68,12 +93,12 @@ export function installRouterGuards(pinia: Pinia): void {
       }
     }
 
-    if ((to.path === '/app' || to.path.startsWith('/story/')) && !personalization.blueprint) {
+    if ((to.path.startsWith('/app') || to.path.startsWith('/story/')) && !personalization.blueprint) {
       return '/onboarding';
     }
 
     if (to.path === '/onboarding' && personalization.blueprint && !forceOnboarding) {
-      return '/app';
+      return '/app/home';
     }
 
     return true;
