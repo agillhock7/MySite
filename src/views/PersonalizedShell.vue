@@ -138,11 +138,21 @@ const assistantPrimaryCta = {
   label: 'Access more AI tools + free web hosting',
   action: 'https://hiops.darkhorsevirtue.io'
 } as const;
+const appNavSections = [
+  { id: 'mission-hub', label: 'Mission Hub' },
+  { id: 'ai-conversations', label: 'AI Conversations' },
+  { id: 'ai-skill-game', label: 'AI Skill Game' },
+  { id: 'widget-studio', label: 'Widget Studio' },
+  { id: 'blog-posts', label: 'Blog Feed' }
+] as const;
 const missionNavigation = [
   { id: 'ai-conversations', label: 'AI Conversations' },
   { id: 'ai-skill-game', label: 'AI Skill Game' },
   { id: 'blog-posts', label: 'Blog Posts' }
 ] as const;
+type AppNavSectionId = (typeof appNavSections)[number]['id'];
+const activeSectionId = ref<AppNavSectionId>('mission-hub');
+let sectionObserver: IntersectionObserver | null = null;
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -2123,10 +2133,61 @@ function toggleTerminalExpanded(): void {
   transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
 }
 
+function isAppNavSectionId(value: string): value is AppNavSectionId {
+  return appNavSections.some((section) => section.id === value);
+}
+
+function observeAppSections(): void {
+  if (typeof window === 'undefined' || typeof IntersectionObserver === 'undefined') {
+    return;
+  }
+
+  sectionObserver?.disconnect();
+  sectionObserver = null;
+
+  const targets = appNavSections
+    .map((section) => document.getElementById(section.id))
+    .filter((element): element is HTMLElement => element instanceof HTMLElement);
+
+  if (targets.length === 0) {
+    return;
+  }
+
+  sectionObserver = new IntersectionObserver(
+    (entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio);
+
+      if (visible.length === 0) {
+        return;
+      }
+
+      const id = visible[0].target.id;
+      if (isAppNavSectionId(id)) {
+        activeSectionId.value = id;
+      }
+    },
+    {
+      root: null,
+      rootMargin: '-20% 0px -55% 0px',
+      threshold: [0.2, 0.4, 0.6]
+    }
+  );
+
+  for (const target of targets) {
+    sectionObserver.observe(target);
+  }
+}
+
 function scrollToSection(sectionId: string): void {
   const target = document.getElementById(sectionId);
   if (!target) {
     return;
+  }
+
+  if (isAppNavSectionId(sectionId)) {
+    activeSectionId.value = sectionId;
   }
 
   target.scrollIntoView({
@@ -2568,9 +2629,14 @@ onMounted(async () => {
     addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
     addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
   }
+
+  await nextTick();
+  observeAppSections();
 });
 
 onUnmounted(() => {
+  sectionObserver?.disconnect();
+  sectionObserver = null;
   window.removeEventListener('keydown', handleGlobalKeydown);
   if (motionMediaQuery) {
     if (typeof motionMediaQuery.removeEventListener === 'function') {
@@ -2606,23 +2672,64 @@ onUnmounted(() => {
       <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
     </div>
 
-    <header class="topbar reveal-surface" style="--reveal-order: 1">
-      <a class="brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
-        <img :src="brandIconUrl" alt="" loading="lazy" />
-        <span>
-          <strong>{{ brandName }}</strong>
-          <em>{{ brandTagline }}</em>
-        </span>
-      </a>
+    <div class="app-shell">
+      <aside class="app-sidebar reveal-surface" style="--reveal-order: 1">
+        <a class="brand sidebar-brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
+          <img :src="brandIconUrl" alt="" loading="lazy" />
+          <span>
+            <strong>{{ brandName }}</strong>
+            <em>{{ brandTagline }}</em>
+          </span>
+        </a>
 
-      <div class="topbar-meta">
-        <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
-        <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
-        <button type="button" @click="resetPersonalization">Reset Personalization</button>
-      </div>
-    </header>
+        <p class="sidebar-kicker">Workspace Navigation</p>
+        <nav class="sidebar-nav" aria-label="Workspace sections">
+          <button
+            v-for="section in appNavSections"
+            :key="section.id"
+            type="button"
+            :class="{ active: activeSectionId === section.id }"
+            @click="scrollToSection(section.id)"
+          >
+            <span>{{ section.label }}</span>
+          </button>
+        </nav>
 
-    <section class="mission-shell reveal-surface" style="--reveal-order: 2">
+        <div class="sidebar-meta">
+          <p class="sidebar-meta-label">Readiness</p>
+          <p class="sidebar-meta-value">{{ readinessScore }}%</p>
+          <p class="sidebar-meta-detail">Signature {{ designSignature }}</p>
+        </div>
+      </aside>
+
+      <div class="app-main">
+        <header class="topbar reveal-surface" style="--reveal-order: 1">
+          <div class="topbar-head">
+            <p class="mission-kicker">MySite Workspace</p>
+            <h2>{{ scene.codename }}</h2>
+            <p class="topbar-copy">A sample of AI capabilities with creating custom workspaces.</p>
+          </div>
+
+          <div class="topbar-quick-nav" aria-label="Primary sections">
+            <button
+              v-for="item in missionNavigation"
+              :key="`top-${item.id}`"
+              type="button"
+              :class="{ active: activeSectionId === item.id }"
+              @click="scrollToSection(item.id)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+
+          <div class="topbar-meta">
+            <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
+            <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
+            <button type="button" @click="resetPersonalization">Reset Personalization</button>
+          </div>
+        </header>
+
+    <section id="mission-hub" class="mission-shell reveal-surface" style="--reveal-order: 2">
       <article class="mission-card">
         <p class="mission-kicker">About MySite</p>
         <h1>{{ scene.mission }}</h1>
@@ -2656,7 +2763,7 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section class="dashboard-shell reveal-surface" style="--reveal-order: 3">
+    <section id="dashboard-hub" class="dashboard-shell reveal-surface" style="--reveal-order: 3">
       <article class="dashboard-card">
         <p class="mission-kicker">Visitor Dashboard</p>
         <div class="stats-grid">
@@ -2838,7 +2945,7 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section class="widget-studio reveal-surface" style="--reveal-order: 5">
+    <section id="widget-studio" class="widget-studio reveal-surface" style="--reveal-order: 5">
       <header class="studio-head">
         <p class="mission-kicker">Widget Studio</p>
         <p class="studio-meta">Deployable widgets: {{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }}</p>
@@ -2970,6 +3077,8 @@ onUnmounted(() => {
         {{ shortcut.label }}
       </a>
     </section>
+      </div>
+    </div>
 
     <Teleport to="body">
       <div
@@ -3195,11 +3304,103 @@ onUnmounted(() => {
   backdrop-filter: blur(10px);
 }
 
+.app-shell {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.app-main {
+  min-width: 0;
+  display: grid;
+}
+
+.app-sidebar {
+  border: 1px solid var(--border-tone);
+  border-radius: var(--scene-panel-radius);
+  background: var(--surface-main);
+  padding: 0.78rem;
+  backdrop-filter: blur(15px);
+  box-shadow: 0 16px 34px rgba(2, 6, 23, 0.3);
+  display: grid;
+  gap: 0.62rem;
+}
+
+.sidebar-brand {
+  margin-bottom: 0.2rem;
+}
+
+.sidebar-kicker {
+  margin: 0;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-signal);
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 0.34rem;
+}
+
+.sidebar-nav button {
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: var(--text-primary);
+  text-align: left;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  padding: 0.44rem 0.56rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.sidebar-nav button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.62);
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.sidebar-nav button.active {
+  border-color: rgba(var(--accent-rgb), 0.78);
+  background: linear-gradient(130deg, rgba(var(--accent-rgb), 0.32), rgba(var(--accent-sharp-rgb), 0.26));
+  box-shadow: inset 0 1px 0 rgba(var(--accent-soft-rgb), 0.3);
+}
+
+.sidebar-meta {
+  margin-top: 0.3rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 10px;
+  padding: 0.52rem 0.56rem;
+  background: rgba(var(--accent-rgb), 0.1);
+  display: grid;
+  gap: 0.14rem;
+}
+
+.sidebar-meta-label {
+  margin: 0;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-signal);
+}
+
+.sidebar-meta-value {
+  margin: 0;
+  font-size: 1.08rem;
+  line-height: 1.05;
+  color: var(--text-primary);
+}
+
+.sidebar-meta-detail {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
 .topbar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 0.8rem;
+  display: grid;
+  gap: 0.72rem;
   border: 1px solid var(--border-tone);
   border-radius: var(--scene-panel-radius);
   background: var(--surface-main);
@@ -3207,6 +3408,9 @@ onUnmounted(() => {
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
   transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
+  position: sticky;
+  top: 0.7rem;
+  z-index: 25;
 }
 
 .topbar:hover {
@@ -3248,10 +3452,49 @@ onUnmounted(() => {
   color: var(--text-signal);
 }
 
+.topbar-head h2 {
+  margin: 0.34rem 0 0;
+  font-size: clamp(1rem, 2.3vw, 1.3rem);
+}
+
+.topbar-copy {
+  margin: 0.3rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.topbar-quick-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.topbar-quick-nav button {
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text-primary);
+  padding: 0.24rem 0.62rem;
+  font-size: 0.72rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.topbar-quick-nav button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.74);
+  background: rgba(var(--accent-rgb), 0.26);
+}
+
+.topbar-quick-nav button.active {
+  border-color: rgba(var(--accent-rgb), 0.82);
+  background: linear-gradient(130deg, rgba(var(--accent-rgb), 0.3), rgba(var(--accent-sharp-rgb), 0.24));
+}
+
 .topbar-meta {
   display: grid;
   gap: 0.4rem;
-  justify-items: end;
+  justify-items: start;
 }
 
 .topbar-meta p {
@@ -3259,7 +3502,7 @@ onUnmounted(() => {
   color: var(--text-secondary);
   font-size: 0.74rem;
   letter-spacing: 0.06em;
-  text-align: right;
+  text-align: left;
 }
 
 .persona-line {
@@ -3386,6 +3629,15 @@ h1 {
   transform: translateY(-1px);
   border-color: rgba(var(--accent-rgb), 0.74);
   background: rgba(var(--accent-rgb), 0.28);
+}
+
+#mission-hub,
+#dashboard-hub,
+#ai-skill-game,
+#ai-conversations,
+#widget-studio,
+#blog-posts {
+  scroll-margin-top: 6.4rem;
 }
 
 .prompt-card ul {
@@ -4598,11 +4850,39 @@ h1 {
     grid-column: 1 / -1;
     justify-self: start;
   }
+
+  .sidebar-nav {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1079px) {
+  .sidebar-nav {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
 }
 
 @media (min-width: 860px) {
   .experience-root {
     padding: 1.2rem 1.8rem 2rem;
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1.2fr) auto auto;
+    align-items: start;
+  }
+
+  .topbar-quick-nav {
+    justify-self: start;
+    align-self: center;
+  }
+
+  .topbar-meta {
+    justify-items: end;
+  }
+
+  .topbar-meta p {
+    text-align: right;
   }
 
   .mission-shell {
@@ -4633,6 +4913,24 @@ h1 {
 
   .content-stream {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1080px) {
+  .app-shell {
+    grid-template-columns: minmax(232px, 264px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .app-sidebar {
+    position: sticky;
+    top: 1.2rem;
+    max-height: calc(100vh - 2.4rem);
+    overflow: auto;
+  }
+
+  .topbar {
+    top: 1.2rem;
   }
 }
 </style>
