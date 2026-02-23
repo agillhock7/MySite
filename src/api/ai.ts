@@ -48,6 +48,11 @@ export interface AssistantTurnResult {
   source: 'backend' | 'local';
 }
 
+export interface ImagePromptResult {
+  prompt: string;
+  source: 'backend' | 'local';
+}
+
 export interface GapSuggestion {
   topic: string;
   priority: 'high' | 'medium' | 'low';
@@ -77,6 +82,7 @@ export interface BlueprintGenerationResult {
 const BACKEND_BLUEPRINT_ENDPOINT = '/api/ai/blueprint.php';
 const BACKEND_ONBOARDING_ENDPOINT = '/api/ai/onboarding.php';
 const BACKEND_ASSISTANT_ENDPOINT = '/api/ai/assistant.php';
+const BACKEND_IMAGE_PROMPT_ENDPOINT = '/api/ai/image-prompt.php';
 
 export function defaultIntentProfile(): IntentProfile {
   return {
@@ -1078,6 +1084,103 @@ function localImageAssistantFallback(userMessage: string): AssistantTurnResult {
     ],
     source: 'local'
   };
+}
+
+function localRandomImagePrompt(seedInput: string): string {
+  const subjects = [
+    'desert skyline',
+    'neon metropolis',
+    'futuristic mountain city',
+    'holographic ocean cliff',
+    'cyberpunk canyon transit hub',
+    'orbital night market',
+    'floating garden district',
+    'brutalist innovation lab'
+  ];
+  const moods = [
+    'sunrise haze',
+    'golden hour glow',
+    'rain-soaked night',
+    'moonlit atmosphere',
+    'storm-lit horizon',
+    'aurora twilight'
+  ];
+  const styles = [
+    'cinematic',
+    'ultra-detailed',
+    'editorial composition',
+    'wide-angle dramatic lighting',
+    'photorealistic concept art'
+  ];
+  const details = [
+    'volumetric lighting',
+    'atmospheric depth',
+    'high contrast color grading',
+    'soft haze and sharp foreground detail',
+    'dynamic cloud structure'
+  ];
+
+  const seed = hashText(seedInput);
+  const subject = subjects[seed % subjects.length];
+  const mood = moods[(seed >>> 4) % moods.length];
+  const style = styles[(seed >>> 8) % styles.length];
+  const detail = details[(seed >>> 12) % details.length];
+  return `${style} ${subject} at ${mood}, ${detail}, 8k composition`;
+}
+
+function cleanImagePrompt(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/^["']+|["']+$/g, '')
+    .trim()
+    .slice(0, 200);
+}
+
+export async function generateImagePromptWithFallback(params: {
+  visitorId?: string;
+  variantNonce?: number;
+  topics?: string[];
+}): Promise<ImagePromptResult> {
+  const visitorId = params.visitorId ?? 'visitor-local';
+  const variantNonce = params.variantNonce ?? 0;
+  const topics = (params.topics ?? []).slice(0, 4).join('|');
+  const localSeed = `${visitorId}:${variantNonce}:${topics}:${Date.now()}`;
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(BACKEND_IMAGE_PROMPT_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        visitorId,
+        variantNonce,
+        topics: params.topics ?? []
+      }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return { prompt: localRandomImagePrompt(localSeed), source: 'local' };
+    }
+
+    const payload = (await response.json()) as unknown;
+    const record = asObject(payload);
+    const prompt = cleanImagePrompt(typeof record?.prompt === 'string' ? record.prompt : '');
+    if (!prompt) {
+      return { prompt: localRandomImagePrompt(localSeed), source: 'local' };
+    }
+
+    const source = record?.source === 'backend' ? 'backend' : 'local';
+    return { prompt, source };
+  } catch {
+    return { prompt: localRandomImagePrompt(localSeed), source: 'local' };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalizeAssistantAttachments(value: unknown): AssistantAttachment[] {

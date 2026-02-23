@@ -15,7 +15,12 @@ import {
   type DashboardWidget,
   type DashboardWidgetType
 } from '@/dashboard/engine';
-import { generateAssistantTurnWithFallback, type AssistantAttachment, type OnboardingTranscriptLine } from '@/api/ai';
+import {
+  generateAssistantTurnWithFallback,
+  generateImagePromptWithFallback,
+  type AssistantAttachment,
+  type OnboardingTranscriptLine
+} from '@/api/ai';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getOrCreateVisitorId } from '@/personalization/visitor';
@@ -990,9 +995,6 @@ function handleTranscriptImageLoad(line: TerminalLine): void {
     ...mediaLoadState.value,
     [line.id]: 'ready'
   };
-  if (!imagePreview.value && line.imageUrl) {
-    openImagePreview(line);
-  }
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -2015,7 +2017,7 @@ const commandHints = computed(() => {
     { label: 'New Thread', command: '/thread new' },
     { label: 'Upload File', command: '/upload' },
     { label: 'Widget Build', command: '/widget build' },
-    { label: 'Image Prompt', command: '/image cinematic desert skyline at dawn' },
+    { label: 'Image Prompt', command: '/image random' },
     { label: 'Shuffle Scene', command: '/shuffle' }
   ];
 });
@@ -2447,10 +2449,22 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input.startsWith('/image ')) {
-    const prompt = input.slice('/image '.length).trim();
-    if (!prompt) {
+    const payload = input.slice('/image '.length).trim();
+    if (!payload) {
       addLine('system', 'Usage: /image <prompt>');
       return;
+    }
+
+    let prompt = payload;
+    if (/^(random|surprise|auto)$/i.test(payload)) {
+      addLine('signal', 'Synthesizing a randomized image prompt...');
+      const generated = await generateImagePromptWithFallback({
+        visitorId,
+        variantNonce: sceneNonce.value,
+        topics: focusTopics.value
+      });
+      prompt = generated.prompt;
+      addLine('system', `Image prompt (${generated.source}): ${prompt}`);
     }
 
     addLine('signal', 'Multimodal request detected. Generating in-thread visual...');
@@ -4016,21 +4030,24 @@ h1 {
 .image-viewer {
   position: fixed;
   inset: 0;
-  z-index: 78;
-  background: rgba(2, 6, 23, 0.76);
-  backdrop-filter: blur(8px);
+  z-index: 160;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(var(--accent-rgb), 0.22), transparent 42%),
+    radial-gradient(circle at 82% 88%, rgba(var(--accent-soft-rgb), 0.2), transparent 40%),
+    rgba(2, 6, 23, 0.82);
+  backdrop-filter: blur(10px) saturate(1.08);
   display: grid;
   place-items: center;
-  padding: 1rem;
+  padding: clamp(0.7rem, 2vw, 1.2rem);
 }
 
 .image-viewer-card {
-  width: min(980px, 100%);
-  max-height: min(92vh, 980px);
-  border: 1px solid rgba(var(--accent-rgb), 0.56);
-  border-radius: 16px;
-  background: rgba(2, 8, 22, 0.95);
-  box-shadow: 0 26px 52px rgba(2, 6, 23, 0.62);
+  width: min(1120px, 96vw);
+  max-height: min(94vh, 980px);
+  border: 1px solid rgba(var(--accent-rgb), 0.72);
+  border-radius: 18px;
+  background: rgba(3, 10, 26, 0.97);
+  box-shadow: 0 30px 62px rgba(2, 6, 23, 0.68);
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
@@ -4041,50 +4058,78 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
-  padding: 0.7rem 0.85rem;
-  border-bottom: 1px solid rgba(var(--accent-rgb), 0.34);
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.44);
+  background: linear-gradient(120deg, rgba(var(--accent-rgb), 0.24), rgba(var(--accent-sharp-rgb), 0.18));
 }
 
 .image-viewer-card header p {
   margin: 0;
-  font-size: 0.82rem;
-  color: var(--text-primary);
+  font-size: 0.84rem;
+  color: #f0fdf4;
+  letter-spacing: 0.02em;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .image-viewer-card header button {
-  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border: 1px solid rgba(var(--accent-rgb), 0.72);
   border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.16);
-  color: var(--text-primary);
-  padding: 0.2rem 0.62rem;
+  background: rgba(2, 6, 23, 0.6);
+  color: #e2f8ef;
+  padding: 0.22rem 0.68rem;
+  font-size: 0.72rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.image-viewer-card header button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-soft-rgb), 0.82);
+  background: rgba(var(--accent-rgb), 0.26);
 }
 
 .image-viewer-card img {
   width: 100%;
   height: 100%;
-  max-height: min(68vh, 720px);
+  max-height: min(74vh, 780px);
   object-fit: contain;
-  background: rgba(2, 6, 23, 0.85);
+  background:
+    linear-gradient(180deg, rgba(2, 8, 22, 0.96), rgba(2, 6, 23, 0.98)),
+    repeating-linear-gradient(
+      45deg,
+      rgba(var(--accent-rgb), 0.05) 0,
+      rgba(var(--accent-rgb), 0.05) 8px,
+      transparent 8px,
+      transparent 16px
+    );
+  padding: 0.35rem;
 }
 
 .image-viewer-actions {
-  border-top: 1px solid rgba(var(--accent-rgb), 0.34);
+  border-top: 1px solid rgba(var(--accent-rgb), 0.46);
+  background: rgba(2, 6, 23, 0.88);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  padding: 0.7rem 0.85rem 0.85rem;
+  gap: 0.45rem;
+  padding: 0.72rem 0.9rem 0.9rem;
 }
 
 .image-viewer-actions button {
-  border: 1px solid rgba(var(--accent-rgb), 0.46);
+  border: 1px solid rgba(var(--accent-rgb), 0.66);
   border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.18);
-  color: var(--text-primary);
-  padding: 0.26rem 0.68rem;
-  font-size: 0.72rem;
+  background: rgba(var(--accent-rgb), 0.26);
+  color: #e7fff5;
+  padding: 0.3rem 0.74rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.02em;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.image-viewer-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-soft-rgb), 0.88);
+  background: rgba(var(--accent-rgb), 0.38);
 }
 
 .widget-studio {
