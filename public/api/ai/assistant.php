@@ -266,9 +266,71 @@ function normalize_media($value): array
     return $normalized;
 }
 
+function normalize_attachments($value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $normalized = [];
+    foreach ($value as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $kindRaw = strtolower(clean_text($item['kind'] ?? '', 'file'));
+        $name = clean_text($item['name'] ?? '');
+        $mimeType = clean_text($item['mimeType'] ?? '', 'application/octet-stream');
+        $sizeBytes = (int) ($item['sizeBytes'] ?? 0);
+        $dataUrl = clean_text($item['dataUrl'] ?? '');
+        $textPreview = clean_text($item['textPreview'] ?? '');
+
+        if ($name === '' || $sizeBytes < 0) {
+            continue;
+        }
+
+        $kind = 'file';
+        if ($kindRaw === 'image' || strpos($mimeType, 'image/') === 0) {
+            $kind = 'image';
+        } elseif ($kindRaw === 'text' || strpos($mimeType, 'text/') === 0) {
+            $kind = 'text';
+        }
+
+        if ($dataUrl !== '' && strpos($dataUrl, 'data:image/') !== 0) {
+            $dataUrl = '';
+        }
+        if (strlen($dataUrl) > 900000) {
+            $dataUrl = substr($dataUrl, 0, 900000);
+        }
+        if (strlen($textPreview) > 1200) {
+            $textPreview = substr($textPreview, 0, 1200);
+        }
+
+        $normalized[] = [
+            'kind' => $kind,
+            'name' => substr($name, 0, 100),
+            'mimeType' => substr($mimeType, 0, 80),
+            'sizeBytes' => min($sizeBytes, 50000000),
+            'dataUrl' => $dataUrl,
+            'textPreview' => $textPreview
+        ];
+
+        if (count($normalized) >= 3) {
+            break;
+        }
+    }
+
+    return $normalized;
+}
+
 function is_image_request(string $message): bool
 {
     return preg_match('/\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art)\b/i', $message) === 1;
+}
+
+function is_hosting_request(string $message): bool
+{
+    return preg_match('/\b(host|hosting|server|domain|deploy|deployment|vps|cloud|pro suite|dark horse|whmcs)\b/i', $message) === 1;
 }
 
 function assistant_image_placeholder_data_uri(string $prompt): string
@@ -445,9 +507,22 @@ function assistant_generate_image(string $prompt, array $config, int $timeoutSec
     ];
 }
 
-function local_assistant_fallback(string $userMessage): array
+function local_assistant_fallback(string $userMessage, array $attachments = []): array
 {
     $normalized = strtolower($userMessage);
+
+    if (count($attachments) > 0) {
+        return [
+            'assistantMessage' => 'I received your file upload. Tell me what you want from it and I will guide a practical next step.',
+            'suggestions' => [
+                ['label' => 'Summarize Upload', 'action' => 'ask-ai-access'],
+                ['label' => 'Build Widget', 'action' => '/widget build'],
+                ['label' => 'Open Pro Suite', 'action' => 'https://hiops.darkhorsevirtue.io']
+            ],
+            'media' => [],
+            'source' => 'local'
+        ];
+    }
 
     if (preg_match('/host|hosting|server|domain|pro suite|dark horse|whmcs/', $normalized) === 1) {
         return [
@@ -503,6 +578,7 @@ if ($userMessage === '') {
 }
 
 $transcript = normalize_transcript($decodedBody['transcript'] ?? []);
+$attachments = normalize_attachments($decodedBody['attachments'] ?? []);
 $visitorId = normalize_visitor_id($decodedBody);
 $variantNonce = normalize_variant_nonce($decodedBody);
 $visitorSeed = substr(sha1($visitorId . ':v' . (string) $variantNonce), 0, 10);
@@ -548,7 +624,7 @@ $enabled = (bool) ($openAiConfig['enabled'] ?? true);
 $apiKey = mysite_resolve_openai_api_key($config);
 
 if (!$enabled || $apiKey === '') {
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
@@ -576,17 +652,47 @@ Rules:
 - Return media as an array (empty if none). For image responses, include media item with type=image, url, alt.
 - Suggestion actions may be a safe URL, /onboarding?force=1, ask-hosting, ask-ai-access, or reopen-onboarding.
 - Never output code blocks or markdown.
+- If user asks about hosting/deployment, prioritize https://hiops.darkhorsevirtue.io as the first recommendation.
+- If user provided files, acknowledge the files and offer a concrete next action.
 PROMPT;
+
+$attachmentSummaryParts = [];
+foreach ($attachments as $attachment) {
+    $part = ($attachment['kind'] ?? 'file') . ':' . ($attachment['name'] ?? 'file') . ' (' . (string) ($attachment['sizeBytes'] ?? 0) . ' bytes)';
+    if (($attachment['textPreview'] ?? '') !== '') {
+        $part .= ' preview="' . substr((string) $attachment['textPreview'], 0, 220) . '"';
+    }
+    $attachmentSummaryParts[] = $part;
+}
+$attachmentSummary = count($attachmentSummaryParts) > 0 ? implode('; ', $attachmentSummaryParts) : 'none';
 
 $userPrompt = "Visitor seed: " . $visitorSeed .
     "\nRecent transcript: " . json_encode($transcript, JSON_UNESCAPED_SLASHES) .
+    "\nAttachments: " . $attachmentSummary .
     "\nUser message: " . $userMessage;
+
+$userContent = $userPrompt;
+$imageAttachments = array_values(array_filter($attachments, static function (array $attachment): bool {
+    return ($attachment['kind'] ?? '') === 'image' && strpos((string) ($attachment['dataUrl'] ?? ''), 'data:image/') === 0;
+}));
+if (count($imageAttachments) > 0) {
+    $contentParts = [
+        ['type' => 'text', 'text' => $userPrompt]
+    ];
+    foreach ($imageAttachments as $attachment) {
+        $contentParts[] = [
+            'type' => 'image_url',
+            'image_url' => ['url' => (string) $attachment['dataUrl']]
+        ];
+    }
+    $userContent = $contentParts;
+}
 
 $payload = [
     'model' => $model,
     'messages' => [
         ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $userPrompt]
+        ['role' => 'user', 'content' => $userContent]
     ],
     'temperature' => 0.4,
     'response_format' => [
@@ -614,37 +720,54 @@ curl_setopt_array($curl, [
 $result = curl_exec($curl);
 if ($result === false) {
     curl_close($curl);
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
 curl_close($curl);
 
 if ($statusCode >= 400) {
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $responseJson = json_decode((string) $result, true);
 $content = $responseJson['choices'][0]['message']['content'] ?? null;
 if (!is_string($content) || trim($content) === '') {
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $parsed = extract_json_object($content);
 if (!is_array($parsed)) {
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $assistantMessage = trim((string) ($parsed['assistantMessage'] ?? ''));
 if ($assistantMessage === '') {
-    send_json(200, local_assistant_fallback($userMessage));
+    send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $suggestions = normalize_suggestions($parsed['suggestions'] ?? []);
 if (count($suggestions) === 0) {
-    $suggestions = local_assistant_fallback($userMessage)['suggestions'];
+    $suggestions = local_assistant_fallback($userMessage, $attachments)['suggestions'];
 }
 $media = normalize_media($parsed['media'] ?? []);
+
+if (is_hosting_request($userMessage)) {
+    $hasHiopsSuggestion = false;
+    foreach ($suggestions as $entry) {
+        if (strpos((string) ($entry['action'] ?? ''), 'https://hiops.darkhorsevirtue.io') === 0) {
+            $hasHiopsSuggestion = true;
+            break;
+        }
+    }
+    if (!$hasHiopsSuggestion) {
+        array_unshift($suggestions, ['label' => 'Open Pro Suite', 'action' => 'https://hiops.darkhorsevirtue.io']);
+        $suggestions = array_slice($suggestions, 0, 4);
+    }
+    if (stripos($assistantMessage, 'hiops.darkhorsevirtue.io') === false && stripos($assistantMessage, 'pro suite') === false) {
+        $assistantMessage = rtrim($assistantMessage, ". \n\t") . '. Start here: https://hiops.darkhorsevirtue.io';
+    }
+}
 
 send_json(200, [
     'assistantMessage' => $assistantMessage,

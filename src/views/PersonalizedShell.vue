@@ -15,7 +15,7 @@ import {
   type DashboardWidget,
   type DashboardWidgetType
 } from '@/dashboard/engine';
-import { generateAssistantTurnWithFallback, type OnboardingTranscriptLine } from '@/api/ai';
+import { generateAssistantTurnWithFallback, type AssistantAttachment, type OnboardingTranscriptLine } from '@/api/ai';
 import { getContentByKey, setRuntimeContentOverrides } from '@/content/library';
 import { BUILD_TAG } from '@/meta/build';
 import { getOrCreateVisitorId } from '@/personalization/visitor';
@@ -30,6 +30,16 @@ interface TerminalLine {
   createdAt: string;
   imageUrl?: string;
   imageAlt?: string;
+}
+
+interface PendingAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: 'image' | 'text' | 'file';
+  dataUrl?: string;
+  textPreview?: string;
 }
 
 type WidgetOutputFormat = 'brief' | 'bullets' | 'checklist';
@@ -81,6 +91,7 @@ const wordpressError = ref('');
 const sceneNonce = ref(0);
 const forcedFocus = ref('');
 const commandInput = ref('');
+const filePickerRef = ref<HTMLInputElement | null>(null);
 const transcriptRef = ref<HTMLElement | null>(null);
 const transcript = ref<TerminalLine[]>([]);
 const widgets = ref<DashboardWidget[]>([]);
@@ -103,6 +114,7 @@ const blobMediaUrls = ref<string[]>([]);
 const prefersReducedMotion = ref(false);
 const commandHistory = ref<string[]>([]);
 const commandHistoryCursor = ref(-1);
+const pendingAttachments = ref<PendingAttachment[]>([]);
 let motionMediaQuery: MediaQueryList | null = null;
 
 const blueprint = computed(() => personalization.blueprint);
@@ -223,8 +235,136 @@ function formatRelativeTime(isoTime: string): string {
   return parsed.toLocaleDateString();
 }
 
+function formatAttachmentSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) return `${sizeBytes} B`;
+  if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileKindFromMime(mimeType: string): PendingAttachment['kind'] {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('text/')) return 'text';
+  return 'file';
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Unable to read file as data URL.'));
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Unable to read file as text.'));
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '');
+    };
+    reader.readAsText(file);
+  });
+}
+
+function clearPendingAttachments(): void {
+  pendingAttachments.value = [];
+  if (filePickerRef.value) {
+    filePickerRef.value.value = '';
+  }
+}
+
+function removePendingAttachment(attachmentId: string): void {
+  pendingAttachments.value = pendingAttachments.value.filter((item) => item.id !== attachmentId);
+}
+
+function openFilePicker(): void {
+  filePickerRef.value?.click();
+}
+
+function toAssistantAttachments(items: PendingAttachment[]): AssistantAttachment[] {
+  return items.map((item) => ({
+    kind: item.kind,
+    name: item.name,
+    mimeType: item.mimeType,
+    sizeBytes: item.sizeBytes,
+    dataUrl: item.dataUrl,
+    textPreview: item.textPreview
+  }));
+}
+
+async function handleFileSelection(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || !target.files || target.files.length === 0) {
+    return;
+  }
+
+  const selected = Array.from(target.files).slice(0, 3);
+  const nextAttachments: PendingAttachment[] = [];
+
+  for (const file of selected) {
+    const mimeType = file.type || 'application/octet-stream';
+    const kind = fileKindFromMime(mimeType);
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const attachment: PendingAttachment = {
+      id,
+      name: file.name || 'upload.bin',
+      mimeType,
+      sizeBytes: file.size,
+      kind
+    };
+
+    if (kind === 'image' && file.size <= 4 * 1024 * 1024) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (dataUrl.startsWith('data:image/')) {
+          attachment.dataUrl = dataUrl;
+        }
+      } catch {
+        // Keep metadata-only attachment if browser read fails.
+      }
+    } else if (kind === 'text' && file.size <= 256 * 1024) {
+      try {
+        const text = await readFileAsText(file);
+        const compact = text.replace(/\s+/g, ' ').trim().slice(0, 800);
+        if (compact) {
+          attachment.textPreview = compact;
+        }
+      } catch {
+        // Keep metadata-only attachment if text read fails.
+      }
+    }
+
+    nextAttachments.push(attachment);
+  }
+
+  pendingAttachments.value = nextAttachments;
+  const summary = nextAttachments
+    .map((file) => `${file.name} (${formatAttachmentSize(file.sizeBytes)})`)
+    .join(', ');
+  addLine('signal', `Attached ${nextAttachments.length} file${nextAttachments.length > 1 ? 's' : ''}: ${summary}`);
+  for (const file of nextAttachments) {
+    if (file.kind === 'image' && file.dataUrl) {
+      addLine('assistant', `Attachment preview · ${file.name}`, {
+        imageUrl: file.dataUrl,
+        imageAlt: file.name
+      });
+    }
+  }
+}
+
 function isImageConversationRequest(message: string): boolean {
   return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|thumbnail|portrait)\b/i.test(message);
+}
+
+function isHostingIntent(message: string): boolean {
+  return /\b(host|hosting|server|domain|deploy|deployment|vps|cloud|pro suite|dark horse|whmcs)\b/i.test(message);
+}
+
+function needsImageCapabilityOverride(message: string): boolean {
+  return /\b(can(?:not|'t)|unable|cannot)\b[\s\S]{0,40}\b(image|visual|photo|render)\b/i.test(message);
 }
 
 function rememberBlobUrl(url: string): void {
@@ -708,6 +848,18 @@ function mixWithWhite(rgb: { r: number; g: number; b: number }, amount: number):
   };
 }
 
+function mixRgb(
+  base: { r: number; g: number; b: number },
+  target: { r: number; g: number; b: number },
+  amount: number
+): { r: number; g: number; b: number } {
+  return {
+    r: base.r + (target.r - base.r) * amount,
+    g: base.g + (target.g - base.g) * amount,
+    b: base.b + (target.b - base.b) * amount
+  };
+}
+
 function firstStringModuleProp(propName: string): string {
   const modules = blueprint.value?.modules ?? [];
   for (const module of modules) {
@@ -798,6 +950,8 @@ async function openAction(url: string): Promise<void> {
   }
 
   if (url === 'ask-hosting') {
+    window.open('https://hiops.darkhorsevirtue.io', '_blank', 'noopener,noreferrer');
+    addLine('signal', 'Routing you to HiOps Pro Suite for hosting onboarding...');
     await runAssistantConversation('I need hosting onboarding help through Dark Horse Virtue Pro Suite.');
     return;
   }
@@ -855,8 +1009,15 @@ async function streamAssistantMessage(message: string): Promise<void> {
   }
 }
 
-async function runAssistantConversation(userInput: string): Promise<void> {
-  const expectsImage = isImageConversationRequest(userInput);
+async function runAssistantConversation(
+  userInput: string,
+  options?: { forceImage?: boolean; attachments?: AssistantAttachment[] }
+): Promise<void> {
+  const attachments = options?.attachments?.slice(0, 3) ?? [];
+  if (attachments.length > 0) {
+    addLine('signal', `Attachment context included: ${attachments.length} file${attachments.length > 1 ? 's' : ''}.`);
+  }
+  const expectsImage = Boolean(options?.forceImage) || isImageConversationRequest(userInput);
   assistantStreaming.value = true;
   imageRenderPending.value = expectsImage;
   imageRenderPrompt.value = expectsImage ? userInput.trim() : '';
@@ -871,14 +1032,19 @@ async function runAssistantConversation(userInput: string): Promise<void> {
       userMessage: userInput,
       transcript: buildAssistantTranscript(),
       visitorId,
-      variantNonce: sceneNonce.value
+      variantNonce: sceneNonce.value,
+      attachments
     });
 
     assistantStreamPhase.value = expectsImage
       ? (result.source === 'backend' ? 'AI stream: finalizing visual response...' : 'Fallback stream: finalizing visual response...')
       : (result.source === 'backend' ? 'AI stream: rendering response...' : 'Fallback stream: rendering response...');
 
-    await streamAssistantMessage(result.assistantMessage);
+    let assistantMessage = result.assistantMessage;
+    if (expectsImage && needsImageCapabilityOverride(assistantMessage)) {
+      assistantMessage = 'Image request captured. Rendering an in-thread preview now. Ask for style, angle, or mood changes to regenerate.';
+    }
+    await streamAssistantMessage(assistantMessage);
 
     if (expectsImage) {
       const generatedImage = await ensureGeneratedImageForPrompt(userInput);
@@ -897,7 +1063,11 @@ async function runAssistantConversation(userInput: string): Promise<void> {
       }
     }
 
-    assistantSuggestions.value = result.suggestions.slice(0, 3);
+    const suggestions = result.suggestions.slice(0, 3);
+    if (isHostingIntent(userInput) && !suggestions.some((entry) => entry.action.includes('hiops.darkhorsevirtue.io'))) {
+      suggestions.unshift({ label: 'Open Pro Suite', action: 'https://hiops.darkhorsevirtue.io' });
+    }
+    assistantSuggestions.value = suggestions.slice(0, 3);
     if (assistantSuggestions.value.length > 0) {
       addLine('signal', 'Suggestions ready. Tap a quick action below.');
     }
@@ -1437,23 +1607,40 @@ const personalizationProfile = computed(() => firstStringModuleProp('profile') |
 const personalizationProfileClass = computed(() =>
   personalizationProfile.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'adaptive'
 );
+const sceneVariant = computed(() => Math.abs(sceneNonce.value % 6));
 
 const shellClassName = computed(() => [
   `mode-${personalizationMode.value}`,
   `density-${personalizationDensity.value}`,
   `nav-${personalizationNav.value}`,
-  `profile-${personalizationProfileClass.value}`
+  `profile-${personalizationProfileClass.value}`,
+  `scene-variant-${sceneVariant.value}`
 ]);
 
 const shellVisualStyle = computed<Record<string, string>>(() => {
-  const accentRgb = hexToRgb(personalizationAccent.value) ?? { r: 22, g: 199, b: 207 };
+  const baseAccent = hexToRgb(personalizationAccent.value) ?? { r: 22, g: 199, b: 207 };
+  const accentTargets = [
+    { r: 22, g: 199, b: 207 },
+    { r: 56, g: 189, b: 248 },
+    { r: 45, g: 212, b: 191 },
+    { r: 74, g: 222, b: 128 },
+    { r: 244, g: 114, b: 182 },
+    { r: 196, g: 181, b: 253 }
+  ];
+  const blendRatios = [0.08, 0.3, 0.24, 0.22, 0.26, 0.25];
+  const variant = sceneVariant.value;
+  const accentRgb = mixRgb(baseAccent, accentTargets[variant], blendRatios[variant]);
   const soft = mixWithWhite(accentRgb, 0.32);
   const sharp = mixWithWhite(accentRgb, 0.08);
+  const gridOpacity = variant === 0 ? 0.03 : variant === 4 ? 0.06 : 0.045;
+  const panelRadius = variant === 2 ? '20px' : variant === 5 ? '16px' : '14px';
 
   return {
     '--accent-rgb': rgbToCss(accentRgb),
     '--accent-soft-rgb': rgbToCss(soft),
-    '--accent-sharp-rgb': rgbToCss(sharp)
+    '--accent-sharp-rgb': rgbToCss(sharp),
+    '--scene-grid-opacity': `${gridOpacity}`,
+    '--scene-panel-radius': panelRadius
   };
 });
 
@@ -1647,6 +1834,7 @@ const commandHints = computed(() => {
   return [
     { label: 'Help', command: '/help' },
     { label: 'New Thread', command: '/thread new' },
+    { label: 'Upload File', command: '/upload' },
     { label: 'Widget Build', command: '/widget build' },
     { label: 'Image Prompt', command: '/image cinematic desert skyline at dawn' },
     { label: 'Shuffle Scene', command: '/shuffle' }
@@ -1656,7 +1844,7 @@ const commandHints = computed(() => {
 const commandStatus = computed(() =>
   assistantStreaming.value
     ? 'Assistant is responding...'
-    : `Enter to send · History ${Math.min(commandHistory.value.length, 99)}`
+    : `Enter to send · History ${Math.min(commandHistory.value.length, 99)} · Files ${pendingAttachments.value.length}`
 );
 
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
@@ -2003,7 +2191,7 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input === '/help') {
-    addLine('system', 'Core: /help, /image <prompt>, /thread [list|new|open <id>], /shuffle, /focus <topic>, /open <1-3>, /reset');
+    addLine('system', 'Core: /help, /upload, /image <prompt>, /thread [list|new|open <id>], /shuffle, /focus <topic>, /open <1-3>, /reset');
     addLine(
       'system',
       'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
@@ -2023,7 +2211,7 @@ async function handleCommand(raw: string): Promise<void> {
   if (input === '/shuffle') {
     sceneNonce.value += 1;
     forcedFocus.value = '';
-    addLine('signal', `Scene recompiled -> ${scene.value.codename}`);
+    addLine('signal', `Scene recompiled -> ${scene.value.codename} · style variant ${sceneVariant.value + 1}/6`);
     return;
   }
 
@@ -2060,6 +2248,12 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
+  if (input === '/upload') {
+    openFilePicker();
+    addLine('system', 'Choose a file to attach. Images and text files are supported.');
+    return;
+  }
+
   if (input.startsWith('/image ')) {
     const prompt = input.slice('/image '.length).trim();
     if (!prompt) {
@@ -2068,7 +2262,9 @@ async function handleCommand(raw: string): Promise<void> {
     }
 
     addLine('signal', 'Multimodal request detected. Generating in-thread visual...');
-    await runAssistantConversation(prompt);
+    const attachments = toAssistantAttachments(pendingAttachments.value);
+    clearPendingAttachments();
+    await runAssistantConversation(prompt, { forceImage: true, attachments });
     return;
   }
 
@@ -2086,7 +2282,22 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
-  await runAssistantConversation(input);
+  const attachments = toAssistantAttachments(pendingAttachments.value);
+  clearPendingAttachments();
+  await runAssistantConversation(input, { attachments });
+}
+
+async function handleComposerSubmit(): Promise<void> {
+  const raw = commandInput.value.trim();
+  if (!raw && pendingAttachments.value.length === 0) {
+    return;
+  }
+
+  if (!raw && pendingAttachments.value.length > 0) {
+    commandInput.value = 'Please analyze my attached file and give me clear next steps.';
+  }
+
+  await handleCommand(commandInput.value);
 }
 
 function removeWidget(widgetId: string): void {
@@ -2301,8 +2512,16 @@ onUnmounted(() => {
         </article>
       </div>
 
-      <form class="command-row" @submit.prevent="handleCommand(commandInput)">
+      <form class="command-row" @submit.prevent="handleComposerSubmit">
         <span class="glyph">></span>
+        <button
+          type="button"
+          class="upload-btn"
+          :disabled="assistantStreaming"
+          @click="openFilePicker"
+        >
+          Upload
+        </button>
         <input
           v-model="commandInput"
           type="text"
@@ -2311,6 +2530,24 @@ onUnmounted(() => {
           @keydown="handleCommandInputKeydown"
         />
       </form>
+      <input
+        ref="filePickerRef"
+        class="file-picker"
+        type="file"
+        accept="image/*,.txt,.md,.json,.csv,.pdf,.doc,.docx,.xlsx,.xls"
+        multiple
+        @change="handleFileSelection"
+      />
+      <div v-if="pendingAttachments.length > 0" class="attachment-row">
+        <article
+          v-for="file in pendingAttachments"
+          :key="file.id"
+          class="attachment-chip"
+        >
+          <span>{{ file.kind.toUpperCase() }} · {{ file.name }} · {{ formatAttachmentSize(file.sizeBytes) }}</span>
+          <button type="button" @click="removePendingAttachment(file.id)">Remove</button>
+        </article>
+      </div>
       <div class="command-meta">
         <p>{{ commandStatus }}</p>
       </div>
@@ -2482,6 +2719,8 @@ onUnmounted(() => {
   --surface-card: rgba(2, 10, 28, 0.78);
   --surface-elevated: rgba(3, 7, 18, 0.84);
   --surface-terminal: rgba(2, 8, 22, 0.92);
+  --scene-grid-opacity: 0.03;
+  --scene-panel-radius: 14px;
   --border-tone: rgba(var(--accent-rgb), 0.32);
   --text-primary: #d1fae5;
   --text-secondary: #a7f3d0;
@@ -2520,6 +2759,29 @@ onUnmounted(() => {
     #eef3fb;
 }
 
+.scene-variant-1.experience-root {
+  --scene-grid-opacity: 0.045;
+}
+
+.scene-variant-2.experience-root {
+  --scene-panel-radius: 18px;
+  --scene-grid-opacity: 0.052;
+}
+
+.scene-variant-3.experience-root {
+  --scene-grid-opacity: 0.04;
+}
+
+.scene-variant-4.experience-root {
+  --scene-panel-radius: 16px;
+  --scene-grid-opacity: 0.06;
+}
+
+.scene-variant-5.experience-root {
+  --scene-panel-radius: 20px;
+  --scene-grid-opacity: 0.05;
+}
+
 .experience-root::before,
 .experience-root::after {
   content: '';
@@ -2545,7 +2807,7 @@ onUnmounted(() => {
       0deg,
       transparent 0,
       transparent 12px,
-      rgba(var(--accent-rgb), 0.03) 13px,
+      rgba(var(--accent-rgb), var(--scene-grid-opacity)) 13px,
       transparent 14px
     );
   opacity: 0.35;
@@ -2635,7 +2897,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 0.8rem;
   border: 1px solid var(--border-tone);
-  border-radius: 14px;
+  border-radius: var(--scene-panel-radius);
   background: var(--surface-main);
   padding: 0.8rem 0.9rem;
   backdrop-filter: blur(16px);
@@ -2734,7 +2996,7 @@ onUnmounted(() => {
 .prompt-card,
 .dashboard-card {
   border: 1px solid var(--border-tone);
-  border-radius: 14px;
+  border-radius: var(--scene-panel-radius);
   background: var(--surface-card);
   padding: 0.9rem;
   backdrop-filter: blur(14px);
@@ -2843,7 +3105,7 @@ h1 {
 .terminal-shell {
   margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
-  border-radius: 14px;
+  border-radius: var(--scene-panel-radius);
   background: var(--surface-terminal);
   overflow: hidden;
   backdrop-filter: blur(14px);
@@ -3318,11 +3580,33 @@ h1 {
 .command-row {
   border-top: 1px solid var(--border-tone);
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto auto 1fr;
   gap: 0.45rem;
   align-items: center;
   padding: 0.75rem 0.85rem;
   background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.06), rgba(var(--accent-rgb), 0.02));
+}
+
+.upload-btn {
+  border: 1px solid rgba(var(--accent-rgb), 0.42);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.25rem 0.58rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.upload-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.66);
+  background: rgba(var(--accent-rgb), 0.26);
+}
+
+.upload-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .command-row input {
@@ -3344,6 +3628,46 @@ h1 {
 
 .command-row input::placeholder {
   color: color-mix(in srgb, var(--text-secondary) 45%, transparent);
+}
+
+.file-picker {
+  display: none;
+}
+
+.attachment-row {
+  padding: 0 0.85rem 0.45rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.13);
+  padding: 0.18rem 0.24rem 0.18rem 0.5rem;
+  max-width: 100%;
+}
+
+.attachment-chip span {
+  font-size: 0.66rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(72vw, 420px);
+}
+
+.attachment-chip button {
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.54);
+  color: var(--text-primary);
+  padding: 0.12rem 0.44rem;
+  font-size: 0.62rem;
 }
 
 .command-meta {
@@ -3420,7 +3744,7 @@ h1 {
 .widget-studio {
   margin-top: 0.85rem;
   border: 1px solid var(--border-tone);
-  border-radius: 14px;
+  border-radius: var(--scene-panel-radius);
   background: var(--surface-card);
   padding: 0.9rem;
   display: grid;
@@ -3788,6 +4112,17 @@ h1 {
   .line-media-shell::after,
   .experience-root::before {
     animation: none !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .command-row {
+    grid-template-columns: auto 1fr;
+  }
+
+  .upload-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
 

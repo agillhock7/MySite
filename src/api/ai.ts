@@ -32,6 +32,15 @@ export interface AssistantMediaItem {
   alt: string;
 }
 
+export interface AssistantAttachment {
+  kind: 'image' | 'text' | 'file';
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl?: string;
+  textPreview?: string;
+}
+
 export interface AssistantTurnResult {
   assistantMessage: string;
   suggestions: AssistantActionSuggestion[];
@@ -1071,8 +1080,72 @@ function localImageAssistantFallback(userMessage: string): AssistantTurnResult {
   };
 }
 
-function localAssistantFallback(userMessage: string): AssistantTurnResult {
+function normalizeAssistantAttachments(value: unknown): AssistantAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      const record = asObject(item);
+      if (!record) {
+        return null;
+      }
+
+      const kindRaw = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+      const name = typeof record.name === 'string' ? record.name.trim() : '';
+      const mimeType = typeof record.mimeType === 'string' ? record.mimeType.trim() : '';
+      const sizeRaw = typeof record.sizeBytes === 'number' ? record.sizeBytes : Number.parseInt(String(record.sizeBytes ?? ''), 10);
+      const dataUrl = typeof record.dataUrl === 'string' ? record.dataUrl.trim() : '';
+      const textPreview = typeof record.textPreview === 'string' ? record.textPreview.trim() : '';
+
+      if (!name || !Number.isFinite(sizeRaw) || sizeRaw < 0) {
+        return null;
+      }
+
+      let kind: AssistantAttachment['kind'] = 'file';
+      if (kindRaw === 'image' || (mimeType && mimeType.startsWith('image/'))) {
+        kind = 'image';
+      } else if (kindRaw === 'text' || mimeType.startsWith('text/')) {
+        kind = 'text';
+      }
+
+      const next: AssistantAttachment = {
+        kind,
+        name: name.slice(0, 100),
+        mimeType: mimeType.slice(0, 80),
+        sizeBytes: Math.min(sizeRaw, 50_000_000)
+      };
+      if (dataUrl.startsWith('data:image/')) {
+        next.dataUrl = dataUrl.slice(0, 900_000);
+      }
+      if (textPreview) {
+        next.textPreview = textPreview.slice(0, 1000);
+      }
+
+      return next;
+    })
+    .filter((item): item is AssistantAttachment => item !== null)
+    .slice(0, 3);
+}
+
+function localAssistantFallback(userMessage: string, attachments: AssistantAttachment[] = []): AssistantTurnResult {
   const normalized = userMessage.toLowerCase();
+
+  if (attachments.length > 0) {
+    const attachmentSummary = attachments.map((item) => item.name).join(', ');
+    return {
+      assistantMessage:
+        `I received your file${attachments.length > 1 ? 's' : ''} (${attachmentSummary}). Tell me what you want from ${attachments.length > 1 ? 'them' : 'it'} and I will guide the next step.`,
+      suggestions: [
+        { label: 'Summarize File', action: 'ask-ai-access' },
+        { label: 'Build Widget From It', action: '/widget build' },
+        { label: 'Open Pro Suite', action: 'https://hiops.darkhorsevirtue.io' }
+      ],
+      media: [],
+      source: 'local'
+    };
+  }
 
   if (isImageGenerationIntent(normalized)) {
     return localImageAssistantFallback(userMessage);
@@ -1154,9 +1227,15 @@ export async function generateAssistantTurnWithFallback(params: {
   userMessage: string;
   visitorId?: string;
   variantNonce?: number;
+  attachments?: AssistantAttachment[];
 }): Promise<AssistantTurnResult> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const normalizedAttachments = normalizeAssistantAttachments(params.attachments ?? []);
+  const requestPayload = {
+    ...params,
+    attachments: normalizedAttachments
+  };
 
   try {
     const response = await fetch(BACKEND_ASSISTANT_ENDPOINT, {
@@ -1164,24 +1243,24 @@ export async function generateAssistantTurnWithFallback(params: {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify(requestPayload),
       signal: controller.signal
     });
 
     if (!response.ok) {
-      return localAssistantFallback(params.userMessage);
+      return localAssistantFallback(params.userMessage, normalizedAttachments);
     }
 
     const payload = (await response.json()) as unknown;
     const record = asObject(payload);
     if (!record) {
-      return localAssistantFallback(params.userMessage);
+      return localAssistantFallback(params.userMessage, normalizedAttachments);
     }
 
     const assistantMessage =
       typeof record.assistantMessage === 'string' && record.assistantMessage.trim().length > 0
         ? record.assistantMessage.trim()
-        : localAssistantFallback(params.userMessage).assistantMessage;
+        : localAssistantFallback(params.userMessage, normalizedAttachments).assistantMessage;
     const source = record.source === 'local' ? 'local' : 'backend';
 
     const suggestions = normalizeAssistantSuggestions(record.suggestions);
@@ -1197,7 +1276,7 @@ export async function generateAssistantTurnWithFallback(params: {
       source
     };
   } catch {
-    return localAssistantFallback(params.userMessage);
+    return localAssistantFallback(params.userMessage, normalizedAttachments);
   } finally {
     clearTimeout(timeout);
   }

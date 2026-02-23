@@ -37,6 +37,48 @@ const intentDraft = ref<IntentProfile>(defaultIntentProfile());
 const turnsTaken = ref(0);
 const fallbackNoticeShown = ref(false);
 
+function hashSeed(input: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededPick<T>(items: readonly T[], seed: string): T {
+  return items[hashSeed(seed) % items.length];
+}
+
+function buildSurpriseIntent(seed: string): IntentProfile {
+  const goals = [
+    'Help me discover high-value posts and next actions fast.',
+    'Give me a bold exploratory experience that feels futuristic.',
+    'Guide me to practical insights and action steps I can use now.',
+    'Create an immersive story-mode view of this blog tailored to me.'
+  ] as const;
+  const topicSets = [
+    ['AI', 'Strategy', 'Execution'],
+    ['Brand', 'Identity', 'Product'],
+    ['Technology', 'Growth', 'Operations'],
+    ['Writing', 'Systems', 'Momentum']
+  ] as const;
+  const vibes: IntentProfile['vibe'][] = ['visual', 'minimal', 'dense', 'playful'];
+  const densities: IntentProfile['density'][] = ['medium', 'low', 'high', 'medium'];
+
+  const goal = seededPick(goals, `${seed}:goal`);
+  const topics = seededPick(topicSets, `${seed}:topics`);
+  const vibe = seededPick(vibes, `${seed}:vibe`);
+  const density = seededPick(densities, `${seed}:density`);
+
+  return {
+    goal,
+    vibe,
+    density,
+    primaryTopics: [...topics]
+  };
+}
+
 function pushLine(speaker: TranscriptEntry['speaker'], text: string): void {
   transcript.value.push({
     id: Date.now() + Math.floor(Math.random() * 1000),
@@ -180,8 +222,8 @@ async function startBlueprintGeneration(intent: IntentProfile): Promise<void> {
 
 async function handleCommand(command: string): Promise<void> {
   if (command === '/help') {
-    pushLine('system', 'Commands: /help, /reset, /hardreset, /skip');
-    pushLine('system', 'Tip: one sentence is enough. Share your goal, interests, and preferred vibe.');
+    pushLine('system', 'Commands: /help, /reset, /hardreset, /skip, /surprise');
+    pushLine('system', 'Tip: one sentence is enough. You can also type /surprise for an instant custom start.');
     return;
   }
 
@@ -198,6 +240,14 @@ async function handleCommand(command: string): Promise<void> {
   if (command === '/skip') {
     pushLine('system', 'Skipping chat. Using default blueprint.');
     await finalizeBlueprint(defaultBlueprint());
+    return;
+  }
+
+  if (command === '/surprise') {
+    const surpriseIntent = buildSurpriseIntent(`${visitorId}:${variantNonce.value}:${Date.now()}`);
+    intentDraft.value = surpriseIntent;
+    pushLine('system', 'Surprise mode enabled. I am generating a unique experience now.');
+    await startBlueprintGeneration(surpriseIntent);
     return;
   }
 
@@ -252,7 +302,7 @@ async function handleSubmit(): Promise<void> {
 
   await assistantReply(turn.assistantMessage, 80);
 
-  if ((turn.isComplete && turnsTaken.value >= 1) || (hasEnoughIntent(intentDraft.value) && turnsTaken.value >= 2) || turnsTaken.value >= 4) {
+  if (turn.isComplete || (hasEnoughIntent(intentDraft.value) && turnsTaken.value >= 1) || turnsTaken.value >= 3) {
     await startBlueprintGeneration(intentDraft.value);
   }
 }
@@ -264,8 +314,8 @@ onMounted(async () => {
     return;
   }
 
-  pushLine('system', 'Welcome. This takes about 30 seconds. Type /help for commands.');
-  pushLine('system', 'Tell me your intent and what kind of experience you want. I will handle the rest.');
+  pushLine('system', 'Welcome. This takes about 15-30 seconds. Type /surprise or /skip anytime.');
+  pushLine('system', 'Tell me your intent in one sentence and I will handle the rest.');
   await seedConversation();
 });
 </script>
@@ -309,6 +359,12 @@ onMounted(async () => {
           {{ line.text }}
         </p>
         <p v-if="thinking" class="line speaker-assistant thinking">$ thinking...</p>
+      </div>
+
+      <div class="quick-actions">
+        <button type="button" :disabled="thinking" @click="handleCommand('/surprise')">Surprise Me</button>
+        <button type="button" :disabled="thinking" @click="handleCommand('/skip')">Skip Setup</button>
+        <button type="button" :disabled="thinking" @click="handleCommand('/reset')">Reset</button>
       </div>
 
       <form class="input-row" @submit.prevent="handleSubmit">
@@ -470,6 +526,34 @@ h1 {
 
 .thinking {
   opacity: 0.8;
+}
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0.55rem 1rem 0.2rem;
+}
+
+.quick-actions button {
+  border: 1px solid rgba(110, 231, 183, 0.34);
+  border-radius: 999px;
+  background: rgba(5, 150, 105, 0.2);
+  color: #d1fae5;
+  padding: 0.22rem 0.62rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
+.quick-actions button:hover {
+  border-color: rgba(110, 231, 183, 0.62);
+  background: rgba(5, 150, 105, 0.34);
+}
+
+.quick-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .input-row {
