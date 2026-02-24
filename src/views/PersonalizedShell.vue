@@ -2666,17 +2666,6 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="topbar-quick-nav" aria-label="Primary sections">
-            <button
-              v-for="item in appNavSections"
-              :key="`top-${item.id}`"
-              type="button"
-              :class="{ active: activeSectionId === item.id }"
-              @click="navigateToView(item.path)"
-            >
-              {{ item.label }}
-            </button>
-          </div>
         </header>
 
     <Transition name="view-swap" mode="out-in">
@@ -3454,36 +3443,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.45;
-}
-
-.topbar-quick-nav {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.36rem;
-  overflow-x: auto;
-  padding-bottom: 0.1rem;
-  scrollbar-width: thin;
-}
-
-.topbar-quick-nav button {
-  border: 1px solid rgba(var(--accent-rgb), 0.38);
-  border-radius: 999px;
-  background: rgba(var(--accent-rgb), 0.14);
-  color: var(--text-primary);
-  padding: 0.24rem 0.62rem;
-  font-size: 0.72rem;
-  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
-}
-
-.topbar-quick-nav button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(var(--accent-rgb), 0.74);
-  background: rgba(var(--accent-rgb), 0.26);
-}
-
-.topbar-quick-nav button.active {
-  border-color: rgba(var(--accent-rgb), 0.82);
-  background: linear-gradient(130deg, rgba(var(--accent-rgb), 0.3), rgba(var(--accent-sharp-rgb), 0.24));
 }
 
 .topbar-meta {
@@ -4903,6 +4862,10 @@ h1 {
   .topbar-meta p {
     font-size: 0.7rem;
   }
+
+  .mission-nav {
+    display: none;
+  }
 }
 
 @media (max-width: 1079px) {
@@ -4928,6 +4891,8 @@ h1 {
 
   .topbar-meta button {
     justify-self: start;
+    width: 100%;
+    max-width: 260px;
   }
 }
 
@@ -4944,10 +4909,6 @@ h1 {
 
   .topbar-head {
     min-width: 0;
-  }
-
-  .topbar-quick-nav {
-    justify-content: flex-start;
   }
 
   .topbar-meta {
