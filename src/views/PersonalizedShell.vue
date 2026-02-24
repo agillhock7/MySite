@@ -104,6 +104,8 @@ const sceneNonce = ref(0);
 const forcedFocus = ref('');
 const commandInput = ref('');
 const filePickerRef = ref<HTMLInputElement | null>(null);
+const appMainRef = ref<HTMLElement | null>(null);
+const topbarRef = ref<HTMLElement | null>(null);
 const transcriptRef = ref<HTMLElement | null>(null);
 const transcript = ref<TerminalLine[]>([]);
 const widgets = ref<DashboardWidget[]>([]);
@@ -131,7 +133,9 @@ const imagePreview = ref<ImagePreviewState | null>(null);
 const lineActionStatus = ref<Record<number, string>>({});
 const sceneRefreshEpoch = ref(0);
 const sceneStyleToken = ref(Math.floor(Math.random() * 1_000_000));
+const topbarOffsetPx = ref(0);
 let motionMediaQuery: MediaQueryList | null = null;
+let topbarResizeObserver: ResizeObserver | null = null;
 
 const blueprint = computed(() => personalization.blueprint);
 const visitorId = getOrCreateVisitorId();
@@ -2058,6 +2062,9 @@ const terminalShellStyle = computed<Record<string, string>>(() => ({
   '--terminal-transcript-height': `${transcriptHeight.value}px`,
   '--reveal-order': '4'
 }));
+const appMainStyle = computed<Record<string, string>>(() => ({
+  '--topbar-offset': `${topbarOffsetPx.value}px`
+}));
 const currentAppView = computed<AppNavSectionId>(() => {
   const match = appNavSections.find((section) => route.path === section.path);
   return match?.id ?? 'home';
@@ -2142,11 +2149,24 @@ function toggleTerminalExpanded(): void {
   transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
 }
 
+function updateTopbarOffset(): void {
+  if (!topbarRef.value) {
+    topbarOffsetPx.value = 0;
+    return;
+  }
+
+  const rect = topbarRef.value.getBoundingClientRect();
+  const measured = Number.isFinite(rect.height) ? Math.round(rect.height) : 0;
+  topbarOffsetPx.value = Math.max(0, measured + 14);
+}
+
 async function navigateToView(path: string): Promise<void> {
   if (route.path === path) {
     return;
   }
   await router.push(path);
+  await nextTick();
+  updateTopbarOffset();
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
@@ -2582,9 +2602,24 @@ onMounted(async () => {
     addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
     addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
   }
+
+  await nextTick();
+  updateTopbarOffset();
+
+  if (typeof ResizeObserver !== 'undefined') {
+    topbarResizeObserver = new ResizeObserver(() => updateTopbarOffset());
+    if (topbarRef.value) {
+      topbarResizeObserver.observe(topbarRef.value);
+    }
+  }
+
+  window.addEventListener('resize', updateTopbarOffset);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('resize', updateTopbarOffset);
+  topbarResizeObserver?.disconnect();
+  topbarResizeObserver = null;
   window.removeEventListener('keydown', handleGlobalKeydown);
   if (motionMediaQuery) {
     if (typeof motionMediaQuery.removeEventListener === 'function') {
@@ -2650,8 +2685,8 @@ onUnmounted(() => {
         </div>
       </aside>
 
-      <div class="app-main">
-        <header class="topbar reveal-surface" style="--reveal-order: 1">
+      <div ref="appMainRef" class="app-main" :style="appMainStyle">
+        <header ref="topbarRef" class="topbar reveal-surface" style="--reveal-order: 1">
           <div class="topbar-primary">
             <div class="topbar-head">
               <p class="mission-kicker">MySite Workspace</p>
@@ -3386,6 +3421,8 @@ onUnmounted(() => {
   box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
   transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
   margin-bottom: 0.9rem;
+  position: relative;
+  z-index: 12;
 }
 
 .topbar:hover {
@@ -4966,6 +5003,13 @@ h1 {
     top: 1.2rem;
     max-height: calc(100vh - 2.4rem);
     overflow: auto;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 18;
+    margin-bottom: 0.9rem;
   }
 
   .mobile-dock {
