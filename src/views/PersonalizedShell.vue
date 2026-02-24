@@ -3270,7 +3270,7 @@ onUnmounted(() => {
 .app-main {
   min-width: 0;
   display: grid;
-  gap: 0.85rem;
+  gap: 0;
 }
 
 .view-stage {
@@ -3387,6 +3387,7 @@ onUnmounted(() => {
   transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
   position: relative;
   z-index: 25;
+  margin-bottom: 0.9rem;
 }
 
 .topbar:hover {
@@ -4837,6 +4838,7 @@ h1 {
 
   .topbar {
     padding: 0.68rem 0.72rem;
+    margin-bottom: 0.7rem;
   }
 
   .mission-card,
@@ -4971,6 +4973,7 @@ h1 {
   .topbar {
     position: sticky;
     top: 1.2rem;
+    margin-bottom: 1rem;
   }
 
   .mobile-dock {
