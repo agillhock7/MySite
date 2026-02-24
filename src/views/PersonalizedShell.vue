@@ -2652,15 +2652,23 @@ onUnmounted(() => {
 
       <div class="app-main">
         <header class="topbar reveal-surface" style="--reveal-order: 1">
-          <div class="topbar-head">
-            <p class="mission-kicker">MySite Workspace</p>
-            <h2>{{ scene.codename }}</h2>
-            <p class="topbar-copy">A sample of AI capabilities with creating custom workspaces.</p>
+          <div class="topbar-primary">
+            <div class="topbar-head">
+              <p class="mission-kicker">MySite Workspace</p>
+              <h2>{{ scene.codename }}</h2>
+              <p class="topbar-copy">A sample of AI capabilities with creating custom workspaces.</p>
+            </div>
+
+            <div class="topbar-meta">
+              <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
+              <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
+              <button type="button" @click="resetPersonalization">Reset Personalization</button>
+            </div>
           </div>
 
           <div class="topbar-quick-nav" aria-label="Primary sections">
             <button
-              v-for="item in missionNavigation"
+              v-for="item in appNavSections"
               :key="`top-${item.id}`"
               type="button"
               :class="{ active: activeSectionId === item.id }"
@@ -2668,12 +2676,6 @@ onUnmounted(() => {
             >
               {{ item.label }}
             </button>
-          </div>
-
-          <div class="topbar-meta">
-            <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
-            <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
-            <button type="button" @click="resetPersonalization">Reset Personalization</button>
           </div>
         </header>
 
@@ -2713,9 +2715,9 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <section v-if="isHomeView || isSkillGameView" id="dashboard-hub" class="dashboard-shell reveal-surface" style="--reveal-order: 3">
+    <section v-if="isHomeView" id="dashboard-hub" class="dashboard-shell reveal-surface" style="--reveal-order: 3">
       <article class="dashboard-card">
-        <p class="mission-kicker">{{ isSkillGameView ? 'Skill Mission Stats' : 'Visitor Dashboard' }}</p>
+        <p class="mission-kicker">Visitor Dashboard</p>
         <div class="stats-grid">
           <section v-for="stat in dashboardStats" :key="stat.label" class="stat-card">
             <p class="stat-label">{{ stat.label }}</p>
@@ -2724,8 +2726,10 @@ onUnmounted(() => {
           </section>
         </div>
       </article>
+    </section>
 
-      <div v-if="isHomeView || isSkillGameView" id="ai-skill-game" class="game-anchor">
+    <section v-if="isSkillGameView" id="ai-skill-game" class="skill-game-view reveal-surface" style="--reveal-order: 3">
+      <div class="game-anchor">
         <AiPromptGame
           :signature="designSignature"
           :topics="focusTopics"
@@ -3027,6 +3031,18 @@ onUnmounted(() => {
         {{ shortcut.label }}
       </a>
     </section>
+
+    <nav class="mobile-dock" aria-label="Mobile workspace navigation">
+      <button
+        v-for="section in appNavSections"
+        :key="`dock-${section.id}`"
+        type="button"
+        :class="{ active: activeSectionId === section.id }"
+        @click="navigateToView(section.path)"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
       </div>
     </Transition>
       </div>
@@ -3370,7 +3386,8 @@ onUnmounted(() => {
 }
 
 .topbar {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.72rem;
   border: 1px solid var(--border-tone);
   border-radius: var(--scene-panel-radius);
@@ -3379,8 +3396,7 @@ onUnmounted(() => {
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
   transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
-  position: sticky;
-  top: 0.7rem;
+  position: relative;
   z-index: 25;
 }
 
@@ -3428,6 +3444,11 @@ onUnmounted(() => {
   overflow-wrap: anywhere;
 }
 
+.topbar-primary {
+  display: grid;
+  gap: 0.7rem;
+}
+
 .topbar-copy {
   margin: 0.3rem 0 0;
   color: var(--text-secondary);
@@ -3436,10 +3457,12 @@ onUnmounted(() => {
 }
 
 .topbar-quick-nav {
-  grid-area: nav;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 0.36rem;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  scrollbar-width: thin;
 }
 
 .topbar-quick-nav button {
@@ -3464,7 +3487,6 @@ onUnmounted(() => {
 }
 
 .topbar-meta {
-  grid-area: meta;
   display: grid;
   gap: 0.4rem;
   justify-items: start;
@@ -3506,6 +3528,11 @@ onUnmounted(() => {
 }
 
 .dashboard-shell {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.skill-game-view {
   display: grid;
   gap: 0.7rem;
 }
@@ -3662,6 +3689,38 @@ h1 {
 
 .game-anchor {
   min-width: 0;
+}
+
+.mobile-dock {
+  position: fixed;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0.45rem;
+  z-index: 38;
+  border: 1px solid rgba(var(--accent-rgb), 0.42);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-terminal) 88%, rgba(var(--accent-rgb), 0.24));
+  backdrop-filter: blur(12px);
+  padding: 0.38rem;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.mobile-dock button {
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  border-radius: 9px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--text-primary);
+  font-size: 0.64rem;
+  line-height: 1.15;
+  padding: 0.35rem 0.3rem;
+  text-align: center;
+}
+
+.mobile-dock button.active {
+  border-color: rgba(var(--accent-rgb), 0.78);
+  background: linear-gradient(130deg, rgba(var(--accent-rgb), 0.28), rgba(var(--accent-sharp-rgb), 0.22));
 }
 
 .terminal-shell {
@@ -4813,6 +4872,24 @@ h1 {
 }
 
 @media (max-width: 680px) {
+  .experience-root {
+    padding: 0.7rem 0.65rem 5rem;
+  }
+
+  .topbar {
+    padding: 0.68rem 0.72rem;
+  }
+
+  .mission-card,
+  .prompt-card,
+  .dashboard-card,
+  .widget-studio,
+  .terminal-shell,
+  .track-card,
+  .post-row {
+    padding: 0.62rem;
+  }
+
   .command-row {
     grid-template-columns: auto 1fr;
   }
@@ -4822,14 +4899,35 @@ h1 {
     justify-self: start;
   }
 
-  .sidebar-nav {
-    grid-template-columns: 1fr;
+  .topbar-copy,
+  .topbar-meta p {
+    font-size: 0.7rem;
   }
 }
 
 @media (max-width: 1079px) {
-  .sidebar-nav {
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  .experience-root {
+    padding-bottom: 5.1rem;
+  }
+
+  .app-sidebar {
+    display: none;
+  }
+
+  .topbar-primary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar-meta {
+    justify-items: start;
+  }
+
+  .topbar-meta p {
+    text-align: left;
+  }
+
+  .topbar-meta button {
+    justify-self: start;
   }
 }
 
@@ -4838,31 +4936,22 @@ h1 {
     padding: 1.2rem 1.8rem 2rem;
   }
 
-  .topbar {
+  .topbar-primary {
     grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
-    grid-template-areas:
-      'head meta'
-      'nav meta';
-    column-gap: 1rem;
-    row-gap: 0.55rem;
+    column-gap: 1.1rem;
     align-items: start;
   }
 
   .topbar-head {
-    grid-area: head;
     min-width: 0;
   }
 
   .topbar-quick-nav {
-    justify-self: start;
-    align-self: start;
-    max-width: 100%;
+    justify-content: flex-start;
   }
 
   .topbar-meta {
     justify-items: end;
-    justify-self: end;
-    align-self: start;
   }
 
   .topbar-meta p {
@@ -4898,9 +4987,14 @@ h1 {
   .content-stream {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
 }
 
 @media (min-width: 1080px) {
+  .experience-root {
+    padding-bottom: 2rem;
+  }
+
   .app-shell {
     grid-template-columns: minmax(232px, 264px) minmax(0, 1fr);
     align-items: start;
@@ -4914,7 +5008,12 @@ h1 {
   }
 
   .topbar {
+    position: sticky;
     top: 1.2rem;
+  }
+
+  .mobile-dock {
+    display: none;
   }
 }
 
