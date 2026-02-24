@@ -3385,8 +3385,6 @@ onUnmounted(() => {
   backdrop-filter: blur(16px);
   box-shadow: 0 20px 42px rgba(0, 0, 0, 0.25);
   transition: border-color 0.24s ease, transform 0.24s ease, box-shadow 0.24s ease;
-  position: relative;
-  z-index: 25;
   margin-bottom: 0.9rem;
 }
 
@@ -4968,12 +4966,6 @@ h1 {
     top: 1.2rem;
     max-height: calc(100vh - 2.4rem);
     overflow: auto;
-  }
-
-  .topbar {
-    position: sticky;
-    top: 1.2rem;
-    margin-bottom: 1rem;
   }
 
   .mobile-dock {
