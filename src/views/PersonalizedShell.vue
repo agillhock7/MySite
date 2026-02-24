@@ -1958,6 +1958,8 @@ const posts = computed<ExperiencePost[]>(() => {
   ];
 });
 
+const latestPost = computed<ExperiencePost | null>(() => posts.value[0] ?? null);
+
 const shortcuts = computed(() => (blueprint.value?.shortcuts ?? []).slice(0, 6));
 
 const scene = computed(() =>
@@ -2732,10 +2734,45 @@ onUnmounted(() => {
       </article>
 
       <article class="prompt-card">
-        <p class="mission-kicker">Prompt Suggestions</p>
-        <ul>
-          <li v-for="prompt in scene.prompts" :key="prompt">{{ prompt }}</li>
-        </ul>
+        <p class="mission-kicker">Workspace Control Center</p>
+        <p class="prompt-useful-copy">
+          Use this panel to keep momentum: resume your thread, launch tools, refresh the scene, and jump to live destinations.
+        </p>
+        <div class="prompt-meta-grid">
+          <section class="prompt-meta-card">
+            <p class="prompt-meta-label">Active Thread</p>
+            <p class="prompt-meta-value">{{ activeConversationSummary }}</p>
+          </section>
+          <section class="prompt-meta-card">
+            <p class="prompt-meta-label">Widgets</p>
+            <p class="prompt-meta-value">{{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }} deployed</p>
+          </section>
+          <section class="prompt-meta-card">
+            <p class="prompt-meta-label">Latest Post</p>
+            <p class="prompt-meta-value">{{ latestPost?.title || 'No post in stream yet' }}</p>
+          </section>
+        </div>
+        <div class="prompt-action-grid">
+          <button type="button" @click="navigateToView('/app/conversations')">Resume AI Conversations</button>
+          <button type="button" @click="navigateToView('/app/skill-game')">Launch Skill Game</button>
+          <button type="button" @click="navigateToView('/app/widgets')">Open Widget Studio</button>
+          <button type="button" @click="navigateToView('/app/blog')">Browse Blog Feed</button>
+          <button type="button" @click="applySceneShuffle">Shuffle Scene</button>
+        </div>
+        <div class="prompt-link-row">
+          <a
+            class="prompt-action-link"
+            :href="latestPost?.href || brandBaseUrl"
+            :target="isExternalUrl(latestPost?.href || brandBaseUrl) ? '_blank' : '_self'"
+            :rel="isExternalUrl(latestPost?.href || brandBaseUrl) ? 'noopener noreferrer' : undefined"
+          >
+            Open Latest Post
+          </a>
+          <a class="prompt-action-link" :href="assistantPrimaryCta.action" target="_blank" rel="noopener noreferrer">
+            {{ assistantPrimaryCta.label }}
+          </a>
+        </div>
+        <p class="prompt-mini-note">Quick commands: <code>/thread new</code>, <code>/image random</code>, <code>/widget build</code>.</p>
       </article>
     </section>
 
@@ -3633,12 +3670,102 @@ h1 {
   scroll-margin-top: 6.4rem;
 }
 
-.prompt-card ul {
-  margin: 0.55rem 0 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: 0.35rem;
+.prompt-useful-copy {
+  margin: 0.5rem 0 0;
   color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.prompt-meta-grid {
+  margin-top: 0.62rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.prompt-meta-card {
+  border: 1px solid var(--border-tone);
+  border-radius: 10px;
+  background: var(--surface-elevated);
+  padding: 0.52rem;
+}
+
+.prompt-meta-label {
+  margin: 0;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-signal);
+}
+
+.prompt-meta-value {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.prompt-action-grid {
+  margin-top: 0.62rem;
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.prompt-action-grid button {
+  border: 1px solid rgba(var(--accent-rgb), 0.44);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.42rem 0.58rem;
+  font-size: 0.77rem;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.prompt-action-grid button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.74);
+  background: rgba(var(--accent-rgb), 0.26);
+}
+
+.prompt-link-row {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.prompt-action-link {
+  text-decoration: none;
+  border: 1px solid var(--border-tone);
+  border-radius: 999px;
+  padding: 0.32rem 0.62rem;
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text-primary);
+  font-size: 0.74rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.prompt-action-link:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  background: rgba(var(--accent-rgb), 0.25);
+}
+
+.prompt-mini-note {
+  margin: 0.6rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.prompt-mini-note code {
+  font-family: inherit;
+  color: var(--text-primary);
+  background: rgba(var(--accent-rgb), 0.16);
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 6px;
+  padding: 0.05rem 0.3rem;
 }
 
 .stats-grid {
@@ -4903,6 +5030,16 @@ h1 {
   .mission-nav {
     display: none;
   }
+
+  .prompt-meta-grid,
+  .prompt-action-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prompt-link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1079px) {
@@ -4930,6 +5067,10 @@ h1 {
     justify-self: start;
     width: 100%;
     max-width: 260px;
+  }
+
+  .prompt-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
