@@ -428,6 +428,34 @@ function is_image_request(string $message): bool
     return preg_match('/\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art)\b/i', $message) === 1;
 }
 
+function is_image_revision_request(string $message): bool
+{
+    return preg_match('/\b(make it|make this|do a better|better one|try again|again|regenerate|variation|variant|version|restyle|style|angle|lighting|mood|photorealistic|realistic|cinematic|more detail|less detail|looks nothing like|not what i uploaded|use my upload|based on my upload|match the upload|fix this image)\b/i', $message) === 1;
+}
+
+function transcript_has_image_context(array $transcript): bool
+{
+    if (count($transcript) === 0) {
+        return false;
+    }
+
+    $recent = array_slice($transcript, -8);
+    foreach ($recent as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $text = trim((string) ($entry['text'] ?? ''));
+        if ($text === '') {
+            continue;
+        }
+        if (is_image_request($text)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function is_hosting_request(string $message): bool
 {
     return preg_match('/\b(host|hosting|server|domain|deploy|deployment|vps|cloud|pro suite|dark horse|whmcs)\b/i', $message) === 1;
@@ -906,11 +934,26 @@ if ($assistantMessage === '') {
     send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
+$imageTurnRequested = is_image_request($userMessage)
+    || is_image_revision_request($userMessage)
+    || transcript_has_image_context($transcript);
+$denialPattern = '/\b(can(?:not|\'t)|unable|currently can\'t|do not)\b[\s\S]{0,90}\b(edit|improve|generate|create)\b[\s\S]{0,90}\b(image|visual|photo|render)\b/i';
+if ($imageTurnRequested && preg_match($denialPattern, $assistantMessage) === 1) {
+    $assistantMessage = 'Image request captured. I am generating a new in-thread variation now. Tell me the exact style, angle, lighting, or realism level and I will iterate.';
+}
+
 $suggestions = normalize_suggestions($parsed['suggestions'] ?? []);
 if (count($suggestions) === 0) {
     $suggestions = local_assistant_fallback($userMessage, $attachments)['suggestions'];
 }
 $media = normalize_media($parsed['media'] ?? []);
+
+if ($imageTurnRequested && count($suggestions) === 0) {
+    $suggestions = [
+        ['label' => 'More Photorealistic', 'action' => 'ask-ai-access'],
+        ['label' => 'Try New Angle', 'action' => 'ask-ai-access']
+    ];
+}
 
 if (is_hosting_request($userMessage)) {
     $hasHiopsSuggestion = false;

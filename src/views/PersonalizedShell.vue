@@ -133,6 +133,7 @@ const pendingAttachments = ref<PendingAttachment[]>([]);
 const imagePreview = ref<ImagePreviewState | null>(null);
 const lineActionStatus = ref<Record<number, string>>({});
 const conversationImageIntent = ref<Record<string, string>>({});
+const conversationReferenceImage = ref<Record<string, AssistantAttachment>>({});
 const sceneRefreshEpoch = ref(0);
 const sceneStyleToken = ref(Math.floor(Math.random() * 1_000_000));
 const topbarOffsetPx = ref(0);
@@ -557,7 +558,7 @@ function isImageConversationRequest(message: string): boolean {
 }
 
 function imageRevisionSignal(message: string): boolean {
-  return /\b(make it|make this|do a better|better one|try again|again|regenerate|variation|variant|version|restyle|style|angle|lighting|mood|photorealistic|realistic|cinematic|ultra realistic|more detail|less detail)\b/i.test(message);
+  return /\b(make it|make this|do a better|better one|try again|again|regenerate|variation|variant|version|restyle|style|angle|lighting|mood|photorealistic|realistic|cinematic|ultra realistic|more detail|less detail|looks nothing like|not what i uploaded|use my upload|use my image|based on my upload|match the upload|closer to my image|fix this image)\b/i.test(message);
 }
 
 function activeConversationImageIntent(): string {
@@ -609,6 +610,37 @@ function deriveImageIntentFromTranscript(): string {
   return '';
 }
 
+function activeConversationReferenceImage(): AssistantAttachment | null {
+  const activeId = activeConversationId.value;
+  if (!activeId) {
+    return null;
+  }
+
+  const candidate = conversationReferenceImage.value[activeId];
+  if (!candidate || candidate.kind !== 'image' || !candidate.dataUrl) {
+    return null;
+  }
+
+  return candidate;
+}
+
+function rememberConversationReferenceImage(attachments: AssistantAttachment[]): void {
+  const activeId = activeConversationId.value;
+  if (!activeId) {
+    return;
+  }
+
+  const imageAttachment = attachments.find((attachment) => attachment.kind === 'image' && !!attachment.dataUrl);
+  if (!imageAttachment) {
+    return;
+  }
+
+  conversationReferenceImage.value = {
+    ...conversationReferenceImage.value,
+    [activeId]: imageAttachment
+  };
+}
+
 function resolveMultimodalTurn(userInput: string, forceImage: boolean): {
   expectsImage: boolean;
   backendMessage: string;
@@ -620,10 +652,15 @@ function resolveMultimodalTurn(userInput: string, forceImage: boolean): {
   let backendMessage = cleanedInput;
 
   const remembered = activeConversationImageIntent() || deriveImageIntentFromTranscript();
+  const hasReferenceImage = !!activeConversationReferenceImage();
   if (!expectsImage && remembered && imageRevisionSignal(cleanedInput)) {
     expectsImage = true;
     imagePrompt = `${remembered}. Revision request: ${cleanedInput}`;
     backendMessage = `Please generate an updated image variation. Base prompt: ${remembered}. Revision: ${cleanedInput}`;
+  } else if (!expectsImage && hasReferenceImage && imageRevisionSignal(cleanedInput)) {
+    expectsImage = true;
+    imagePrompt = `Create a revised image based on the user's uploaded reference image. Revision request: ${cleanedInput}`;
+    backendMessage = `The user is asking for an image revision based on a previously uploaded reference image. Request: ${cleanedInput}`;
   } else if (expectsImage && !isImageConversationRequest(cleanedInput)) {
     backendMessage = `Generate an image based on this request: ${cleanedInput}`;
   }
@@ -1238,6 +1275,18 @@ async function openAction(url: string): Promise<void> {
   }
 
   if (url === 'ask-ai-access') {
+    const rememberedIntent = activeConversationImageIntent();
+    const rememberedImage = activeConversationReferenceImage();
+    if (rememberedIntent || rememberedImage) {
+      await runAssistantConversation(
+        rememberedIntent
+          ? `Create a more photorealistic variation of this image request: ${rememberedIntent}`
+          : 'Create a more photorealistic variation based on my uploaded reference image.',
+        { forceImage: true, attachments: rememberedImage ? [rememberedImage] : [] }
+      );
+      return;
+    }
+
     await runAssistantConversation('Help me map an AI access plan for this experience.');
     return;
   }
@@ -1294,7 +1343,12 @@ async function runAssistantConversation(
   options?: { forceImage?: boolean; attachments?: AssistantAttachment[] }
 ): Promise<void> {
   const attachments = options?.attachments?.slice(0, 3) ?? [];
+  rememberConversationReferenceImage(attachments);
   const multimodalTurn = resolveMultimodalTurn(userInput, Boolean(options?.forceImage));
+  const rememberedImage = activeConversationReferenceImage();
+  const requestAttachments = attachments.length > 0
+    ? attachments
+    : (multimodalTurn.expectsImage && rememberedImage ? [rememberedImage] : []);
   if (attachments.length > 0) {
     addLine('signal', `Attachment context included: ${attachments.length} file${attachments.length > 1 ? 's' : ''}.`);
   }
@@ -1314,7 +1368,7 @@ async function runAssistantConversation(
       transcript: buildAssistantTranscript(),
       visitorId,
       variantNonce: sceneNonce.value,
-      attachments
+      attachments: requestAttachments
     });
 
     if (result.source !== 'backend') {
@@ -1326,10 +1380,11 @@ async function runAssistantConversation(
       : (result.source === 'backend' ? 'AI stream: rendering response...' : 'Fallback stream: rendering response...');
 
     let assistantMessage = result.assistantMessage;
-    if (expectsImage && needsImageCapabilityOverride(assistantMessage)) {
-      assistantMessage = 'Image request captured. Rendering an in-thread preview now. Ask for style, angle, or mood changes to regenerate.';
-    } else if (expectsImage && !/\b(image|render|visual|preview|generated)\b/i.test(assistantMessage)) {
-      assistantMessage = 'Image request captured. Rendering an updated in-thread image now. Ask for another variation anytime.';
+    if (expectsImage) {
+      assistantMessage = 'Image request captured. Rendering an updated in-thread image now. Ask for style, angle, lighting, or mood changes to regenerate.';
+      if (needsImageCapabilityOverride(result.assistantMessage)) {
+        assistantMessage = 'Image request captured. Rendering an in-thread preview now. Ask for style, angle, lighting, or mood changes to regenerate.';
+      }
     }
     await streamAssistantMessage(assistantMessage);
 
@@ -2188,6 +2243,19 @@ const commandStatus = computed(() =>
 );
 
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
+const renderedTranscript = computed(() => transcript.value.filter((line) => line.tone !== 'signal'));
+const conversationStatusText = computed(() => {
+  if (assistantStreaming.value) {
+    return assistantStreamPhase.value || 'AI stream: processing...';
+  }
+
+  const latestSignal = [...transcript.value].reverse().find((line) => line.tone === 'signal' && line.text.trim().length > 0);
+  if (latestSignal) {
+    return latestSignal.text;
+  }
+
+  return 'Assistant ready.';
+});
 const visibleConversationThreads = computed(() => {
   const ordered = [...conversationThreads.value].sort((left, right) => {
     const leftTime = new Date(left.updatedAt).getTime();
@@ -2633,6 +2701,9 @@ async function handleCommand(raw: string): Promise<void> {
         ...conversationImageIntent.value,
         [activeConversationId.value]: ''
       };
+      const nextReference = { ...conversationReferenceImage.value };
+      delete nextReference[activeConversationId.value];
+      conversationReferenceImage.value = nextReference;
     }
     addLine('system', `Transcript cleared. ${scene.value.codename} remains active.`);
     return;
@@ -3069,6 +3140,11 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <div class="conversation-status-rail">
+            <span class="status-dot" :class="{ live: assistantStreaming }"></span>
+            <p>{{ conversationStatusText }}</p>
+          </div>
+
           <div v-if="assistantStreaming" class="stream-shell" aria-live="polite">
             <div class="stream-bars">
               <span></span>
@@ -3092,7 +3168,7 @@ onUnmounted(() => {
 
           <div ref="transcriptRef" class="transcript" aria-live="polite">
             <article
-              v-for="(line, lineIndex) in transcript"
+              v-for="(line, lineIndex) in renderedTranscript"
               :key="line.id"
               class="line"
               :class="`tone-${line.tone}`"
@@ -3182,6 +3258,18 @@ onUnmounted(() => {
               @click="runCommandHint(hint.command)"
             >
               {{ hint.label }}
+            </button>
+          </div>
+
+          <div v-if="assistantSuggestions.length > 0" class="assistant-suggestions">
+            <button
+              v-for="suggestion in assistantSuggestions"
+              :key="`${suggestion.label}:${suggestion.action}`"
+              type="button"
+              :disabled="assistantStreaming"
+              @click="openAction(suggestion.action)"
+            >
+              {{ suggestion.label }}
             </button>
           </div>
 
@@ -4435,6 +4523,51 @@ h1 {
   display: none;
 }
 
+.conversation-status-rail {
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.2);
+  padding: 0.42rem 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.conversation-status-rail p {
+  margin: 0;
+  color: color-mix(in srgb, var(--text-secondary) 86%, rgb(var(--accent-soft-rgb)));
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.46);
+  box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45);
+  flex: 0 0 auto;
+}
+
+.status-dot.live {
+  background: rgb(var(--accent-soft-rgb));
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(var(--accent-rgb), 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  }
+}
+
 .stream-shell {
   padding: 0.62rem 0.85rem;
   border-bottom: 1px solid var(--border-tone);
@@ -4944,6 +5077,36 @@ h1 {
 }
 
 .command-hints button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.assistant-suggestions {
+  border-top: 1px solid rgba(var(--accent-rgb), 0.14);
+  padding: 0.45rem 0.85rem 0.55rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.assistant-suggestions button {
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 999px;
+  background: linear-gradient(130deg, rgba(var(--accent-rgb), 0.24), rgba(var(--accent-sharp-rgb), 0.18));
+  color: var(--text-primary);
+  padding: 0.22rem 0.58rem;
+  font-size: 0.7rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.assistant-suggestions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.72);
+  background: rgba(var(--accent-rgb), 0.32);
+}
+
+.assistant-suggestions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
