@@ -3057,7 +3057,7 @@ onUnmounted(() => {
     </section>
 
     <section
-      v-if="isHomeView || isConversationView"
+      v-if="isConversationView"
       id="ai-conversations"
       class="terminal-shell reveal-surface"
       :class="{ expanded: terminalExpanded, 'conversation-view': isConversationView }"
