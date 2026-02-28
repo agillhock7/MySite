@@ -132,9 +132,13 @@ const commandHistoryCursor = ref(-1);
 const pendingAttachments = ref<PendingAttachment[]>([]);
 const imagePreview = ref<ImagePreviewState | null>(null);
 const lineActionStatus = ref<Record<number, string>>({});
+const conversationImageIntent = ref<Record<string, string>>({});
 const sceneRefreshEpoch = ref(0);
 const sceneStyleToken = ref(Math.floor(Math.random() * 1_000_000));
 const topbarOffsetPx = ref(0);
+const widgetStudioTitle = ref('');
+const widgetStudioPrompt = ref('');
+const widgetStudioHint = ref('');
 let motionMediaQuery: MediaQueryList | null = null;
 let topbarResizeObserver: ResizeObserver | null = null;
 
@@ -552,6 +556,85 @@ function isImageConversationRequest(message: string): boolean {
   return /\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art|thumbnail|portrait)\b/i.test(message);
 }
 
+function imageRevisionSignal(message: string): boolean {
+  return /\b(make it|make this|do a better|better one|try again|again|regenerate|variation|variant|version|restyle|style|angle|lighting|mood|photorealistic|realistic|cinematic|ultra realistic|more detail|less detail)\b/i.test(message);
+}
+
+function activeConversationImageIntent(): string {
+  const activeId = activeConversationId.value;
+  if (!activeId) {
+    return '';
+  }
+  return conversationImageIntent.value[activeId]?.trim() ?? '';
+}
+
+function rememberConversationImageIntent(prompt: string): void {
+  const activeId = activeConversationId.value;
+  if (!activeId) {
+    return;
+  }
+  const cleaned = prompt.trim();
+  if (!cleaned) {
+    return;
+  }
+
+  conversationImageIntent.value = {
+    ...conversationImageIntent.value,
+    [activeId]: cleaned.slice(0, 1400)
+  };
+}
+
+function deriveImageIntentFromTranscript(): string {
+  for (let index = transcript.value.length - 1; index >= 0; index -= 1) {
+    const line = transcript.value[index];
+    if (!line.imageUrl || line.tone !== 'assistant') {
+      continue;
+    }
+
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const candidate = transcript.value[cursor];
+      if (candidate.tone !== 'user') {
+        continue;
+      }
+
+      const text = candidate.text.trim();
+      if (!text || text.startsWith('/')) {
+        continue;
+      }
+
+      return text.slice(0, 1200);
+    }
+  }
+
+  return '';
+}
+
+function resolveMultimodalTurn(userInput: string, forceImage: boolean): {
+  expectsImage: boolean;
+  backendMessage: string;
+  imagePrompt: string;
+} {
+  const cleanedInput = userInput.trim();
+  let expectsImage = forceImage || isImageConversationRequest(cleanedInput);
+  let imagePrompt = cleanedInput;
+  let backendMessage = cleanedInput;
+
+  const remembered = activeConversationImageIntent() || deriveImageIntentFromTranscript();
+  if (!expectsImage && remembered && imageRevisionSignal(cleanedInput)) {
+    expectsImage = true;
+    imagePrompt = `${remembered}. Revision request: ${cleanedInput}`;
+    backendMessage = `Please generate an updated image variation. Base prompt: ${remembered}. Revision: ${cleanedInput}`;
+  } else if (expectsImage && !isImageConversationRequest(cleanedInput)) {
+    backendMessage = `Generate an image based on this request: ${cleanedInput}`;
+  }
+
+  return {
+    expectsImage,
+    backendMessage: backendMessage.slice(0, 1800),
+    imagePrompt: imagePrompt.slice(0, 1800)
+  };
+}
+
 function isHostingIntent(message: string): boolean {
   return /\b(host|hosting|server|domain|deploy|deployment|vps|cloud|pro suite|dark horse|whmcs)\b/i.test(message);
 }
@@ -927,11 +1010,15 @@ function startNewConversation(): void {
   conversationThreads.value = [created, ...conversationThreads.value];
   activeConversationId.value = created.id;
   conversationSearch.value = '';
+  conversationImageIntent.value = {
+    ...conversationImageIntent.value,
+    [created.id]: ''
+  };
   transcript.value = [];
   mediaLoadState.value = {};
   assistantSuggestions.value = [];
   persistConversationState();
-  addLine('signal', `Conversation ${created.id} active. Ask anything or use /widget build.`);
+  addLine('signal', `Conversation ${created.id} active. Ask anything or create media with /image <prompt>.`);
 }
 
 function switchConversation(conversationId: string): void {
@@ -1207,13 +1294,14 @@ async function runAssistantConversation(
   options?: { forceImage?: boolean; attachments?: AssistantAttachment[] }
 ): Promise<void> {
   const attachments = options?.attachments?.slice(0, 3) ?? [];
+  const multimodalTurn = resolveMultimodalTurn(userInput, Boolean(options?.forceImage));
   if (attachments.length > 0) {
     addLine('signal', `Attachment context included: ${attachments.length} file${attachments.length > 1 ? 's' : ''}.`);
   }
-  const expectsImage = Boolean(options?.forceImage) || isImageConversationRequest(userInput);
+  const expectsImage = multimodalTurn.expectsImage;
   assistantStreaming.value = true;
   imageRenderPending.value = expectsImage;
-  imageRenderPrompt.value = expectsImage ? userInput.trim() : '';
+  imageRenderPrompt.value = expectsImage ? multimodalTurn.imagePrompt : '';
   assistantStreamPhase.value = expectsImage
     ? 'AI stream: composing multimodal image...'
     : 'AI stream: analyzing request...';
@@ -1222,7 +1310,7 @@ async function runAssistantConversation(
 
   try {
     const result = await generateAssistantTurnWithFallback({
-      userMessage: userInput,
+      userMessage: multimodalTurn.backendMessage,
       transcript: buildAssistantTranscript(),
       visitorId,
       variantNonce: sceneNonce.value,
@@ -1240,23 +1328,27 @@ async function runAssistantConversation(
     let assistantMessage = result.assistantMessage;
     if (expectsImage && needsImageCapabilityOverride(assistantMessage)) {
       assistantMessage = 'Image request captured. Rendering an in-thread preview now. Ask for style, angle, or mood changes to regenerate.';
+    } else if (expectsImage && !/\b(image|render|visual|preview|generated)\b/i.test(assistantMessage)) {
+      assistantMessage = 'Image request captured. Rendering an updated in-thread image now. Ask for another variation anytime.';
     }
     await streamAssistantMessage(assistantMessage);
 
     if (expectsImage) {
-      const generatedImage = await ensureGeneratedImageForPrompt(userInput);
+      const generatedImage = await ensureGeneratedImageForPrompt(multimodalTurn.imagePrompt);
       addLine('assistant', 'Generated image preview', {
         imageUrl: generatedImage,
         imageAlt: 'Generated image preview'
       });
+      rememberConversationImageIntent(multimodalTurn.imagePrompt);
     } else {
       const mediaItems = result.media.filter((item) => item.type === 'image');
       for (const item of mediaItems) {
-        const resolvedImage = await resolveAssistantMediaUrl(item.url, userInput);
+        const resolvedImage = await resolveAssistantMediaUrl(item.url, multimodalTurn.imagePrompt || userInput);
         addLine('assistant', item.alt || 'Generated image', {
           imageUrl: resolvedImage,
           imageAlt: item.alt || 'Generated image'
         });
+        rememberConversationImageIntent(multimodalTurn.imagePrompt || userInput);
       }
     }
 
@@ -1294,6 +1386,37 @@ function deployWidget(widget: DashboardWidget, sourceLabel = 'AI CLI'): boolean 
   persistWidgets();
   addLine('signal', `${sourceLabel} deployed widget ${widget.id} · ${widget.title}`);
   return true;
+}
+
+function widgetSeedSignature(): string {
+  return `${visitorId}:${designSignature.value}:${sceneNonce.value}`;
+}
+
+function clearWidgetStudioDraft(): void {
+  widgetStudioTitle.value = '';
+  widgetStudioPrompt.value = '';
+  widgetStudioHint.value = '';
+}
+
+function deployPromptWidgetFromStudio(): void {
+  const prompt = widgetStudioPrompt.value.trim();
+  if (!prompt) {
+    addLine('system', 'Widget Studio: enter a prompt to deploy a prompt widget.');
+    return;
+  }
+
+  const widget = createPromptWidgetFromPrompt(prompt, widgetSeedSignature(), widgetStudioTitle.value.trim());
+  const deployed = deployWidget(widget, 'Widget Studio');
+  if (deployed) {
+    widgetStudioPrompt.value = '';
+    widgetStudioTitle.value = '';
+  }
+}
+
+function deployPresetWidgetFromStudio(type: DashboardWidgetType): void {
+  const hint = widgetStudioHint.value.trim();
+  const widget = createPresetWidget(type, widgetSeedSignature(), hint);
+  deployWidget(widget, 'Widget Studio');
 }
 
 function parseWidgetType(rawType: string): DashboardWidgetType | null {
@@ -2036,7 +2159,7 @@ const widgetBuildStepLabel = computed(() => {
 const commandPlaceholder = computed(() =>
   widgetBuildSession.value
     ? `Widget build mode (${widgetBuildStepLabel.value}) · answer question or /widget cancel`
-    : 'Chat with multimodal AI or build widgets (type /help)'
+    : 'Chat with multimodal AI (type /help)'
 );
 
 const commandHints = computed(() => {
@@ -2052,9 +2175,9 @@ const commandHints = computed(() => {
     { label: 'Help', command: '/help' },
     { label: 'New Thread', command: '/thread new' },
     { label: 'Upload File', command: '/upload' },
-    { label: 'Widget Build', command: '/widget build' },
     { label: 'Image Prompt', command: '/image random' },
-    { label: 'Shuffle Scene', command: '/shuffle' }
+    { label: 'Shuffle Scene', command: '/shuffle' },
+    { label: 'Widget Studio', command: '/widgets' }
   ];
 });
 
@@ -2489,12 +2612,15 @@ async function handleCommand(raw: string): Promise<void> {
   }
 
   if (input === '/help') {
-    addLine('system', 'Core: /help, /upload, /image <prompt>, /thread [list|new|open <id>], /shuffle, /focus <topic>, /open <1-3>, /reset');
-    addLine(
-      'system',
-      'Widgets: /widget list, /widget build [intent] (guided), /widget build <title> || <prompt>, /widget edit <id>, /widget add <type>, /widget html <title> || <html>, /widget refresh <id|all>, /widget remove <id>, /widget clear, /widget cancel'
-    );
+    addLine('system', 'Core: /help, /upload, /image <prompt>, /thread [list|new|open <id>], /shuffle, /focus <topic>, /open <1-3>, /widgets, /reset');
+    addLine('system', 'Widget creation and runtime controls now live in the Widget Studio view.');
     addLine('system', `Conversation limit: ${MAX_SAVED_CONVERSATIONS}. Widget limit: ${MAX_DASHBOARD_WIDGETS}.`);
+    return;
+  }
+
+  if (input === '/widgets') {
+    addLine('signal', 'Opening Widget Studio...');
+    await navigateToView('/app/widgets');
     return;
   }
 
@@ -2502,6 +2628,12 @@ async function handleCommand(raw: string): Promise<void> {
     transcript.value = [];
     mediaLoadState.value = {};
     assistantSuggestions.value = [];
+    if (activeConversationId.value) {
+      conversationImageIntent.value = {
+        ...conversationImageIntent.value,
+        [activeConversationId.value]: ''
+      };
+    }
     addLine('system', `Transcript cleared. ${scene.value.codename} remains active.`);
     return;
   }
@@ -2582,13 +2714,26 @@ async function handleCommand(raw: string): Promise<void> {
     return;
   }
 
-  if (handleWidgetCommand(input)) {
+  if (input.startsWith('/widget') && isWidgetsView.value && handleWidgetCommand(input)) {
+    return;
+  }
+
+  if (input.startsWith('/widget')) {
+    addLine('system', 'Widget commands are isolated to Widget Studio. Redirecting there now.');
+    await navigateToView('/app/widgets');
     return;
   }
 
   if (isWidgetBuildIntentRequest(input)) {
-    const intentHint = extractIntentFromBuildRequest(input);
-    startWidgetBuildMode(intentHint);
+    const inferredIntent = extractIntentFromBuildRequest(input);
+    if (inferredIntent) {
+      widgetStudioPrompt.value = inferredIntent;
+      if (!widgetStudioTitle.value) {
+        widgetStudioTitle.value = deriveWidgetTitle(inferredIntent);
+      }
+    }
+    addLine('system', 'That sounds like a widget request. Open Widget Studio to build and manage widgets.');
+    await navigateToView('/app/widgets');
     return;
   }
 
@@ -2641,8 +2786,8 @@ onMounted(async () => {
     addLine('system', `Visitor experience terminal active · Signature ${designSignature.value}`);
     addLine('system', scene.value.mission);
     addLine('signal', scene.value.pulse);
-    addLine('system', 'Multimodal assistant is live in-thread. Widget deploy only happens in /widget mode.');
-    addLine('system', 'Use /thread new for a fresh conversation or /widget build for guided widget creation.');
+    addLine('system', 'Multimodal assistant is live in-thread for chat, learning, file analysis, and image generation.');
+    addLine('system', 'Use /thread new for a fresh conversation, /image <prompt> for visuals, or /widgets for Widget Studio.');
   }
 
   await nextTick();
@@ -2812,7 +2957,7 @@ onUnmounted(() => {
             {{ assistantPrimaryCta.label }}
           </a>
         </div>
-        <p class="prompt-mini-note">Quick commands: <code>/thread new</code>, <code>/image random</code>, <code>/widget build</code>.</p>
+        <p class="prompt-mini-note">Quick commands: <code>/thread new</code>, <code>/image random</code>, <code>/widgets</code>.</p>
       </article>
     </section>
 
@@ -3049,23 +3194,60 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section v-if="isHomeView || isWidgetsView" id="widget-studio" class="widget-studio reveal-surface" style="--reveal-order: 5">
+    <section v-if="isWidgetsView" id="widget-studio" class="widget-studio reveal-surface" style="--reveal-order: 5">
       <header class="studio-head">
         <p class="mission-kicker">Widget Studio</p>
         <p class="studio-meta">Deployable widgets: {{ widgets.length }}/{{ MAX_DASHBOARD_WIDGETS }}</p>
       </header>
 
+      <article class="widget-builder">
+        <p class="mission-kicker">Create Widget</p>
+        <p class="widget-builder-copy">
+          Widgets are configured only in this studio. Build prompt widgets or deploy presets without using the chat thread.
+        </p>
+
+        <label>
+          <span>Widget Title (optional)</span>
+          <input v-model="widgetStudioTitle" type="text" maxlength="80" placeholder="Daily Market Brief" />
+        </label>
+
+        <label>
+          <span>Prompt</span>
+          <textarea
+            v-model="widgetStudioPrompt"
+            rows="4"
+            placeholder="Tell me the current weather in Austin and 3 practical suggestions for the day."
+          ></textarea>
+        </label>
+
+        <label>
+          <span>Preset Hint (optional)</span>
+          <input v-model="widgetStudioHint" type="text" maxlength="80" placeholder="Austin, TX" />
+        </label>
+
+        <div class="widget-builder-presets">
+          <button type="button" @click="deployPresetWidgetFromStudio('weather')">Weather</button>
+          <button type="button" @click="deployPresetWidgetFromStudio('sports')">Sports</button>
+          <button type="button" @click="deployPresetWidgetFromStudio('fashion')">Fashion</button>
+          <button type="button" @click="deployPresetWidgetFromStudio('horoscope')">Horoscope</button>
+        </div>
+
+        <div class="widget-builder-actions">
+          <button type="button" class="clear-btn" @click="clearWidgetStudioDraft">Clear Draft</button>
+          <button
+            type="button"
+            class="create-btn"
+            :disabled="!widgetStudioPrompt.trim()"
+            @click="deployPromptWidgetFromStudio"
+          >
+            Create Prompt Widget
+          </button>
+        </div>
+      </article>
+
       <div v-if="widgets.length === 0" class="empty-widgets">
-        <p>No widgets yet. Try:</p>
-        <p>/widget build</p>
-        <p>/image cinematic neon skyline over the desert at sunrise</p>
-        <p>build me a widget for weather in Austin</p>
-        <p>/widget build Daily Coach || Give me one focused action for the day and two follow-ups</p>
-        <p>/widget add weather Austin</p>
-        <p>/widget add horoscope</p>
-        <p>/widget add sports NHL</p>
-        <p>/widget edit W-ABC123 (or use the Edit button)</p>
-        <p>/widget html Daily Brief || &lt;section&gt;&lt;h4&gt;Daily Brief&lt;/h4&gt;&lt;p&gt;Write one clear prompt goal.&lt;/p&gt;&lt;/section&gt;</p>
+        <p>No widgets deployed yet.</p>
+        <p>Create one with the form above or start with a preset button.</p>
         <p>Limit: {{ MAX_DASHBOARD_WIDGETS }} widgets total</p>
       </div>
 
@@ -4925,6 +5107,114 @@ h1 {
   font-size: 0.76rem;
 }
 
+.widget-builder {
+  border: 1px solid rgba(var(--accent-rgb), 0.38);
+  border-radius: 12px;
+  background: rgba(var(--accent-rgb), 0.08);
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.widget-builder-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.widget-builder label {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.widget-builder label span {
+  color: var(--text-signal);
+  font-size: 0.67rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.widget-builder input,
+.widget-builder textarea {
+  width: 100%;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.5);
+  color: var(--text-primary);
+  padding: 0.42rem 0.54rem;
+  font-size: 0.8rem;
+}
+
+.widget-builder textarea {
+  resize: vertical;
+  min-height: 86px;
+}
+
+.widget-builder input:focus-visible,
+.widget-builder textarea:focus-visible {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.74);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+}
+
+.widget-builder-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.widget-builder-presets button {
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.2rem 0.58rem;
+  font-size: 0.7rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.widget-builder-presets button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.72);
+  background: rgba(var(--accent-rgb), 0.28);
+}
+
+.widget-builder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.38rem;
+}
+
+.widget-builder-actions .clear-btn,
+.widget-builder-actions .create-btn {
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--text-primary);
+  padding: 0.3rem 0.62rem;
+  font-size: 0.75rem;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.widget-builder-actions .create-btn {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.3), rgba(var(--accent-sharp-rgb), 0.22));
+}
+
+.widget-builder-actions .clear-btn:hover,
+.widget-builder-actions .create-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.74);
+  background: rgba(var(--accent-rgb), 0.3);
+}
+
+.widget-builder-actions .create-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .empty-widgets {
   border: 1px dashed rgba(var(--accent-rgb), 0.35);
   border-radius: 10px;
@@ -5355,6 +5645,15 @@ h1 {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .widget-builder-actions {
+    justify-content: stretch;
+  }
+
+  .widget-builder-actions .clear-btn,
+  .widget-builder-actions .create-btn {
+    flex: 1 1 0;
+  }
 }
 
 @media (max-width: 1079px) {
@@ -5450,7 +5749,8 @@ h1 {
   }
 
   .studio-head,
-  .empty-widgets {
+  .empty-widgets,
+  .widget-builder {
     grid-column: 1 / -1;
   }
 
