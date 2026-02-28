@@ -27,6 +27,9 @@ function mysite_default_server_config(): array
             'api_key' => '',
             'api_key_file' => '',
             'model' => 'gpt-4o-mini',
+            'assistant_model' => 'gpt-5.2',
+            'assistant_temperature' => 0.62,
+            'assistant_max_tokens' => 520,
             'api_url' => 'https://api.openai.com/v1/chat/completions',
             'timeout_seconds' => 30
         ],
@@ -100,6 +103,11 @@ function mysite_load_server_config(): array
     $envModel = getenv('OPENAI_MODEL');
     if (is_string($envModel) && trim($envModel) !== '') {
         $config['openai']['model'] = trim($envModel);
+    }
+
+    $envAssistantModel = getenv('OPENAI_ASSISTANT_MODEL');
+    if (is_string($envAssistantModel) && trim($envAssistantModel) !== '') {
+        $config['openai']['assistant_model'] = trim($envAssistantModel);
     }
 
     return $config;

@@ -9,6 +9,9 @@ return [
         'api_key' => 'REPLACE_WITH_OPENAI_API_KEY',
         'api_key_file' => '',
         'model' => 'gpt-4o-mini',
+        'assistant_model' => 'gpt-5.2',
+        'assistant_temperature' => 0.62,
+        'assistant_max_tokens' => 520,
         'api_url' => 'https://api.openai.com/v1/chat/completions',
         'timeout_seconds' => 30
     ],

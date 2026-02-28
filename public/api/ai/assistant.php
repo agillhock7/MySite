@@ -323,6 +323,106 @@ function normalize_attachments($value): array
     return $normalized;
 }
 
+function clamp_float($value, float $minimum, float $maximum, float $fallback): float
+{
+    if (!is_numeric($value)) {
+        return $fallback;
+    }
+
+    $numeric = (float) $value;
+    if ($numeric < $minimum) {
+        return $minimum;
+    }
+    if ($numeric > $maximum) {
+        return $maximum;
+    }
+
+    return $numeric;
+}
+
+function clamp_int($value, int $minimum, int $maximum, int $fallback): int
+{
+    if (!is_numeric($value)) {
+        return $fallback;
+    }
+
+    $numeric = (int) $value;
+    if ($numeric < $minimum) {
+        return $minimum;
+    }
+    if ($numeric > $maximum) {
+        return $maximum;
+    }
+
+    return $numeric;
+}
+
+function normalize_chat_content($content): string
+{
+    if (is_string($content)) {
+        return trim($content);
+    }
+
+    if (!is_array($content)) {
+        return '';
+    }
+
+    $parts = [];
+    foreach ($content as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+
+        $text = '';
+        if (isset($item['text']) && is_string($item['text'])) {
+            $text = $item['text'];
+        } elseif (isset($item['content']) && is_string($item['content'])) {
+            $text = $item['content'];
+        }
+
+        $text = trim($text);
+        if ($text !== '') {
+            $parts[] = $text;
+        }
+    }
+
+    return trim(implode("\n", $parts));
+}
+
+function openai_chat_request(string $apiUrl, string $apiKey, array $payload, int $timeoutSeconds): array
+{
+    $curl = curl_init($apiUrl);
+    curl_setopt_array($curl, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $apiKey
+        ],
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_TIMEOUT => $timeoutSeconds
+    ]);
+
+    $result = curl_exec($curl);
+    if ($result === false) {
+        curl_close($curl);
+        return ['ok' => false, 'status' => 0, 'body' => null];
+    }
+
+    $statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    curl_close($curl);
+    if ($statusCode >= 400) {
+        return ['ok' => false, 'status' => $statusCode, 'body' => null];
+    }
+
+    $decoded = json_decode((string) $result, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'status' => $statusCode, 'body' => null];
+    }
+
+    return ['ok' => true, 'status' => $statusCode, 'body' => $decoded];
+}
+
 function is_image_request(string $message): bool
 {
     return preg_match('/\b(image|illustration|render|draw|logo|poster|photo|artwork|cover art)\b/i', $message) === 1;
@@ -627,33 +727,41 @@ if (!$enabled || $apiKey === '') {
     send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
-$model = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
-if ($model === '') {
-    $model = 'gpt-4o-mini';
-}
-
 $apiUrl = trim((string) ($openAiConfig['api_url'] ?? 'https://api.openai.com/v1/chat/completions'));
 if ($apiUrl === '') {
     $apiUrl = 'https://api.openai.com/v1/chat/completions';
 }
 
+$assistantModel = trim((string) ($openAiConfig['assistant_model'] ?? ''));
+$defaultModel = trim((string) ($openAiConfig['model'] ?? 'gpt-4o-mini'));
+if ($defaultModel === '') {
+    $defaultModel = 'gpt-4o-mini';
+}
+if ($assistantModel === '') {
+    $assistantModel = $defaultModel;
+}
+$assistantTemperature = clamp_float($openAiConfig['assistant_temperature'] ?? 0.62, 0.1, 1.2, 0.62);
+$assistantMaxTokens = clamp_int($openAiConfig['assistant_max_tokens'] ?? 520, 120, 1200, 520);
+
 $systemPrompt = <<<PROMPT
 You are an embedded assistant inside a personalized headless blog experience.
-Be concise, practical, and calm.
-Prioritize helping users with:
-- website hosting onboarding via Dark Horse Virtue Pro Suite (https://hiops.darkhorsevirtue.io)
-- AI access and practical next steps
-- UX refinement guidance in this app
+You are conversational, practical, and adaptive.
+Keep responses natural and fluid like a modern premium LLM chat experience.
+Primary jobs:
+- Help users complete tasks inside this workspace.
+- Provide concrete, step-by-step guidance when asked.
+- Offer hosting via Dark Horse Virtue Pro Suite only when relevant to the user's intent.
 
 Rules:
 - Return JSON only.
-- Keep assistantMessage under 70 words.
+- assistantMessage should usually be 1 short paragraph (about 40-140 words), unless user asks for short output.
 - Provide 1-3 suggestions with label/action.
 - Return media as an array (empty if none). For image responses, include media item with type=image, url, alt.
 - Suggestion actions may be a safe URL, /onboarding?force=1, ask-hosting, ask-ai-access, or reopen-onboarding.
 - Never output code blocks or markdown.
-- If user asks about hosting/deployment, prioritize https://hiops.darkhorsevirtue.io as the first recommendation.
-- If user provided files, acknowledge the files and offer a concrete next action.
+- Do not force sales CTAs in every response.
+- If user asks about hosting/deployment, include https://hiops.darkhorsevirtue.io as the first recommendation.
+- If user provided files, acknowledge them and provide the next practical action.
 PROMPT;
 
 $attachmentSummaryParts = [];
@@ -666,10 +774,48 @@ foreach ($attachments as $attachment) {
 }
 $attachmentSummary = count($attachmentSummaryParts) > 0 ? implode('; ', $attachmentSummaryParts) : 'none';
 
-$userPrompt = "Visitor seed: " . $visitorSeed .
-    "\nRecent transcript: " . json_encode($transcript, JSON_UNESCAPED_SLASHES) .
-    "\nAttachments: " . $attachmentSummary .
-    "\nUser message: " . $userMessage;
+$messages = [
+    ['role' => 'system', 'content' => $systemPrompt]
+];
+
+$normalizedTranscriptMessages = [];
+foreach ($transcript as $entry) {
+    $role = (string) ($entry['role'] ?? '');
+    if (!in_array($role, ['assistant', 'user'], true)) {
+        continue;
+    }
+
+    $text = trim((string) ($entry['text'] ?? ''));
+    if ($text === '') {
+        continue;
+    }
+
+    $normalizedTranscriptMessages[] = [
+        'role' => $role,
+        'content' => substr($text, 0, 2000)
+    ];
+}
+if (count($normalizedTranscriptMessages) > 14) {
+    $normalizedTranscriptMessages = array_slice($normalizedTranscriptMessages, -14);
+}
+foreach ($normalizedTranscriptMessages as $entry) {
+    $messages[] = $entry;
+}
+
+$lastTranscriptUser = '';
+for ($i = count($normalizedTranscriptMessages) - 1; $i >= 0; $i--) {
+    if (($normalizedTranscriptMessages[$i]['role'] ?? '') === 'user') {
+        $lastTranscriptUser = trim((string) ($normalizedTranscriptMessages[$i]['content'] ?? ''));
+        break;
+    }
+}
+
+$attachmentContext = "Visitor seed: " . $visitorSeed . "\nAttachments: " . $attachmentSummary;
+$userPrompt = $attachmentContext . "\nLatest user request: " . $userMessage;
+$dedupeUserMessage = trim($userMessage);
+if ($lastTranscriptUser !== '' && strcasecmp($lastTranscriptUser, $dedupeUserMessage) === 0) {
+    $userPrompt = $attachmentContext . "\nThe latest user request is the same as the last chat turn. Respond to it with continuity.";
+}
 
 $userContent = $userPrompt;
 $imageAttachments = array_values(array_filter($attachments, static function (array $attachment): bool {
@@ -688,57 +834,71 @@ if (count($imageAttachments) > 0) {
     $userContent = $contentParts;
 }
 
-$payload = [
-    'model' => $model,
-    'messages' => [
-        ['role' => 'system', 'content' => $systemPrompt],
-        ['role' => 'user', 'content' => $userContent]
-    ],
-    'temperature' => 0.4,
-    'response_format' => [
+$messages[] = ['role' => 'user', 'content' => $userContent];
+
+$modelCandidates = array_values(array_unique(array_filter([
+    $assistantModel,
+    $defaultModel,
+    'gpt-4o-mini'
+], static function ($candidate): bool {
+    return is_string($candidate) && trim($candidate) !== '';
+})));
+
+$responseJson = null;
+foreach ($modelCandidates as $candidateModel) {
+    $basePayload = [
+        'model' => $candidateModel,
+        'messages' => $messages,
+        'temperature' => $assistantTemperature,
+        'max_tokens' => $assistantMaxTokens
+    ];
+
+    $schemaPayload = $basePayload;
+    $schemaPayload['response_format'] = [
         'type' => 'json_schema',
         'json_schema' => [
             'name' => 'assistant_turn',
             'strict' => true,
             'schema' => assistant_schema()
         ]
-    ]
-];
+    ];
+    $schemaResult = openai_chat_request($apiUrl, $apiKey, $schemaPayload, $timeoutSeconds);
+    if (($schemaResult['ok'] ?? false) === true && is_array($schemaResult['body'] ?? null)) {
+        $responseJson = $schemaResult['body'];
+        break;
+    }
 
-$curl = curl_init($apiUrl);
-curl_setopt_array($curl, [
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_HTTPHEADER => [
-        'Content-Type: application/json',
-        'Authorization: Bearer ' . $apiKey
-    ],
-    CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
-    CURLOPT_TIMEOUT => $timeoutSeconds
-]);
+    $jsonObjectPayload = $basePayload;
+    $jsonObjectPayload['response_format'] = ['type' => 'json_object'];
+    $jsonObjectResult = openai_chat_request($apiUrl, $apiKey, $jsonObjectPayload, $timeoutSeconds);
+    if (($jsonObjectResult['ok'] ?? false) === true && is_array($jsonObjectResult['body'] ?? null)) {
+        $responseJson = $jsonObjectResult['body'];
+        break;
+    }
 
-$result = curl_exec($curl);
-if ($result === false) {
-    curl_close($curl);
+    $plainResult = openai_chat_request($apiUrl, $apiKey, $basePayload, $timeoutSeconds);
+    if (($plainResult['ok'] ?? false) === true && is_array($plainResult['body'] ?? null)) {
+        $responseJson = $plainResult['body'];
+        break;
+    }
+}
+
+if (!is_array($responseJson)) {
     send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
-$statusCode = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
-curl_close($curl);
-
-if ($statusCode >= 400) {
-    send_json(200, local_assistant_fallback($userMessage, $attachments));
-}
-
-$responseJson = json_decode((string) $result, true);
-$content = $responseJson['choices'][0]['message']['content'] ?? null;
-if (!is_string($content) || trim($content) === '') {
+$content = normalize_chat_content($responseJson['choices'][0]['message']['content'] ?? null);
+if ($content === '') {
     send_json(200, local_assistant_fallback($userMessage, $attachments));
 }
 
 $parsed = extract_json_object($content);
 if (!is_array($parsed)) {
-    send_json(200, local_assistant_fallback($userMessage, $attachments));
+    $parsed = [
+        'assistantMessage' => $content,
+        'suggestions' => [],
+        'media' => []
+    ];
 }
 
 $assistantMessage = trim((string) ($parsed['assistantMessage'] ?? ''));

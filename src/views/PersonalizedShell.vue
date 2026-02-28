@@ -1172,13 +1172,12 @@ async function openAction(url: string): Promise<void> {
 
 function buildAssistantTranscript(): OnboardingTranscriptLine[] {
   return transcript.value
-    .slice(-16)
+    .filter((line) => line.tone === 'user' || line.tone === 'assistant')
+    .slice(-18)
     .map((line) => {
       const role: OnboardingTranscriptLine['role'] = line.tone === 'user'
         ? 'user'
-        : line.tone === 'assistant'
-          ? 'assistant'
-          : 'system';
+        : 'assistant';
 
       return {
         role,
@@ -1229,6 +1228,10 @@ async function runAssistantConversation(
       variantNonce: sceneNonce.value,
       attachments
     });
+
+    if (result.source !== 'backend') {
+      addLine('signal', 'Live model runtime unavailable. Local fallback response used for this turn.');
+    }
 
     assistantStreamPhase.value = expectsImage
       ? (result.source === 'backend' ? 'AI stream: finalizing visual response...' : 'Fallback stream: finalizing visual response...')

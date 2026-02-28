@@ -87,6 +87,13 @@ Templates:
 - `example.config.php`
 - `config/server-config.example.php`
 
+Recommended `openai` keys for the in-app assistant:
+
+- `assistant_model` (default `gpt-5.2`)
+- `assistant_temperature` (default `0.62`)
+- `assistant_max_tokens` (default `520`)
+- `model` remains available as a fallback model for other endpoints
+
 Security note:
 
 - Do not commit real API keys.
