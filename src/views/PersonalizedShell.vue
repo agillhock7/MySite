@@ -119,6 +119,7 @@ const assistantStreamPhase = ref('');
 const assistantSuggestions = ref<Array<{ label: string; action: string }>>([]);
 const conversationThreads = ref<SavedConversation[]>([]);
 const activeConversationId = ref('');
+const conversationSearch = ref('');
 const terminalExpanded = ref(false);
 const transcriptHeight = ref(320);
 const imageRenderPending = ref(false);
@@ -925,6 +926,7 @@ function startNewConversation(): void {
   const created = createConversation();
   conversationThreads.value = [created, ...conversationThreads.value];
   activeConversationId.value = created.id;
+  conversationSearch.value = '';
   transcript.value = [];
   mediaLoadState.value = {};
   assistantSuggestions.value = [];
@@ -2060,6 +2062,25 @@ const commandStatus = computed(() =>
 );
 
 const threadSummary = computed(() => `${conversationThreads.value.length}/${MAX_SAVED_CONVERSATIONS}`);
+const visibleConversationThreads = computed(() => {
+  const ordered = [...conversationThreads.value].sort((left, right) => {
+    const leftTime = new Date(left.updatedAt).getTime();
+    const rightTime = new Date(right.updatedAt).getTime();
+    return rightTime - leftTime;
+  });
+
+  const query = conversationSearch.value.trim().toLowerCase();
+  if (!query) {
+    return ordered;
+  }
+
+  return ordered.filter((conversation) => {
+    if (conversation.title.toLowerCase().includes(query)) {
+      return true;
+    }
+    return conversation.transcript.some((line) => line.text.toLowerCase().includes(query));
+  });
+});
 const terminalShellStyle = computed<Record<string, string>>(() => ({
   '--terminal-transcript-height': `${transcriptHeight.value}px`,
   '--reveal-order': '4'
@@ -2092,6 +2113,22 @@ function applySceneShuffle(): void {
   sceneRefreshEpoch.value += 1;
   forcedFocus.value = '';
   closeImagePreview();
+}
+
+function conversationLineCount(conversation: SavedConversation): number {
+  return conversation.transcript.filter((line) => line.tone === 'assistant' || line.tone === 'user').length;
+}
+
+function conversationPreview(conversation: SavedConversation): string {
+  const latest = [...conversation.transcript]
+    .reverse()
+    .find((line) => line.text.trim().length > 0 && line.tone !== 'signal');
+
+  if (!latest) {
+    return 'No messages yet.';
+  }
+
+  return latest.text.replace(/\s+/g, ' ').trim().slice(0, 110);
 }
 
 function rememberCommand(input: string): void {
@@ -2800,163 +2837,212 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <section v-if="isHomeView || isConversationView" id="ai-conversations" class="terminal-shell reveal-surface" :class="{ expanded: terminalExpanded }" :style="terminalShellStyle">
+    <section
+      v-if="isHomeView || isConversationView"
+      id="ai-conversations"
+      class="terminal-shell reveal-surface"
+      :class="{ expanded: terminalExpanded, 'conversation-view': isConversationView }"
+      :style="terminalShellStyle"
+    >
       <p v-if="widgetBuildSession" class="build-mode-banner">
         Widget Build Mode · Step: {{ widgetBuildStepLabel }} · Answer prompts or use /widget cancel
       </p>
 
-      <div class="conversation-bar">
-        <div class="conversation-head">
-          <p class="mission-kicker">AI Conversations</p>
-          <div class="conversation-meta">
+      <div class="conversation-layout" :class="{ split: isConversationView }">
+        <aside v-if="isConversationView" class="conversation-rail">
+          <div class="conversation-rail-head">
+            <p class="mission-kicker">Thread Workspace</p>
             <p class="conversation-count">{{ threadSummary }}</p>
-            <div class="terminal-tools">
-              <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(-80)">-</button>
-              <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(80)">+</button>
-              <button type="button" class="terminal-tool-btn" @click="toggleTerminalExpanded">
-                {{ terminalExpanded ? 'Collapse' : 'Expand' }}
+          </div>
+
+          <div class="conversation-rail-controls">
+            <input
+              v-model="conversationSearch"
+              type="text"
+              autocomplete="off"
+              placeholder="Search threads"
+            />
+            <button type="button" @click="startNewConversation">+ New Thread</button>
+          </div>
+
+          <div class="conversation-thread-list">
+            <button
+              v-for="thread in visibleConversationThreads"
+              :key="`thread-rail-${thread.id}`"
+              type="button"
+              class="thread-row"
+              :class="{ active: thread.id === activeConversationId }"
+              @click="switchConversation(thread.id)"
+            >
+              <div class="thread-row-head">
+                <span class="thread-row-title">{{ thread.title }}</span>
+                <span class="thread-row-time">{{ formatRelativeTime(thread.updatedAt) }}</span>
+              </div>
+              <p class="thread-row-preview">{{ conversationPreview(thread) }}</p>
+              <p class="thread-row-meta">{{ conversationLineCount(thread) }} messages · {{ thread.id }}</p>
+            </button>
+            <p v-if="visibleConversationThreads.length === 0" class="thread-empty">No threads match this search.</p>
+          </div>
+        </aside>
+
+        <div class="conversation-main">
+          <div class="conversation-bar">
+            <div class="conversation-head">
+              <div class="conversation-head-copy">
+                <p class="mission-kicker">AI Conversations</p>
+                <p v-if="isConversationView" class="conversation-title">{{ activeConversation?.title || 'New Conversation' }}</p>
+              </div>
+              <div class="conversation-meta">
+                <p class="conversation-count">{{ threadSummary }}</p>
+                <div class="terminal-tools">
+                  <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(-80)">-</button>
+                  <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(80)">+</button>
+                  <button type="button" class="terminal-tool-btn" @click="toggleTerminalExpanded">
+                    {{ terminalExpanded ? 'Collapse' : 'Expand' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="conversation-active">{{ activeConversationSummary }}</p>
+            <div v-if="!isConversationView" class="conversation-actions">
+              <button
+                v-for="thread in conversationThreads"
+                :key="thread.id"
+                type="button"
+                class="thread-chip"
+                :class="{ active: thread.id === activeConversationId }"
+                @click="switchConversation(thread.id)"
+              >
+                {{ thread.title }}
+              </button>
+              <button type="button" class="thread-new" @click="startNewConversation">
+                + New
               </button>
             </div>
           </div>
-        </div>
-        <p class="conversation-active">{{ activeConversationSummary }}</p>
-        <div class="conversation-actions">
-          <button
-            v-for="thread in conversationThreads"
-            :key="thread.id"
-            type="button"
-            class="thread-chip"
-            :class="{ active: thread.id === activeConversationId }"
-            @click="switchConversation(thread.id)"
-          >
-            {{ thread.title }}
-          </button>
-          <button type="button" class="thread-new" @click="startNewConversation">
-            + New
-          </button>
-        </div>
-      </div>
 
-      <div v-if="assistantStreaming" class="stream-shell" aria-live="polite">
-        <div class="stream-bars">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <div class="stream-copy">
-          <p>{{ assistantStreamPhase || 'Streaming assistant response...' }}</p>
-          <div v-if="imageRenderPending" class="image-pipeline-preview">
-            <div class="pipeline-grid"></div>
-            <div class="pipeline-copy">
-              <strong>Multimodal Render Queue</strong>
-              <span>{{ imageRenderPrompt || 'Generating visual...' }}</span>
+          <div v-if="assistantStreaming" class="stream-shell" aria-live="polite">
+            <div class="stream-bars">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
             </div>
-            <div class="pipeline-pulse"></div>
-          </div>
-        </div>
-      </div>
-
-      <div ref="transcriptRef" class="transcript" aria-live="polite">
-        <article
-          v-for="(line, lineIndex) in transcript"
-          :key="line.id"
-          class="line"
-          :class="`tone-${line.tone}`"
-          :style="{ '--line-order': `${Math.min(lineIndex, 22)}` }"
-        >
-          <span class="glyph">
-            {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
-          </span>
-          <div class="line-body">
-            <div class="line-meta">
-              <span class="line-role">{{ toneLabel(line.tone) }}</span>
-              <span class="line-time">{{ formatLineTime(line) }}</span>
-            </div>
-            <div class="line-actions">
-              <button type="button" @click="copyLineText(line)">Copy</button>
-              <button v-if="line.imageUrl" type="button" @click="openImagePreview(line)">Expand</button>
-              <button v-if="line.imageUrl" type="button" @click="copyLineImage(line)">Copy Image</button>
-              <button v-if="line.imageUrl" type="button" @click="downloadLineImage(line)">Download Image</button>
-              <span v-if="lineActionStatus[line.id]" class="line-action-status">{{ lineActionStatus[line.id] }}</span>
-            </div>
-            <p class="line-text">{{ line.text }}</p>
-            <div v-if="line.imageUrl" class="line-media-shell">
-              <div v-if="mediaLoadState[line.id] !== 'ready'" class="line-media-loading">
-                <div class="line-media-grid"></div>
-                <div class="line-media-pulse"></div>
-                <p>{{ mediaLoadState[line.id] === 'error' ? 'Rebuilding preview...' : 'Generating image...' }}</p>
+            <div class="stream-copy">
+              <p>{{ assistantStreamPhase || 'Streaming assistant response...' }}</p>
+              <div v-if="imageRenderPending" class="image-pipeline-preview">
+                <div class="pipeline-grid"></div>
+                <div class="pipeline-copy">
+                  <strong>Multimodal Render Queue</strong>
+                  <span>{{ imageRenderPrompt || 'Generating visual...' }}</span>
+                </div>
+                <div class="pipeline-pulse"></div>
               </div>
-              <img
-                class="line-media"
-                :src="line.imageUrl"
-                :alt="line.imageAlt || 'Generated image'"
-                loading="lazy"
-                @click="openImagePreview(line)"
-                @load="handleTranscriptImageLoad(line)"
-                @error="handleTranscriptImageError($event, line)"
-              />
             </div>
           </div>
-        </article>
-      </div>
 
-      <form class="command-row" @submit.prevent="handleComposerSubmit">
-        <span class="glyph">></span>
-        <button
-          type="button"
-          class="upload-btn"
-          :disabled="assistantStreaming"
-          @click="openFilePicker"
-        >
-          Upload
-        </button>
-        <input
-          v-model="commandInput"
-          type="text"
-          autocomplete="off"
-          :placeholder="commandPlaceholder"
-          @keydown="handleCommandInputKeydown"
-        />
-      </form>
-      <input
-        ref="filePickerRef"
-        class="file-picker"
-        type="file"
-        accept="image/*,.txt,.md,.json,.csv,.pdf,.doc,.docx,.xlsx,.xls"
-        multiple
-        @change="handleFileSelection"
-      />
-      <div v-if="pendingAttachments.length > 0" class="attachment-row">
-        <article
-          v-for="file in pendingAttachments"
-          :key="file.id"
-          class="attachment-chip"
-        >
-          <span>{{ file.kind.toUpperCase() }} · {{ file.name }} · {{ formatAttachmentSize(file.sizeBytes) }}</span>
-          <button type="button" @click="removePendingAttachment(file.id)">Remove</button>
-        </article>
-      </div>
-      <div class="command-meta">
-        <p>{{ commandStatus }}</p>
-      </div>
-      <div class="command-hints">
-        <button
-          v-for="hint in commandHints"
-          :key="hint.command"
-          type="button"
-          :disabled="assistantStreaming"
-          @click="runCommandHint(hint.command)"
-        >
-          {{ hint.label }}
-        </button>
-      </div>
+          <div ref="transcriptRef" class="transcript" aria-live="polite">
+            <article
+              v-for="(line, lineIndex) in transcript"
+              :key="line.id"
+              class="line"
+              :class="`tone-${line.tone}`"
+              :style="{ '--line-order': `${Math.min(lineIndex, 22)}` }"
+            >
+              <span class="glyph">
+                {{ line.tone === 'user' ? '>' : line.tone === 'signal' ? '#' : line.tone === 'assistant' ? '*' : '$' }}
+              </span>
+              <div class="line-body">
+                <div class="line-meta">
+                  <span class="line-role">{{ toneLabel(line.tone) }}</span>
+                  <span class="line-time">{{ formatLineTime(line) }}</span>
+                </div>
+                <div class="line-actions">
+                  <button type="button" @click="copyLineText(line)">Copy</button>
+                  <button v-if="line.imageUrl" type="button" @click="openImagePreview(line)">Expand</button>
+                  <button v-if="line.imageUrl" type="button" @click="copyLineImage(line)">Copy Image</button>
+                  <button v-if="line.imageUrl" type="button" @click="downloadLineImage(line)">Download Image</button>
+                  <span v-if="lineActionStatus[line.id]" class="line-action-status">{{ lineActionStatus[line.id] }}</span>
+                </div>
+                <p class="line-text">{{ line.text }}</p>
+                <div v-if="line.imageUrl" class="line-media-shell">
+                  <div v-if="mediaLoadState[line.id] !== 'ready'" class="line-media-loading">
+                    <div class="line-media-grid"></div>
+                    <div class="line-media-pulse"></div>
+                    <p>{{ mediaLoadState[line.id] === 'error' ? 'Rebuilding preview...' : 'Generating image...' }}</p>
+                  </div>
+                  <img
+                    class="line-media"
+                    :src="line.imageUrl"
+                    :alt="line.imageAlt || 'Generated image'"
+                    loading="lazy"
+                    @click="openImagePreview(line)"
+                    @load="handleTranscriptImageLoad(line)"
+                    @error="handleTranscriptImageError($event, line)"
+                  />
+                </div>
+              </div>
+            </article>
+          </div>
 
-      <div class="assistant-actions">
-        <button type="button" @click="openAction(assistantPrimaryCta.action)">
-          {{ assistantPrimaryCta.label }}
-        </button>
+          <form class="command-row" @submit.prevent="handleComposerSubmit">
+            <span class="glyph">></span>
+            <button
+              type="button"
+              class="upload-btn"
+              :disabled="assistantStreaming"
+              @click="openFilePicker"
+            >
+              Upload
+            </button>
+            <input
+              v-model="commandInput"
+              type="text"
+              autocomplete="off"
+              :placeholder="commandPlaceholder"
+              @keydown="handleCommandInputKeydown"
+            />
+          </form>
+          <input
+            ref="filePickerRef"
+            class="file-picker"
+            type="file"
+            accept="image/*,.txt,.md,.json,.csv,.pdf,.doc,.docx,.xlsx,.xls"
+            multiple
+            @change="handleFileSelection"
+          />
+          <div v-if="pendingAttachments.length > 0" class="attachment-row">
+            <article
+              v-for="file in pendingAttachments"
+              :key="file.id"
+              class="attachment-chip"
+            >
+              <span>{{ file.kind.toUpperCase() }} · {{ file.name }} · {{ formatAttachmentSize(file.sizeBytes) }}</span>
+              <button type="button" @click="removePendingAttachment(file.id)">Remove</button>
+            </article>
+          </div>
+          <div class="command-meta">
+            <p>{{ commandStatus }}</p>
+          </div>
+          <div class="command-hints">
+            <button
+              v-for="hint in commandHints"
+              :key="hint.command"
+              type="button"
+              :disabled="assistantStreaming"
+              @click="runCommandHint(hint.command)"
+            >
+              {{ hint.label }}
+            </button>
+          </div>
+
+          <div class="assistant-actions">
+            <button type="button" @click="openAction(assistantPrimaryCta.action)">
+              {{ assistantPrimaryCta.label }}
+            </button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -3879,6 +3965,166 @@ h1 {
   letter-spacing: 0.03em;
 }
 
+.conversation-layout {
+  min-width: 0;
+}
+
+.conversation-layout.split {
+  display: grid;
+  grid-template-columns: minmax(240px, 292px) minmax(0, 1fr);
+  min-height: min(78vh, 900px);
+}
+
+.conversation-main {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto auto;
+}
+
+.conversation-rail {
+  border-right: 1px solid var(--border-tone);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0.05) 34%, transparent 60%),
+    rgba(2, 8, 22, 0.56);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.conversation-rail-head {
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.24);
+  padding: 0.68rem 0.74rem 0.62rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.conversation-rail-controls {
+  padding: 0.55rem 0.74rem 0.6rem;
+  display: grid;
+  gap: 0.42rem;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.18);
+}
+
+.conversation-rail-controls input {
+  width: 100%;
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.48);
+  color: var(--text-primary);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.74rem;
+}
+
+.conversation-rail-controls input:focus-visible {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.72);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+}
+
+.conversation-rail-controls button {
+  border: 1px solid rgba(var(--accent-rgb), 0.48);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--text-primary);
+  padding: 0.34rem 0.55rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+
+.conversation-rail-controls button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.7);
+  background: rgba(var(--accent-rgb), 0.3);
+}
+
+.conversation-thread-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.55rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.thread-row {
+  width: 100%;
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.54);
+  color: var(--text-primary);
+  padding: 0.52rem 0.56rem;
+  display: grid;
+  gap: 0.28rem;
+  text-align: left;
+  transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.thread-row:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent-rgb), 0.56);
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+.thread-row.active {
+  border-color: rgba(var(--accent-rgb), 0.74);
+  background: linear-gradient(145deg, rgba(var(--accent-rgb), 0.26), rgba(2, 6, 23, 0.76));
+  box-shadow: 0 10px 22px rgba(var(--accent-rgb), 0.18);
+}
+
+.thread-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.thread-row-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-row-time {
+  color: color-mix(in srgb, var(--text-secondary) 86%, rgb(var(--accent-soft-rgb)));
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+.thread-row-preview {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.34;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 1.86rem;
+}
+
+.thread-row-meta {
+  margin: 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgb(var(--accent-soft-rgb));
+}
+
+.thread-empty {
+  margin: 0;
+  border: 1px dashed rgba(var(--accent-rgb), 0.34);
+  border-radius: 10px;
+  padding: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
 .conversation-bar {
   border-bottom: 1px solid var(--border-tone);
   padding: 0.62rem 0.85rem 0.74rem;
@@ -3888,11 +4134,32 @@ h1 {
     linear-gradient(120deg, rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.06) 48%, rgba(var(--accent-soft-rgb), 0.12));
 }
 
+.terminal-shell.conversation-view .conversation-bar {
+  padding: 0.72rem 0.9rem 0.66rem;
+}
+
 .conversation-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 0.45rem;
+}
+
+.conversation-head-copy {
+  display: grid;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.conversation-title {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--text-primary);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-count {
@@ -3977,6 +4244,10 @@ h1 {
   transform: translateY(-1px);
   border-color: rgba(var(--accent-rgb), 0.62);
   background: rgba(var(--accent-rgb), 0.24);
+}
+
+.terminal-shell.conversation-view .conversation-actions {
+  display: none;
 }
 
 .stream-shell {
@@ -4112,6 +4383,15 @@ h1 {
 
 .terminal-shell.expanded .transcript {
   max-height: min(74vh, 920px);
+}
+
+.terminal-shell.conversation-view .transcript {
+  min-height: clamp(320px, 52vh, 640px);
+  max-height: clamp(360px, 64vh, 760px);
+}
+
+.terminal-shell.conversation-view.expanded .transcript {
+  max-height: min(76vh, 980px);
 }
 
 .line {
@@ -5031,6 +5311,38 @@ h1 {
     display: none;
   }
 
+  .conversation-layout.split {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .conversation-rail {
+    border-right: none;
+    border-bottom: 1px solid var(--border-tone);
+    grid-template-rows: auto auto auto;
+  }
+
+  .conversation-thread-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.4rem;
+    padding: 0.5rem 0.55rem 0.6rem;
+  }
+
+  .thread-row {
+    min-width: min(72vw, 260px);
+  }
+
+  .conversation-title {
+    font-size: 0.84rem;
+  }
+
+  .terminal-shell.conversation-view .transcript {
+    min-height: 260px;
+    max-height: min(56vh, 520px);
+  }
+
   .prompt-meta-grid,
   .prompt-action-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -5067,6 +5379,26 @@ h1 {
     justify-self: start;
     width: 100%;
     max-width: 260px;
+  }
+
+  .conversation-layout.split {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .conversation-rail {
+    border-right: none;
+    border-bottom: 1px solid var(--border-tone);
+    grid-template-rows: auto auto auto;
+  }
+
+  .conversation-thread-list {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    max-height: 220px;
+  }
+
+  .terminal-shell.conversation-view .transcript {
+    max-height: min(58vh, 620px);
   }
 
   .prompt-meta-grid {
@@ -5151,6 +5483,10 @@ h1 {
     top: 0;
     z-index: 18;
     margin-bottom: 0.9rem;
+  }
+
+  .conversation-layout.split {
+    min-height: min(calc(100vh - 200px), 930px);
   }
 
   .mobile-dock {
