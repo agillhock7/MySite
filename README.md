@@ -225,3 +225,9 @@ Useful routes after deploy:
 
 - `/onboarding?force=1&reset=1` (force restart onboarding)
 - `/reset` (redirects to forced onboarding reset)
+
+## License
+
+This repository is licensed under the MIT License. See `LICENSE`.
+
+Copyright (c) 2026 Dark Horses USA.
