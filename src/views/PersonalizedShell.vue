@@ -120,7 +120,7 @@ const assistantSuggestions = ref<Array<{ label: string; action: string }>>([]);
 const conversationThreads = ref<SavedConversation[]>([]);
 const activeConversationId = ref('');
 const conversationSearch = ref('');
-const terminalExpanded = ref(false);
+const sidebarCollapsed = ref(false);
 const transcriptHeight = ref(320);
 const imageRenderPending = ref(false);
 const imageRenderPrompt = ref('');
@@ -162,6 +162,23 @@ const missionNavigation = [
   { id: 'blog', label: 'Blog Posts', path: '/app/blog' }
 ] as const;
 type AppNavSectionId = (typeof appNavSections)[number]['id'];
+
+function compactNavLabel(label: string): string {
+  const parts = label
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  if (parts.length === 0) {
+    return 'NA';
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('');
+}
 
 function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof localStorage !== 'undefined';
@@ -2377,9 +2394,8 @@ function runCommandHint(command: string): void {
   void handleCommand(command);
 }
 
-function toggleTerminalExpanded(): void {
-  terminalExpanded.value = !terminalExpanded.value;
-  transcriptHeight.value = clampTranscriptHeight(terminalExpanded.value ? Math.max(transcriptHeight.value, 560) : 320);
+function toggleSidebarCollapsed(): void {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
 }
 
 function updateTopbarOffset(): void {
@@ -2405,12 +2421,6 @@ async function navigateToView(path: string): Promise<void> {
 function handleGlobalKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && imagePreview.value) {
     closeImagePreview();
-    return;
-  }
-
-  if (event.key === 'Escape' && terminalExpanded.value) {
-    terminalExpanded.value = false;
-    transcriptHeight.value = clampTranscriptHeight(320);
   }
 }
 
@@ -2913,8 +2923,8 @@ onUnmounted(() => {
       <span v-for="(orb, idx) in impressionOrbs" :key="`orb-${idx}`" class="fx-orb" :style="orb"></span>
     </div>
 
-    <div class="app-shell">
-      <aside class="app-sidebar reveal-surface" style="--reveal-order: 1">
+    <div class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+      <aside class="app-sidebar reveal-surface" :class="{ collapsed: sidebarCollapsed }" style="--reveal-order: 1">
         <a class="brand sidebar-brand" :href="brandBaseUrl" target="_blank" rel="noopener noreferrer">
           <img :src="brandIconUrl" alt="" loading="lazy" />
           <span>
@@ -2930,9 +2940,11 @@ onUnmounted(() => {
             :key="section.id"
             type="button"
             :class="{ active: activeSectionId === section.id }"
+            :title="sidebarCollapsed ? section.label : undefined"
             @click="navigateToView(section.path)"
           >
-            <span>{{ section.label }}</span>
+            <span class="full-label">{{ section.label }}</span>
+            <span class="compact-label" aria-hidden="true">{{ compactNavLabel(section.label) }}</span>
           </button>
         </nav>
 
@@ -2955,6 +2967,9 @@ onUnmounted(() => {
             <div class="topbar-meta">
               <p>{{ scene.codename }} · {{ BUILD_TAG }}</p>
               <p class="persona-line">Profile {{ personalizationProfile }} · {{ personalizationDensity }} density</p>
+              <button type="button" class="sidebar-toggle-btn" @click="toggleSidebarCollapsed">
+                {{ sidebarCollapsed ? 'Expand Navigation' : 'Collapse Navigation' }}
+              </button>
               <button type="button" @click="resetPersonalization">Reset Personalization</button>
             </div>
           </div>
@@ -3060,7 +3075,7 @@ onUnmounted(() => {
       v-if="isConversationView"
       id="ai-conversations"
       class="terminal-shell reveal-surface"
-      :class="{ expanded: terminalExpanded, 'conversation-view': isConversationView }"
+      :class="{ 'conversation-view': isConversationView }"
       :style="terminalShellStyle"
     >
       <p v-if="widgetBuildSession" class="build-mode-banner">
@@ -3116,9 +3131,6 @@ onUnmounted(() => {
                 <div class="terminal-tools">
                   <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(-80)">-</button>
                   <button type="button" class="terminal-tool-btn" @click="adjustTranscriptHeight(80)">+</button>
-                  <button type="button" class="terminal-tool-btn" @click="toggleTerminalExpanded">
-                    {{ terminalExpanded ? 'Collapse' : 'Expand' }}
-                  </button>
                 </div>
               </div>
             </div>
@@ -3762,6 +3774,10 @@ onUnmounted(() => {
   transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
+.sidebar-nav button .compact-label {
+  display: none;
+}
+
 .sidebar-nav button:hover {
   transform: translateY(-1px);
   border-color: rgba(var(--accent-rgb), 0.62);
@@ -3911,6 +3927,10 @@ onUnmounted(() => {
   transform: translateY(-1px);
   background: rgba(var(--accent-rgb), 0.24);
   border-color: rgba(var(--accent-rgb), 0.6);
+}
+
+.sidebar-toggle-btn {
+  min-width: 172px;
 }
 
 .mission-shell {
@@ -4219,15 +4239,6 @@ h1 {
   box-shadow: 0 28px 56px rgba(2, 6, 23, 0.52);
 }
 
-.terminal-shell.expanded {
-  position: fixed;
-  inset: 0.8rem;
-  z-index: 56;
-  border-width: 2px;
-  background: color-mix(in srgb, var(--surface-main) 92%, black);
-  box-shadow: 0 20px 46px rgba(2, 6, 23, 0.45);
-}
-
 .build-mode-banner {
   margin: 0;
   padding: 0.6rem 0.85rem;
@@ -4316,14 +4327,17 @@ h1 {
 
 .conversation-thread-list {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 0.55rem;
   display: grid;
   gap: 0.42rem;
+  min-width: 0;
 }
 
 .thread-row {
   width: 100%;
+  min-width: 0;
   border: 1px solid rgba(var(--accent-rgb), 0.26);
   border-radius: 12px;
   background: rgba(2, 6, 23, 0.54);
@@ -4352,6 +4366,7 @@ h1 {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.4rem;
+  min-width: 0;
 }
 
 .thread-row-title {
@@ -4387,6 +4402,7 @@ h1 {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: rgb(var(--accent-soft-rgb));
+  overflow-wrap: anywhere;
 }
 
 .thread-empty {
@@ -4699,17 +4715,9 @@ h1 {
   scroll-padding-bottom: 1rem;
 }
 
-.terminal-shell.expanded .transcript {
-  max-height: min(74vh, 920px);
-}
-
 .terminal-shell.conversation-view .transcript {
   min-height: clamp(320px, 52vh, 640px);
   max-height: clamp(360px, 64vh, 760px);
-}
-
-.terminal-shell.conversation-view.expanded .transcript {
-  max-height: min(76vh, 980px);
 }
 
 .line {
@@ -5779,15 +5787,17 @@ h1 {
   }
 
   .conversation-thread-list {
-    display: flex;
-    overflow-x: auto;
-    overflow-y: hidden;
-    gap: 0.4rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: hidden;
+    overflow-y: auto;
+    gap: 0.42rem;
     padding: 0.5rem 0.55rem 0.6rem;
+    max-height: 230px;
   }
 
   .thread-row {
-    min-width: min(72vw, 260px);
+    min-width: 0;
   }
 
   .conversation-title {
@@ -5937,11 +5947,51 @@ h1 {
     align-items: start;
   }
 
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
   .app-sidebar {
     position: sticky;
     top: 1.2rem;
     max-height: calc(100vh - 2.4rem);
     overflow: auto;
+  }
+
+  .app-sidebar.collapsed {
+    padding: 0.62rem 0.5rem;
+    justify-items: center;
+  }
+
+  .app-sidebar.collapsed .sidebar-brand {
+    width: 100%;
+    justify-content: center;
+    margin-bottom: 0.1rem;
+  }
+
+  .app-sidebar.collapsed .sidebar-brand span,
+  .app-sidebar.collapsed .sidebar-kicker,
+  .app-sidebar.collapsed .sidebar-meta {
+    display: none;
+  }
+
+  .app-sidebar.collapsed .sidebar-nav {
+    width: 100%;
+  }
+
+  .app-sidebar.collapsed .sidebar-nav button {
+    text-align: center;
+    padding: 0.46rem 0.18rem;
+  }
+
+  .app-sidebar.collapsed .sidebar-nav button .full-label {
+    display: none;
+  }
+
+  .app-sidebar.collapsed .sidebar-nav button .compact-label {
+    display: inline;
+    font-weight: 700;
+    letter-spacing: 0.08em;
   }
 
   .topbar {
